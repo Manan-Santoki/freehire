@@ -372,6 +372,19 @@ func (r *Runner) Run(ctx context.Context, migs []Migration, forceBaseline bool) 
 	}
 
 	for _, m := range p.apply {
+		// Reset the session search_path before each file. The collapsed
+		// 0001_init.sql is a pg_dump and carries `set_config('search_path', '',
+		// false)`, which — because every file here runs on this one shared
+		// connection, unlike initdb's file-per-psql-session — leaks an empty
+		// search_path into every later migration. The first file with an
+		// unqualified CREATE (0006_board_health.sql) then fails with 3F000
+		// "no schema has been selected to create in" on an otherwise empty
+		// database, contradicting this package's "every migration is applied in
+		// order" contract. A file that sets its own search_path still wins: this
+		// runs before the file, not after.
+		if _, err := conn.Exec(ctx, `SELECT set_config('search_path', '"$user", public', false)`); err != nil {
+			return baselined, applied, fmt.Errorf("reset search_path before %s: %w", m.Version, err)
+		}
 		if err := applyOne(ctx, conn, m); err != nil {
 			return baselined, applied, err
 		}
