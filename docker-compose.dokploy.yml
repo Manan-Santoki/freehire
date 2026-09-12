@@ -1,0 +1,132 @@
+# Dokploy deployment compose for freehire.
+#
+# Differences from the local-dev docker-compose.yml (kept as a separate file so
+# local dev is untouched):
+#   - No host `ports:` publishing. Dokploy runs this as an *isolated* compose, and
+#     Traefik reaches the public `web` service over dokploy-network via the Domain
+#     attached in the Dokploy UI. Every other service talks over the compose's own
+#     network by service name, so nothing needs a published host port (and removing
+#     them avoids clashes with the ~40 other stacks on this shared host).
+#   - `app` gets COOKIE_SECURE passed through: the server refuses to start with an
+#     https:// FRONTEND_ORIGIN unless the auth cookie is marked Secure.
+#   - Public origin env (FRONTEND_ORIGIN / WEB_ORIGIN) comes from the Dokploy env.
+#
+# TLS is terminated at Cloudflare (edge); the origin serves plain HTTP on the web
+# container's :80, same pattern as the openGym stack on this instance.
+
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: hire
+      POSTGRES_PASSWORD: hire
+      POSTGRES_DB: hire
+    volumes:
+      - pgdata:/var/lib/postgresql
+      # Migrations applied automatically by Postgres on first volume init.
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hire -d hire"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.49.0
+    environment:
+      MEILI_MASTER_KEY: "${MEILI_MASTER_KEY:-dev-insecure-meili-key}"
+      MEILI_ENV: development
+    volumes:
+      - meilisearch_data:/meili_data
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: quay.io/minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done;
+      mc mb -p local/hire-resumes;
+      exit 0;
+      "
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://hire:hire@db:5432/hire?sslmode=disable"
+      S3_ENDPOINT: "${S3_ENDPOINT:-http://minio:9000}"
+      S3_BUCKET: "${S3_BUCKET:-hire-resumes}"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-minioadmin}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-minioadmin}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      PII_FILTER_URL: "${PII_FILTER_URL:-}"
+      # LLM-backed features stay disabled until these are set (catalogue works without them).
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
+      ASSISTANT_MODEL: "${ASSISTANT_MODEL:-}"
+      LANGFUSE_BASE_URL: "${LANGFUSE_BASE_URL:-}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      # Required by the auth surface (server fails fast if unset or under 32 bytes).
+      JWT_SECRET: "${JWT_SECRET:?set a random 32+ byte JWT_SECRET in Dokploy env}"
+      # Mark the session cookie Secure — mandatory with an https:// FRONTEND_ORIGIN.
+      COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      # OAuth callbacks redirect the browser back to this origin.
+      FRONTEND_ORIGIN: "${FRONTEND_ORIGIN:-http://localhost:5173}"
+      OAUTH_GOOGLE_CLIENT_ID: "${OAUTH_GOOGLE_CLIENT_ID:-}"
+      OAUTH_GOOGLE_CLIENT_SECRET: "${OAUTH_GOOGLE_CLIENT_SECRET:-}"
+      OAUTH_GITHUB_CLIENT_ID: "${OAUTH_GITHUB_CLIENT_ID:-}"
+      OAUTH_GITHUB_CLIENT_SECRET: "${OAUTH_GITHUB_CLIENT_SECRET:-}"
+      OAUTH_LINKEDIN_CLIENT_ID: "${OAUTH_LINKEDIN_CLIENT_ID:-}"
+      OAUTH_LINKEDIN_CLIENT_SECRET: "${OAUTH_LINKEDIN_CLIENT_SECRET:-}"
+      OAUTH_APPLE_CLIENT_ID: "${OAUTH_APPLE_CLIENT_ID:-}"
+      OAUTH_APPLE_TEAM_ID: "${OAUTH_APPLE_TEAM_ID:-}"
+      OAUTH_APPLE_KEY_ID: "${OAUTH_APPLE_KEY_ID:-}"
+      OAUTH_APPLE_PRIVATE_KEY: "${OAUTH_APPLE_PRIVATE_KEY:-}"
+      MEILI_URL: "http://meilisearch:7700"
+      MEILI_MASTER_KEY: "${MEILI_MASTER_KEY:-dev-insecure-meili-key}"
+      REDIS_URL: "redis://redis:6379/0"
+
+  # SvelteKit SSR frontend + nginx (:80). This is the only public service; the
+  # Dokploy Domain points hire.msantoki.com at it. nginx routes /api and /health
+  # to the Go app and everything else to the Node SSR server.
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    environment:
+      ORIGIN: "${WEB_ORIGIN:-http://localhost:8090}"
+      API_INTERNAL_URL: "http://app:8080"
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  meilisearch_data:
+  minio_data:
