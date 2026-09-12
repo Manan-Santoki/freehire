@@ -23,8 +23,11 @@ services:
       POSTGRES_DB: hire
     volumes:
       - pgdata:/var/lib/postgresql
-      # Migrations applied automatically by Postgres on first volume init.
-      - ./migrations:/docker-entrypoint-initdb.d:ro
+      # NB: no ./migrations:/docker-entrypoint-initdb.d mount. Applying 222 files
+      # via raw psql-on-init is order-fragile (one incompatible statement aborts
+      # the whole init and leaves a half-built schema). The `migrate` service below
+      # owns the schema instead — the project's real migration runner, one
+      # transaction per file, honouring the no-transaction markers.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hire -d hire"]
       interval: 5s
@@ -67,6 +70,19 @@ services:
       exit 0;
       "
 
+  # Versioned migration runner (cmd/migrate, baked into the app image at /app/migrate).
+  # Runs once against the empty DB, applies every migrations/*.sql in order, then exits 0.
+  # `app` waits for it to complete, so the server never starts against a partial schema.
+  migrate:
+    build: .
+    entrypoint: ["/app/migrate"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://hire:hire@db:5432/hire?sslmode=disable"
+
   app:
     build: .
     depends_on:
@@ -75,6 +91,8 @@ services:
       redis:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
     environment:
       PORT: "8080"
