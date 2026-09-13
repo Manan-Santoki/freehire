@@ -117,6 +117,7 @@ var atsBoards = []struct{ host, source, mode string }{
 	{"jobs.lever.co", "lever", modePath},
 	{"jobs.eu.lever.co", "lever", modePath}, // Lever EU data-residency host; same path shape/board as the US host
 	{"jobs.ashbyhq.com", "ashby", modePath},
+	{"jobs.humanbit.ai", "humanbit", modePath},
 	{"apply.workable.com", "workable", modePath},
 	{"jobs.deel.com", "deel", modePath},
 	{"jobs.gem.com", "gem", modePath},

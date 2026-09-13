@@ -21,6 +21,7 @@ func TestRecognize(t *testing.T) {
 		{"lever strips /apply", "https://jobs.lever.co/offchainlabs/52c01c91/apply", "lever", "offchainlabs", "https://jobs.lever.co/offchainlabs/52c01c91", true},
 		{"lever eu data-residency host", "https://jobs.eu.lever.co/coinspaid/244123b5-ffbb/apply?x=1", "lever", "coinspaid", "https://jobs.eu.lever.co/coinspaid/244123b5-ffbb", true},
 		{"ashby vacancy", "https://jobs.ashbyhq.com/blitzy/a741b4e8-8799", "ashby", "blitzy", "https://jobs.ashbyhq.com/blitzy/a741b4e8-8799", true},
+		{"humanbit vacancy", "https://jobs.humanbit.ai/scrabble-jigsaw/jobs/3e4ec4a3-65f4-41c2-b5d5-a9e12c5fdf4f", "humanbit", "scrabble-jigsaw", "https://jobs.humanbit.ai/scrabble-jigsaw/jobs/3e4ec4a3-65f4-41c2-b5d5-a9e12c5fdf4f", true},
 		{"talenthr vacancy", "https://jobs.talenthr.io/dnext/senior-backend-developer-2/22", "talenthr", "dnext", "https://jobs.talenthr.io/dnext/senior-backend-developer-2/22", true},
 		{"deel path", "https://jobs.deel.com/acme/jobs/123", "deel", "acme", "https://jobs.deel.com/acme/jobs/123", true},
 		{"jobvite path", "https://jobs.jobvite.com/acme/job/oABC", "jobvite", "acme", "https://jobs.jobvite.com/acme/job/oABC", true},
@@ -67,6 +68,7 @@ func TestRecognize(t *testing.T) {
 		{"greenhouse boards API", "https://boards-api.greenhouse.io/v1/boards/anthropic/jobs", "greenhouse", "anthropic", "https://boards-api.greenhouse.io/v1/boards/anthropic", true},
 		{"lever postings API", "https://api.lever.co/v0/postings/matchgroup?mode=json", "lever", "matchgroup", "https://api.lever.co/v0/postings/matchgroup", true},
 		{"api host without a board", "https://api.ashbyhq.com/posting-api/job-board", "", "", "", false},
+		{"humanbit bare host no board", "https://jobs.humanbit.ai/", "", "", "", false},
 		{"api host off-prefix path", "https://api.lever.co/v1/something/else", "", "", "", false},
 		// jobappnetwork (talentReef): the platform's own public apply link already carries the
 		// board in this shape, so this is the same pathprefix mechanism reused on a host that is
