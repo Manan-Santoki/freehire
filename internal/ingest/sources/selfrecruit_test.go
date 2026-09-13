@@ -178,6 +178,28 @@ func TestSelfRecruitUnreadableDetailIsMarkedNotDropped(t *testing.T) {
 	}
 }
 
+// A page that answers successfully but carries neither classed element (a markup change,
+// or a page shape this adapter has never observed live) must be marked Unreadable, not
+// crash the crawl by calling textContent/innerHTML on the nil node firstByClass returns.
+func TestSelfRecruitMissingMarkupIsMarkedUnreadable(t *testing.T) {
+	id := "a7cdcc00-1c9c-464c-8960-945af0c0e0a4"
+	fake := (&routedHTTP{}).
+		route("https://dressup.selfrecruit.ge/"+id, `<html><body><p>no posting markup here</p></body></html>`).
+		route("https://dressup.selfrecruit.ge/vacancies/0", selfrecruitListingHTML(id)).
+		route("https://dressup.selfrecruit.ge/vacancies/10", selfrecruitEmptyListingHTML)
+
+	jobs, err := NewSelfRecruit(fake).Fetch(context.Background(), CompanyEntry{
+		Company: "Dressup", Board: "dressup",
+	})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	markers := unreadableMarkers(jobs)
+	if len(markers) != 1 || markers[0].ExternalID != id {
+		t.Fatalf("unreadable markers = %v, want one for the posting with no classed markup", markers)
+	}
+}
+
 func TestSelfRecruitRegisteredInAll(t *testing.T) {
 	s, ok := All(nil)["selfrecruit"]
 	if !ok {

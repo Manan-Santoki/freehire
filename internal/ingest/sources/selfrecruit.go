@@ -80,8 +80,17 @@ func (s selfrecruit) detail(ctx context.Context, e CompanyEntry, loc string) (Jo
 		return Job{}, false
 	}
 
-	title := textContent(firstByClass(root, "vacancy_title_inner"))
-	description := innerHTML(firstByClass(root, "pub_vac_text_detail"))
+	// firstByClass returns nil when the page carries neither classed element — textContent/
+	// innerHTML would panic on a nil node, and a page that answered but carries no posting
+	// markup at all is unreadable, not a posting with an empty title, the same "successful
+	// fetch, no usable content" reading detailUnreadable already gives a transport failure.
+	titleNode := firstByClass(root, "vacancy_title_inner")
+	descNode := firstByClass(root, "pub_vac_text_detail")
+	if titleNode == nil || descNode == nil {
+		return unreadableDetail(id, loc, e.Company), true
+	}
+	title := textContent(titleNode)
+	description := innerHTML(descNode)
 
 	return Job{
 		ExternalID:  id,
