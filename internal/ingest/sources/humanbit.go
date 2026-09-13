@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/strelov1/freehire/internal/dict/skilltag"
 )
 
 // humanbit adapts HumanBit, a multi-tenant ATS (jobs.humanbit.ai/<board>). The board is the
@@ -135,12 +137,12 @@ func (h humanbit) detail(ctx context.Context, e CompanyEntry, company, id string
 		URL:            url,
 		Title:          strings.TrimSpace(j.Title),
 		Company:        company,
-		Location:       j.Location,
+		Location:       strings.TrimSpace(j.Location),
 		Description:    sanitizeHTML(desc),
 		Remote:         j.Remote || isRemote(j.Title+" "+j.Location),
 		WorkMode:       workMode,
 		EmploymentType: humanbitEmploymentType(j.EmploymentType),
-		Skills:         j.Skills,
+		Skills:         humanbitSkills(j.Skills),
 		PostedAt:       parseRFC3339(j.CreatedAt),
 	}, true
 }
@@ -164,4 +166,13 @@ func humanbitEmploymentType(types []string) string {
 		}
 	}
 	return ""
+}
+
+// humanbitSkills canonicalizes HumanBit's raw skill strings through the shared skilltag
+// dictionary. Live entries are compound phrases ("Cost Accounting", "Zero-Based
+// Budgeting"), not atomic canonical tokens, the same shape micro1Skills already documents —
+// so, like there, the entries are mined via Parse rather than matched whole, and joined
+// into one blob first to keep that mining ability across entry boundaries.
+func humanbitSkills(skills []string) []string {
+	return skilltag.Parse(strings.Join(skills, " "))
 }

@@ -45,6 +45,13 @@ sampled posting; `remote` (a plain boolean) was populated (`false` on both sampl
 
 ## Decisions
 
+- **Skills are canonicalized through `skilltag.Parse`, not passed through raw.** Live
+  entries are compound phrases ("Cost Accounting", "Zero-Based Budgeting"), the same shape
+  `micro1Skills` already documents needing mining rather than whole-string matching. An
+  earlier draft of this adapter assigned `j.Skills` verbatim, bypassing the dictionary
+  entirely — caught in review before merge, since it would have shipped raw, uncontrolled
+  strings into the `jobs.skills` facet, against `jobderive.go`'s documented "already
+  canonical" precondition for a structured-source `Skills` list.
 - **`fullBoardListing` still applies.** The listing proves the whole set of open postings;
   a detail-fetch failure for one posting becomes an Unreadable marker (never a silent
   drop), the same contract `successfactors`/`careerspage` already give a listing-then-

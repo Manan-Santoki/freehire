@@ -32,7 +32,7 @@ const humanbitEmptyListingHTML = `<html><body>
 // "$19" description reference resolving only against this page's own text row (a
 // DIFFERENT numbering than the listing's "$28"/"$29" for the same field name).
 const humanbitDetail1HTML = `<html><body>
-<script>self.__next_f.push([1,"18:{\"job\":{\"id\":\"job-0000-0000-0000-000000000001\",\"title\":\"Senior Cost Accountant\",\"description\":\"$19\",\"location\":\"Noida\",\"employment_type\":[\"full-time\"],\"remote\":false,\"skills\":[\"Cost Accounting\",\"SAP PP\"],\"work_mode\":null,\"seniority_level\":100,\"created_at\":\"2026-08-15T09:01:37.375291+00:00\"}}\n19:T23,<p>Own the cost base in detail.</p>\n"])</script>
+<script>self.__next_f.push([1,"18:{\"job\":{\"id\":\"job-0000-0000-0000-000000000001\",\"title\":\"Senior Cost Accountant\",\"description\":\"$19\",\"location\":\"Noida\",\"employment_type\":[\"full-time\"],\"remote\":false,\"skills\":[\"SQL\",\"Cost Accounting\"],\"work_mode\":null,\"seniority_level\":100,\"created_at\":\"2026-08-15T09:01:37.375291+00:00\"}}\n19:T23,<p>Own the cost base in detail.</p>\n"])</script>
 </body></html>`
 
 // humanbitDetail2HTML is job 2's detail page: remote=true, employment_type=["contract"],
@@ -104,8 +104,11 @@ func TestHumanBitFetchListsAndHydrates(t *testing.T) {
 	if j1.WorkMode != "" {
 		t.Errorf("WorkMode = %q, want empty (remote:false defers to the heuristic)", j1.WorkMode)
 	}
-	if strings.Join(j1.Skills, ",") != "Cost Accounting,SAP PP" {
-		t.Errorf("Skills = %v", j1.Skills)
+	// "Cost Accounting" is not in the skill dictionary (an IT-focused vocabulary) and is
+	// correctly dropped rather than passed through raw; "SQL" resolves to its canonical
+	// name, proving the dictionary pass actually runs rather than being bypassed.
+	if strings.Join(j1.Skills, ",") != "sql" {
+		t.Errorf("Skills = %v, want only the dictionary-recognized term", j1.Skills)
 	}
 	if j1.SalaryMin != nil || j1.SalaryMax != nil {
 		t.Errorf("SalaryMin/Max = %v/%v, want nil (no confirmed period signal)", j1.SalaryMin, j1.SalaryMax)
@@ -123,6 +126,33 @@ func TestHumanBitFetchListsAndHydrates(t *testing.T) {
 	}
 	if j2.WorkMode != "remote" {
 		t.Errorf("WorkMode = %q, want remote", j2.WorkMode)
+	}
+}
+
+// A listing whose entries all carry an empty id (a markup change on the listing's own
+// shape) must yield no jobs and no detail requests, not pass an empty id through to
+// fetchDetails.
+const humanbitListingAllEmptyIDsHTML = `<html><body>
+<script>self.__next_f.push([1,"27:{\"jobBoard\":\"scrabble-jigsaw\",\"jobs\":[{\"id\":\"\",\"title\":\"No ID\",\"org_name\":\"Scrabble & Jigsaw\"}]}\n"])</script>
+</body></html>`
+
+func TestHumanBitListingWithNoUsableIDsYieldsNoJobs(t *testing.T) {
+	fake := (&routedHTTP{}).route(humanbitListingURL(), humanbitListingAllEmptyIDsHTML)
+	jobs, err := NewHumanBit(fake).Fetch(context.Background(), CompanyEntry{Board: "scrabble-jigsaw"})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("got %d jobs, want 0 (every listing entry had an empty id)", len(jobs))
+	}
+}
+
+// humanbitEmploymentType must pick the first RECOGNIZED element, skipping an unrecognized
+// one ahead of it rather than stopping there.
+func TestHumanBitEmploymentTypeSkipsUnrecognizedElements(t *testing.T) {
+	got := humanbitEmploymentType([]string{"freelance-adjacent", "contract", "full-time"})
+	if got != "contract" {
+		t.Errorf("humanbitEmploymentType = %q, want contract (first recognized element, skipping the unrecognized one ahead of it)", got)
 	}
 }
 
