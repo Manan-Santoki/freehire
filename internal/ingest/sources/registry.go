@@ -181,6 +181,7 @@ func All(c HTTPClient) map[string]Source {
 		NewJazzHR(c),
 		NewWPYoast(c),
 		NewBreezy(c),
+		NewHerp(c),
 		NewHrmos(c),
 		NewJoin(pacedJoinGetter(c)),
 		NewRapyd(c),
