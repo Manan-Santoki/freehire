@@ -86,7 +86,7 @@ type JobDocument struct {
 	AIInterview bool `json:"ai_interview,omitempty"`
 	// AutoApplyAvailable is true when the job's source is one of the ATS
 	// platforms internal/api/atsapply can currently attempt to fill and
-	// submit for (see autoApplyProviders) — a best-effort, provider-level
+	// submit for (see AutoApplyProviders) — a best-effort, provider-level
 	// eligibility signal, never a guarantee that a real attempt would
 	// succeed (a captcha challenge, an unrecognized form layout, or missing
 	// candidate answers can still park it). True-or-absent like AIInterview:
@@ -117,17 +117,24 @@ type JobDocument struct {
 // stored side and the query side cannot drift apart.
 const SkillEmbedder = "skills"
 
-// autoApplyProviders is a manually-synced mirror of
-// internal/api/atsapply's fillProviders (greenhouse, lever — chromedp) union
-// browserUseProviders (ashby, workable — cloud-agent fallback). This package
-// cannot import atsapply: search is layer 6 and api is layer 8, strictly
-// above it, per this repo's layering rule. Ashby and Workable are included
-// even though the browser-use fallback ships OFF by default in production
-// today — this facet is a best-effort provider-eligibility signal, not a
-// submission guarantee. A future change to either side of atsapply's own
-// maps must edit this list by hand; TestAutoApplyProviders_ExactExpectedSet
-// makes the drift visible rather than silent.
-var autoApplyProviders = map[string]bool{
+// AutoApplyProviders is a manually-synced mirror of internal/api/atsapply's
+// fillProviders (greenhouse, lever — chromedp) union browserUseProviders
+// (ashby, workable — cloud-agent fallback). This package cannot import
+// atsapply: search is layer 6 and api is layer 8, strictly above it, per
+// this repo's layering rule. Ashby and Workable are included even though
+// the browser-use fallback ships OFF by default in production today — this
+// facet is a best-effort provider-eligibility signal, not a submission
+// guarantee.
+//
+// Exported (unlike this package's other index-time-derivation internals) so
+// atsapply's own tests — which CAN import search, since api sits above it —
+// can assert this actually matches fillProviders/browserUseProviders. A
+// same-package edit that drifts from that real source of truth fails
+// TestAutoApplyProviders_ExactExpectedSet here; an unmatched edit on
+// atsapply's own side fails
+// TestAutoApplyFacetProvidersMatchThisPackagesOwnMaps there. Neither test
+// alone would catch both directions.
+var AutoApplyProviders = map[string]bool{
 	"greenhouse": true,
 	"lever":      true,
 	"ashby":      true,
@@ -157,7 +164,7 @@ func FromJob(j db.Job) (JobDocument, error) {
 		AIArchetype:        aiarchetype.Derive(j.Skills, j.Category),
 		RoleType:           roletype.Derive(j.Title),
 		AIInterview:        view.AIInterviewReports > 0,
-		AutoApplyAvailable: autoApplyProviders[j.Source],
+		AutoApplyAvailable: AutoApplyProviders[j.Source],
 	}
 	if eff := jobview.EffectivePostedAt(j.PostedAt, j.CreatedAt, time.Now()); eff.Valid {
 		doc.PostedTS = eff.Time.Unix()

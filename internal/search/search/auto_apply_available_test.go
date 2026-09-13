@@ -7,10 +7,14 @@ import (
 	"github.com/strelov1/freehire/internal/platform/db"
 )
 
-// TestAutoApplyProviders_ExactExpectedSet guards against silent drift from
-// atsapply's own fillProviders/browserUseProviders, which this package
-// cannot import (search, layer 6, sits below api, layer 8). A future change
-// to either side must edit this list by hand, not fall out of sync silently.
+// TestAutoApplyProviders_ExactExpectedSet is a local snapshot check, not a
+// cross-package one: it cannot see atsapply's real fillProviders/
+// browserUseProviders (search, layer 6, cannot import atsapply, in api,
+// layer 8), so it only catches an accidental same-PR edit to this literal,
+// not atsapply's own maps drifting away from it unnoticed.
+// TestAutoApplyFacetProvidersMatchThisPackagesOwnMaps in
+// internal/api/atsapply is what closes that real gap, from the side that
+// can see both.
 func TestAutoApplyProviders_ExactExpectedSet(t *testing.T) {
 	want := map[string]bool{
 		"greenhouse": true,
@@ -18,12 +22,12 @@ func TestAutoApplyProviders_ExactExpectedSet(t *testing.T) {
 		"ashby":      true,
 		"workable":   true,
 	}
-	if len(autoApplyProviders) != len(want) {
-		t.Fatalf("autoApplyProviders = %v, want exactly %v", autoApplyProviders, want)
+	if len(AutoApplyProviders) != len(want) {
+		t.Fatalf("AutoApplyProviders = %v, want exactly %v", AutoApplyProviders, want)
 	}
 	for provider := range want {
-		if !autoApplyProviders[provider] {
-			t.Errorf("autoApplyProviders missing expected provider %q", provider)
+		if !AutoApplyProviders[provider] {
+			t.Errorf("AutoApplyProviders missing expected provider %q", provider)
 		}
 	}
 }

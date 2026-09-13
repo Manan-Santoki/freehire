@@ -105,12 +105,19 @@ generic system a new boolean-checkbox control variant for a single caller.
   isn't guaranteed" caption on the checkbox; no code mitigation is in scope,
   since changing what's actually enforced is explicitly out of scope for this
   change.
-- **Manual-sync drift.** The provider constant in `internal/search` can drift
+- **Manual-sync drift.** The exported `search.AutoApplyProviders` can drift
   from `atsapply.fillProviders`/`browserUseProviders` if one changes without
-  the other → mitigated by a same-package unit test asserting the exact
-  4-provider set, so a future edit to either side at least fails a nearby,
-  obviously-relevant test rather than failing silently; full elimination
-  would need the shared-package consolidation noted above.
+  the other. A same-package unit test in `internal/search/search` only
+  catches an accidental edit to the literal itself — it cannot see
+  atsapply's real maps, since search (layer 6) cannot import atsapply (in
+  api, layer 8) — so on its own it does NOT catch atsapply's side drifting
+  away unnoticed, a gap code review caught. → mitigated for real by a second
+  test, `TestAutoApplyFacetProvidersMatchThisPackagesOwnMaps` in
+  `internal/api/atsapply` (which CAN import search, since api sits above
+  it), asserting `search.AutoApplyProviders` equals the live union of
+  `fillProviders`/`browserUseProviders`. The two tests together cover both
+  directions; full elimination of the duplication would still need the
+  shared-package consolidation noted above.
 - **The reindex step is manual, like every other filterable-attribute
   rollout in this codebase.** Skipping it leaves pre-existing postings
   unmarked (reads as "auto-apply available nowhere" rather than "index not
