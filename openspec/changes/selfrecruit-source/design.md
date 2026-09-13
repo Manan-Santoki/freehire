@@ -59,9 +59,11 @@ detail fetch needs here — DOM extraction by class, not a structured payload.
 - [Offset pagination has no explicit "last page" signal other than a redirect] → if a
   future tenant's redirect-past-the-end lands somewhere OTHER than a page whose links are
   already fully seen (e.g. a distinct "no more jobs" page with a couple of unrelated
-  promotional links), the walk could in principle keep paging until `maxPages`. Bounded by
-  a generous page cap either way, so the failure mode is "a few wasted requests," not an
-  infinite loop.
+  promotional links), the walk could in principle keep paging until `selfrecruitMaxPages`.
+  `crawlAllPagedLinks` turns hitting that cap while still finding new links into an ERROR
+  (failing the whole `Fetch`), not a silent truncation — the correct, safe behavior for a
+  `fullBoardListing` adapter, but it means such a tenant's board would fail outright on
+  every crawl rather than merely under-report, until the cap or the matcher is revisited.
 
 ## Migration Plan
 

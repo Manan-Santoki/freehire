@@ -52,9 +52,6 @@ func selfrecruitDetailHTML(title, description string) string {
 </body></html>`
 }
 
-// A route for the detail URL must be registered before the listing route, since routedHTTP
-// matches by substring in registration order and the listing URL is a prefix of every
-// detail URL.
 func TestSelfRecruitFetchListingThenDetailAndMaps(t *testing.T) {
 	id := "a7cdcc00-1c9c-464c-8960-945af0c0e0a4"
 	fake := (&routedHTTP{}).
