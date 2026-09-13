@@ -50,12 +50,11 @@ same board.
 - **WHEN** a user submits `https://jobs.ashbyhq.com/blitzy/<uuid>` and another submits `https://jobs.ashbyhq.com/blitzy`
 - **THEN** both derive source `ashby`, board `blitzy`, so the second is a duplicate of the first
 
-#### Scenario: Eightfold, Gupy, and Keka links are accepted
+#### Scenario: Keka links are accepted
 
-- **WHEN** a user submits `https://acme.eightfold.ai/careers`, or `https://acme.gupy.io`, or
-  `https://acme.keka.com/careers`
-- **THEN** each derives its provider's board `acme` and is accepted as a contribution, the same
-  as any other recognized multi-tenant ATS
+- **WHEN** a user submits `https://acme.keka.com/careers`
+- **THEN** it derives provider `keka`, board `acme`, and is accepted as a contribution, the
+  same as any other recognized multi-tenant ATS
 
 ### Requirement: URL canonicalization
 

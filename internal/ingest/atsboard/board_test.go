@@ -186,8 +186,6 @@ func TestRecognize(t *testing.T) {
 		{"recruitee vacancy strips path", "https://acme.recruitee.com/o/senior-go/apply?utm=x", "recruitee", "acme", "https://acme.recruitee.com", true},
 		{"recruitee board listing", "https://acme.recruitee.com", "recruitee", "acme", "https://acme.recruitee.com", true},
 		{"bamboohr subdomain", "https://acme.bamboohr.com/careers/42", "bamboohr", "acme", "https://acme.bamboohr.com", true},
-		{"eightfold subdomain", "https://10xgenomics.eightfold.ai/careers", "eightfold", "10xgenomics", "https://10xgenomics.eightfold.ai", true},
-		{"gupy subdomain", "https://3cservices.gupy.io", "gupy", "3cservices", "https://3cservices.gupy.io", true},
 		{"keka subdomain", "https://100.keka.com/careers", "keka", "100", "https://100.keka.com", true},
 		{"personio nested apex subdomain", "https://acme.jobs.personio.com/job/9", "personio", "acme", "https://acme.jobs.personio.com", true},
 		{"personio de host", "https://reflex-aerospace-gmbh.jobs.personio.de/job/2679152?display=en#apply", "personio", "reflex-aerospace-gmbh", "https://reflex-aerospace-gmbh.jobs.personio.de", true},
@@ -331,6 +329,7 @@ func TestRecognize(t *testing.T) {
 		// "help". Before this guard was wired into modeSubdomain, both resolved as false boards.
 		{"recruitee platform app host not a tenant", "https://app.recruitee.com/", "", "", "", false},
 		{"bamboohr platform help host not a tenant", "https://help.bamboohr.com/s/article/x", "", "", "", false},
+		{"keka platform app host not a tenant", "https://app.keka.com/", "", "", "", false},
 		// "embed" READS like platform machinery and is not: embed.bamboohr.com is the board of a
 		// company actually called Embed, serving live postings, and BambooHR's widget is a PATH on
 		// each tenant's own host (<board>.bamboohr.com/jobs/embed2.php) rather than a host of its

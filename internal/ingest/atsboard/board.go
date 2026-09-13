@@ -170,8 +170,6 @@ var atsBoards = []struct{ host, source, mode string }{
 	{"jobs.personio.com", "personio", modeSubdomain},
 	{"jobs.personio.de", "personio", modeSubdomain}, // Personio DE regional host; board = same tenant subdomain
 	{"pinpointhq.com", "pinpoint", modeSubdomain},
-	{"eightfold.ai", "eightfold", modeSubdomain},
-	{"gupy.io", "gupy", modeSubdomain},
 	{"keka.com", "keka", modeSubdomain},
 	{"talentlyft.com", "talentlyft", modeSubdomain},
 	{"traffit.com", "traffit", modeSubdomain},
