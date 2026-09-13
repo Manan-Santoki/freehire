@@ -84,6 +84,14 @@ type JobDocument struct {
 	// negative is asked as NOT of the positive (see aiInterviewFragment), which is what
 	// also reaches the documents that omit the attribute entirely.
 	AIInterview bool `json:"ai_interview,omitempty"`
+	// AutoApplyAvailable is true when the job's source is one of the ATS
+	// platforms internal/api/atsapply can currently attempt to fill and
+	// submit for (see autoApplyProviders) — a best-effort, provider-level
+	// eligibility signal, never a guarantee that a real attempt would
+	// succeed (a captcha challenge, an unrecognized form layout, or missing
+	// candidate answers can still park it). True-or-absent like AIInterview:
+	// written only when true, never explicitly false.
+	AutoApplyAvailable bool `json:"auto_apply_available,omitempty"`
 	// Vectors carries the job's skill vector under Meilisearch's reserved `_vectors`
 	// key — the userProvided embedder that backs the match sort (see
 	// internal/dict/skillvec). Like Roles and RoleType it lives on the document rather
@@ -109,6 +117,23 @@ type JobDocument struct {
 // stored side and the query side cannot drift apart.
 const SkillEmbedder = "skills"
 
+// autoApplyProviders is a manually-synced mirror of
+// internal/api/atsapply's fillProviders (greenhouse, lever — chromedp) union
+// browserUseProviders (ashby, workable — cloud-agent fallback). This package
+// cannot import atsapply: search is layer 6 and api is layer 8, strictly
+// above it, per this repo's layering rule. Ashby and Workable are included
+// even though the browser-use fallback ships OFF by default in production
+// today — this facet is a best-effort provider-eligibility signal, not a
+// submission guarantee. A future change to either side of atsapply's own
+// maps must edit this list by hand; TestAutoApplyProviders_ExactExpectedSet
+// makes the drift visible rather than silent.
+var autoApplyProviders = map[string]bool{
+	"greenhouse": true,
+	"lever":      true,
+	"ashby":      true,
+	"workable":   true,
+}
+
 // FromJob maps a database job row to its index document. An empty or absent
 // enrichment payload yields the zero Enrichment (the job is still fully
 // searchable by its text). Geography (regions/countries) and work_mode ride the
@@ -127,11 +152,12 @@ func FromJob(j db.Job) (JobDocument, error) {
 	// its own jobview.FromRow, unaffected by this local copy.
 	view.Description = truncateRunes(view.Description, maxIndexedDescriptionRunes)
 	doc := JobDocument{
-		ID:          j.ID,
-		Job:         view,
-		AIArchetype: aiarchetype.Derive(j.Skills, j.Category),
-		RoleType:    roletype.Derive(j.Title),
-		AIInterview: view.AIInterviewReports > 0,
+		ID:                 j.ID,
+		Job:                view,
+		AIArchetype:        aiarchetype.Derive(j.Skills, j.Category),
+		RoleType:           roletype.Derive(j.Title),
+		AIInterview:        view.AIInterviewReports > 0,
+		AutoApplyAvailable: autoApplyProviders[j.Source],
 	}
 	if eff := jobview.EffectivePostedAt(j.PostedAt, j.CreatedAt, time.Now()); eff.Valid {
 		doc.PostedTS = eff.Time.Unix()
