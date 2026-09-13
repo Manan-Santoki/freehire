@@ -294,6 +294,12 @@ func All(c HTTPClient) map[string]Source {
 		NewHimalayas(c),
 		NewRemotive(c),
 		NewRemotedotcom(c),
+		// wellfound needs no fingerprint-spoofing transport of its own (unlike bayt/gulftalent
+		// below) — its pages sit behind a full Cloudflare JS challenge that only the hosted
+		// Firecrawl tier can pass, wired in firecrawlProviders. Without that credential this
+		// entry still exists (classification/dedup must know about it) but every crawl attempt
+		// simply 403s on the challenge response, the same shape bayt/gulftalent already have.
+		NewWellfound(c),
 		NewRemotli(c),
 		NewLandingJobs(c),
 		NewTheMuse(c),
@@ -307,6 +313,10 @@ func All(c HTTPClient) map[string]Source {
 		NewTyomarkkinatori(c),
 		NewLikeit(c),
 		NewArbeitsagentur(c),
+		// EURES: the EU's cross-border public employment portal, aggregating national PES
+		// and partner-board feeds across ~31 EU/EFTA countries. Board-based (board =
+		// country), aggregator-marked (see eures.go for the confirmed re-listing evidence).
+		NewEures(c),
 		// International single-company adapters (boardless).
 		NewTelegramCareers(c),
 		NewAmazon(c),
