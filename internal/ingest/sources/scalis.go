@@ -30,16 +30,23 @@ const scalisPageSize = 10
 
 // scalisMaxPages bounds the page walk. The natural stop is a page whose result list is
 // empty (confirmed live, including past the true last page), but a misbehaving tenant that
-// never returns an empty page would otherwise loop forever.
-const scalisMaxPages = 100
+// never returns an empty page would otherwise loop forever. `limit` is confirmed
+// server-clamped (a live `limit=100` request still answered 10 results per page), so a
+// larger tenant genuinely needs more pages rather than a bigger page — this is a wide
+// safety margin over the one measured tenant (46 postings, 5 pages), not a real board size,
+// and reaching it is a hard failure (see Fetch), never a silent partial success, the same
+// lesson `teamtailor.ttMaxPages` already paid for on a real board.
+const scalisMaxPages = 500
 
-// fullBoardListing: a page-fetch or decode failure at any point fails the whole Fetch (see
-// the loop below), so this marker's "whole listing or fail outright" guarantee holds even
-// though the listing is paginated.
+// fullBoardListing: jobURLs proves completeness by paginating to a genuinely empty page,
+// and treats a later-page failure or reaching the scalisMaxPages safety ceiling as a hard
+// Fetch failure rather than a partial success — see the fullBoardListing interface's own
+// bar (source.go) and scalisMaxPages's comment for why a reachable ceiling must fail loudly.
 func (scalis) fullBoardListing() {}
 
 func (s scalis) Fetch(ctx context.Context, e CompanyEntry) ([]Job, error) {
 	var jobs []Job
+	refs, resolved := 0, 0
 	for page := 1; page <= scalisMaxPages; page++ {
 		url := fmt.Sprintf("https://%s.scalis.ai/jobs?page=%d&limit=%d&sortBy=SORT_BEST_MATCH",
 			e.Board, page, scalisPageSize)
@@ -52,16 +59,59 @@ func (s scalis) Fetch(ctx context.Context, e CompanyEntry) ([]Job, error) {
 			return nil, fmt.Errorf("scalis: board %q page %d: %w", e.Board, page, err)
 		}
 		if len(listing.Results) == 0 {
-			break
+			// Postings reference their descriptions by id into the flight's text rows
+			// (see scalisToJob). If every reference on the whole board failed to
+			// resolve, the row parse broke — e.g. the marker format changed — so fail
+			// loudly rather than ship a board of empty-bodied jobs; a single
+			// unresolved reference on an otherwise-healthy board still yields its
+			// posting with an empty description (tolerated degradation), matching deel.
+			if refs > 0 && resolved == 0 {
+				return nil, fmt.Errorf("scalis: board %q: %d description references but none resolved", e.Board, refs)
+			}
+			return jobs, nil
 		}
 		rows := nextFlightTextRows(flight)
 		for _, p := range listing.Results {
-			if j, ok := scalisToJob(e, rows, p); ok {
+			desc, hadRef := scalisDescription(p, rows)
+			if hadRef {
+				refs++
+				if desc != "" {
+					resolved++
+				}
+			}
+			if j, ok := scalisToJob(e, desc, p); ok {
 				jobs = append(jobs, j)
 			}
 		}
 	}
-	return jobs, nil
+	// The loop ran out scalisMaxPages without ever seeing an empty page — the board is
+	// not proven to have ended, so this is not "here is what we found," it is a failure.
+	return nil, fmt.Errorf("scalis: board %q: reached the %d-page safety ceiling without finding the board's end",
+		e.Board, scalisMaxPages)
+}
+
+// scalisDescription resolves a posting's description, preferring descriptionHtml (it
+// preserves paragraph/list structure) and falling back to the plain-text description when
+// the HTML field's own reference fails to resolve — a row-parse hiccup on just that one
+// field still keeps a body rather than losing it. hadRef reports whether either field was a
+// "$<id>" reference at all, which Fetch uses for the board-wide resolution health check: it
+// is the single source of truth both scalisToJob and that check read, so they can never
+// disagree about whether a given posting's reference resolved.
+func scalisDescription(p scalisPosting, rows map[string]string) (desc string, hadRef bool) {
+	for _, field := range []string{p.DescriptionHTML, p.Description} {
+		ref, isRef := strings.CutPrefix(field, "$")
+		if !isRef {
+			if field != "" {
+				return field, hadRef // an inline (non-reference) value wins outright
+			}
+			continue
+		}
+		hadRef = true
+		if v := rows[ref]; v != "" {
+			return v, true
+		}
+	}
+	return "", hadRef
 }
 
 // scalisListing is the "initialData" object a listing page's flight carries.
@@ -110,16 +160,12 @@ func extractScalisListing(flight string) (scalisListing, error) {
 	return l, nil
 }
 
-// scalisToJob maps one listing result to a Job. ok is false when the posting carries no
-// id, which would collide on the (source, external_id) dedup key.
-func scalisToJob(e CompanyEntry, rows map[string]string, p scalisPosting) (Job, bool) {
+// scalisToJob maps one listing result to a Job, given its already-resolved description
+// (see scalisDescription). ok is false when the posting carries no id, which would collide
+// on the (source, external_id) dedup key.
+func scalisToJob(e CompanyEntry, desc string, p scalisPosting) (Job, bool) {
 	if p.ID == "" {
 		return Job{}, false
-	}
-
-	desc := p.DescriptionHTML
-	if ref, isRef := strings.CutPrefix(desc, "$"); isRef {
-		desc = rows[ref]
 	}
 
 	var locParts []string
@@ -138,7 +184,7 @@ func scalisToJob(e CompanyEntry, rows map[string]string, p scalisPosting) (Job, 
 		Company:        firstNonEmpty(p.Company.Name, e.Company),
 		Location:       location,
 		Description:    sanitizeHTML(desc),
-		Remote:         workMode == "remote" || isRemote(location),
+		Remote:         workMode == "remote" || isRemote(p.Title+" "+location),
 		WorkMode:       workMode,
 		EmploymentType: scalisEmploymentType(p.Employment),
 		Skills:         p.Skills,

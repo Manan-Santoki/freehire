@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,14 @@ const scalisPage1HTML = `<html><body>
 <script>self.__next_f.push([1,"27:{\"initialData\":{\"results\":[{\"id\":\"aaaa1111-0000-4000-8000-000000000001\",\"title\":\"Senior Backend Engineer\",\"company\":{\"name\":\"BOLD Business\"},\"locations\":[{\"city\":\"Bogota\",\"country\":\"CO\"}],\"employment\":\"FULL_TIME\",\"workplace\":\"REMOTE\",\"payment\":\"SALARY\",\"skills\":[\"Go\",\"Postgres\"],\"salary\":{\"min\":null,\"max\":null,\"currency\":null},\"description\":\"$28\",\"descriptionHtml\":\"$29\",\"createdAt\":\"2026-06-18T17:10:41.385Z\"},{\"id\":\"aaaa1111-0000-4000-8000-000000000002\",\"title\":\"Support Engineer\",\"company\":{\"name\":\"BOLD Business\"},\"locations\":[{\"city\":\"Lima\",\"country\":\"PE\"}],\"employment\":\"CONTRACTOR\",\"workplace\":\"HYBRID\",\"payment\":\"HOURLY\",\"skills\":[],\"salary\":{\"min\":20,\"max\":30,\"currency\":\"USD\"},\"description\":\"$2a\",\"descriptionHtml\":\"$2b\",\"createdAt\":\"2026-07-01T09:00:00.000Z\"}],\"count\":2,\"paginationCount\":2}}\n28:T15,Reports to: Team Lead\n29:T14,<p>Build things.</p>\n2a:Tf,Reports to: CTO\n2b:T15,<p>Ship features.</p>\n"])</script>
 </body></html>`
 
+// scalisPage2HTML is a genuinely distinct second page (a different posting, a different
+// running count) — TestScalisFetchPaginatesToExhaustion uses this, not a repeat of page 1,
+// so the test actually proves cross-page accumulation rather than re-checking single-page
+// mapping under a different name.
+const scalisPage2HTML = `<html><body>
+<script>self.__next_f.push([1,"27:{\"initialData\":{\"results\":[{\"id\":\"aaaa1111-0000-4000-8000-000000000003\",\"title\":\"Data Analyst\",\"company\":{\"name\":\"BOLD Business\"},\"locations\":[{\"city\":\"Manila\",\"country\":\"PH\"}],\"employment\":\"FULL_TIME\",\"workplace\":\"ON_SITE\",\"payment\":\"SALARY\",\"skills\":[\"SQL\"],\"salary\":{\"min\":null,\"max\":null,\"currency\":null},\"description\":\"$28\",\"descriptionHtml\":\"$29\",\"createdAt\":\"2026-08-01T00:00:00.000Z\"}],\"count\":3,\"paginationCount\":3}}\n28:T15,Reports to: Data Lead\n29:T14,<p>Analyze data.</p>\n"])</script>
+</body></html>`
+
 // scalisEmptyPageHTML is a listing page past the last real page: an empty results array,
 // the confirmed live termination signal (no redirect trap).
 const scalisEmptyPageHTML = `<html><body>
@@ -21,10 +30,7 @@ const scalisEmptyPageHTML = `<html><body>
 </body></html>`
 
 func scalisListingURLFor(page int) string {
-	if page == 1 {
-		return "https://boldbusiness.scalis.ai/jobs?page=1&limit=10&sortBy=SORT_BEST_MATCH"
-	}
-	return "https://boldbusiness.scalis.ai/jobs?page=2&limit=10&sortBy=SORT_BEST_MATCH"
+	return fmt.Sprintf("https://boldbusiness.scalis.ai/jobs?page=%d&limit=10&sortBy=SORT_BEST_MATCH", page)
 }
 
 func TestScalisProvider(t *testing.T) {
@@ -104,14 +110,28 @@ func TestScalisFetchSinglePageAndMaps(t *testing.T) {
 func TestScalisFetchPaginatesToExhaustion(t *testing.T) {
 	fake := (&routedHTTP{}).
 		route(scalisListingURLFor(1), scalisPage1HTML).
-		route(scalisListingURLFor(2), scalisEmptyPageHTML)
+		route(scalisListingURLFor(2), scalisPage2HTML).
+		route(scalisListingURLFor(3), scalisEmptyPageHTML)
 
 	jobs, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if len(jobs) != 2 {
-		t.Fatalf("got %d jobs, want 2 (page 2 must have been fetched and found empty)", len(jobs))
+	if len(jobs) != 3 {
+		t.Fatalf("got %d jobs, want 3 (the union of page 1's two postings and page 2's one)", len(jobs))
+	}
+	ids := map[string]bool{}
+	for _, j := range jobs {
+		ids[j.ExternalID] = true
+	}
+	for _, want := range []string{
+		"aaaa1111-0000-4000-8000-000000000001",
+		"aaaa1111-0000-4000-8000-000000000002",
+		"aaaa1111-0000-4000-8000-000000000003",
+	} {
+		if !ids[want] {
+			t.Errorf("missing job %q in %v", want, ids)
+		}
 	}
 }
 
@@ -135,6 +155,75 @@ func TestScalisFetchFailsWholeBoardOnLaterPageError(t *testing.T) {
 
 	if _, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"}); err == nil {
 		t.Fatal("Fetch succeeded despite a later-page listing error")
+	}
+}
+
+// scalisUnresolvableRefsHTML carries postings whose description references name ids no
+// text row on the page actually provides — the shape a marker-format change would produce.
+const scalisUnresolvableRefsHTML = `<html><body>
+<script>self.__next_f.push([1,"27:{\"initialData\":{\"results\":[{\"id\":\"aaaa1111-0000-4000-8000-000000000009\",\"title\":\"Ghost Role\",\"company\":{\"name\":\"BOLD Business\"},\"locations\":[],\"employment\":\"FULL_TIME\",\"workplace\":\"REMOTE\",\"payment\":\"SALARY\",\"skills\":[],\"salary\":{\"min\":null,\"max\":null,\"currency\":null},\"description\":\"$99\",\"descriptionHtml\":\"$98\",\"createdAt\":\"2026-06-18T17:10:41.385Z\"}],\"count\":1,\"paginationCount\":1}}\n"])</script>
+</body></html>`
+
+// A board where every description reference fails to resolve must fail loudly rather than
+// ship a board of empty-bodied jobs — the same posture deel.Fetch already takes, since a
+// resolution failure this total means the marker format itself likely changed.
+func TestScalisFetchFailsWhenAllDescriptionReferencesUnresolved(t *testing.T) {
+	fake := (&routedHTTP{}).
+		route(scalisListingURLFor(1), scalisUnresolvableRefsHTML).
+		route(scalisListingURLFor(2), scalisEmptyPageHTML)
+
+	if _, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"}); err == nil {
+		t.Fatal("Fetch succeeded despite every description reference failing to resolve")
+	}
+}
+
+// A board whose listing never returns an empty page has not proven it ended — reaching the
+// safety ceiling must fail the whole Fetch, never quietly return the partial result gathered
+// so far (the same truncation bug already found and fixed once in this codebase for
+// teamtailor's ttMaxPages).
+func TestScalisFetchFailsAtSafetyCeiling(t *testing.T) {
+	fake := (&routedHTTP{}).route("boldbusiness.scalis.ai", scalisPage1HTML) // matches every page URL
+
+	_, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"})
+	if err == nil {
+		t.Fatal("Fetch succeeded despite never seeing an empty page")
+	}
+	if !strings.Contains(err.Error(), "safety ceiling") {
+		t.Errorf("error = %q, want it to name the safety ceiling", err.Error())
+	}
+}
+
+// scalisFallbackHTML's posting has a descriptionHtml reference to a row that isn't present,
+// but its plain-text description reference IS — the adapter must fall back to it rather
+// than losing the description entirely.
+const scalisFallbackHTML = `<html><body>
+<script>self.__next_f.push([1,"27:{\"initialData\":{\"results\":[{\"id\":\"aaaa1111-0000-4000-8000-00000000000a\",\"title\":\"Fallback Role\",\"company\":{\"name\":\"BOLD Business\"},\"locations\":[],\"employment\":\"FULL_TIME\",\"workplace\":\"REMOTE\",\"payment\":\"SALARY\",\"skills\":[],\"salary\":{\"min\":null,\"max\":null,\"currency\":null},\"description\":\"$28\",\"descriptionHtml\":\"$97\",\"createdAt\":\"2026-06-18T17:10:41.385Z\"}],\"count\":1,\"paginationCount\":1}}\n28:Tf,Plain text body\n"])</script>
+</body></html>`
+
+func TestScalisDescriptionFallsBackToPlainTextWhenHTMLUnresolved(t *testing.T) {
+	fake := (&routedHTTP{}).
+		route(scalisListingURLFor(1), scalisFallbackHTML).
+		route(scalisListingURLFor(2), scalisEmptyPageHTML)
+
+	jobs, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Description != "Plain text body" {
+		t.Fatalf("got %+v, want the plain-text description as a fallback", jobs)
+	}
+}
+
+// scalisWrongShapeHTML's initialData carries "results" as an object, not an array — a
+// markup change the adapter has never observed live.
+const scalisWrongShapeHTML = `<html><body>
+<script>self.__next_f.push([1,"27:{\"initialData\":{\"results\":{}}}\n"])</script>
+</body></html>`
+
+func TestScalisFetchFailsOnUnrecognizedPageShape(t *testing.T) {
+	fake := (&routedHTTP{}).route(scalisListingURLFor(1), scalisWrongShapeHTML)
+	if _, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"}); err == nil {
+		t.Fatal("Fetch succeeded despite results being an object, not an array")
 	}
 }
 
