@@ -12,8 +12,10 @@
       (`internal/search/search/document.go`, after the existing `AIInterview`
       field), tagged `json:"auto_apply_available,omitempty"`.
 - [x] 1.4 Compute it inline in `search.FromJob`
-      (`internal/search/search/document.go`) as a lookup of `view.Source`
-      against the provider set from 1.1.
+      (`internal/search/search/document.go`) as a lookup of `j.Source` (the
+      raw `db.Job` field `view.Source` is copied from verbatim, so either
+      reads identically — implemented against `j.Source` directly since
+      `FromJob` already has it in scope) against the provider set from 1.1.
 - [x] 1.5 Add test cases (in `document_test.go` or a new
       `auto_apply_available_test.go`, mirroring `ai_interview` coverage) for:
       each of the four eligible providers marks the document; `recruitee` and
@@ -37,8 +39,16 @@
       distribution. (Distribution inclusion is structural — every
       `StringFacets` entry is enrolled automatically, the same way
       `requires_clearance`/`ai_interview` have no dedicated distribution
-      test either; `query_filter_test.go`-style coverage of the two real
-      behaviors was added.)
+      test either.) Unit-level string-building coverage is in
+      `auto_apply_available_filter_test.go`; the real end-to-end proof
+      against a live Meilisearch (mirroring `TestSearchFiltersByAIInterviewFacet`,
+      plus `TestAutoApplyAvailableParamIsKnown` mirroring
+      `TestAIInterviewParamIsKnown`) is in the new
+      `auto_apply_available_integration_test.go` (`-tags=integration`,
+      needs Docker) — added after code review flagged the initial pass as
+      unit-only. Both run green (`CGO_ENABLED=0 go test -tags=integration
+      ./internal/search/search/...`, needed locally only because of an
+      unrelated broken macOS SDK/linker issue on this host).
 - [x] 2.5 Add the new attribute to the settings-drift expectations
       (`settings_test.go`/`settings_drift_test.go`) so
       `search-settings-drift` tracks it like every other filterable
@@ -46,7 +56,8 @@
       diff logic against fixture settings, not the real attribute list, so
       nothing there names individual attributes; added a
       `TestFacetSettings_AutoApplyAvailableIsFilterable` assertion in
-      `settings_test.go`, mirroring the existing per-attribute checks like
+      `auto_apply_available_filter_test.go`, mirroring the shape of
+      `settings_test.go`'s existing per-attribute checks like
       `is_tech`/`ai_archetype`.)
 
 ## 3. Frontend: filter model
