@@ -8,7 +8,7 @@
 // makes sense once Tailoring and Review are both already `done`).
 
 export type AutoApplyProgressStepId = 'tailoring' | 'review' | 'submitted';
-export type AutoApplyProgressStepState = 'pending' | 'active' | 'done' | 'queued' | 'error';
+type AutoApplyProgressStepState = 'pending' | 'active' | 'done' | 'queued' | 'error';
 
 export interface AutoApplyProgressStep {
   id: AutoApplyProgressStepId;
