@@ -48,7 +48,7 @@ func run(inPath, outDir string, stdout io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	rows, err := parseInventory(f)
 	if err != nil {
@@ -67,9 +67,11 @@ func run(inPath, outDir string, stdout io.Writer) int {
 	}
 	sort.Strings(providers)
 	for _, provider := range providers {
-		fmt.Fprintf(stdout, "seed-from-inventory: %s: %d boards\n", provider, len(byProvider[provider]))
+		// A summary print has no actionable recipient for a write failure — same category
+		// errcheck's own exclude-functions list already carries for cleanup calls.
+		_, _ = fmt.Fprintf(stdout, "seed-from-inventory: %s: %d boards\n", provider, len(byProvider[provider]))
 	}
-	fmt.Fprintf(stdout, "seed-from-inventory: %d rows unrecognized\n", unrecognized)
+	_, _ = fmt.Fprintf(stdout, "seed-from-inventory: %d rows unrecognized\n", unrecognized)
 	return 0
 }
 
