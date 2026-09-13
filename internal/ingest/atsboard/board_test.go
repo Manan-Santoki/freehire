@@ -30,6 +30,10 @@ func TestRecognize(t *testing.T) {
 		// word as the board and onboarded nothing; Greenhouse's embed machinery has no board in
 		// the path at all (the slug is in the `for=` param, which atsdetect reads).
 		{"jobvite portal segment skipped", "https://jobs.jobvite.com/careers/ness/jobs", "jobvite", "ness", "https://jobs.jobvite.com/careers/ness/jobs", true},
+		// HRMOS's board sits behind the platform's own "pages" path word, the same
+		// reserved-leading-segment shape Gusto's "/boards/<board>" already uses.
+		{"hrmos job posting", "https://hrmos.co/pages/cyberagent-group/jobs/900100", "hrmos", "cyberagent-group", "https://hrmos.co/pages/cyberagent-group/jobs/900100", true},
+		{"hrmos bare pages has no board", "https://hrmos.co/pages", "", "", "", false},
 		{"greenhouse embed app has no board", "https://job-boards.greenhouse.io/embed/job_app?token=1", "", "", "", false},
 		{"greenhouse embed script has no board", "https://boards.greenhouse.io/embed/job_board/js?for=acme", "", "", "", false},
 		// The CDN host leads with the same "job-boards" label the real board hosts do, so only a
