@@ -610,7 +610,7 @@
                       class={cn(
                         'flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium',
                         step.state === 'done' && 'bg-brand text-brand-foreground',
-                        step.state === 'active' && 'bg-brand-muted text-brand-strong ring-2 ring-brand',
+                        step.state === 'active' && 'bg-brand-muted text-brand-strong ring-2 ring-brand-ring',
                         step.state === 'queued' && 'bg-muted text-muted-foreground ring-2 ring-border',
                         step.state === 'error' && 'bg-destructive/15 text-destructive',
                         step.state === 'pending' && 'bg-muted text-muted-foreground'
