@@ -89,6 +89,7 @@ hire
 /search-drain
 /search-settings-drift
 /seed-adzuna-description-queue
+/seed-from-inventory
 /similar-backfill
 # Root-level build output of `go build ./cmd/<name>/` — never commit these artifacts.
 /backfill-company-info
