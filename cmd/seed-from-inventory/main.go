@@ -46,19 +46,19 @@ func main() {
 func run(inPath, outDir string, stdout io.Writer) int {
 	f, err := os.Open(inPath)
 	if err != nil {
-		return fail(stdout, err)
+		return fail(err)
 	}
 	defer f.Close()
 
 	rows, err := parseInventory(f)
 	if err != nil {
-		return fail(stdout, err)
+		return fail(err)
 	}
 
 	byProvider, unrecognized := convert(rows)
 
 	if err := writeSeeds(outDir, byProvider); err != nil {
-		return fail(stdout, err)
+		return fail(err)
 	}
 
 	providers := make([]string, 0, len(byProvider))
@@ -73,9 +73,10 @@ func run(inPath, outDir string, stdout io.Writer) int {
 	return 0
 }
 
-// fail reports err to stdout in the tool's own message format and returns the exit code
-// run should return for a structural failure.
-func fail(stdout io.Writer, err error) int {
-	fmt.Fprintf(stdout, "seed-from-inventory: %v\n", err)
+// fail reports err to stderr — matching cmd/harvest-boards and cmd/merge-companies, which
+// route both progress and errors there — and returns the exit code run should return for a
+// structural failure. The success-path summary stays on the stdout writer run was given.
+func fail(err error) int {
+	fmt.Fprintf(os.Stderr, "seed-from-inventory: %v\n", err)
 	return 1
 }
