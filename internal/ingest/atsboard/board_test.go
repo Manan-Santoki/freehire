@@ -188,6 +188,7 @@ func TestRecognize(t *testing.T) {
 		{"bamboohr subdomain", "https://acme.bamboohr.com/careers/42", "bamboohr", "acme", "https://acme.bamboohr.com", true},
 		{"personio nested apex subdomain", "https://acme.jobs.personio.com/job/9", "personio", "acme", "https://acme.jobs.personio.com", true},
 		{"personio de host", "https://reflex-aerospace-gmbh.jobs.personio.de/job/2679152?display=en#apply", "personio", "reflex-aerospace-gmbh", "https://reflex-aerospace-gmbh.jobs.personio.de", true},
+		{"selfrecruit posting strips path", "https://dressup.selfrecruit.ge/a7cdcc00-1c9c-464c-8960-945af0c0e0a4", "selfrecruit", "dressup", "https://dressup.selfrecruit.ge", true},
 		{"softgarden subdomain", "https://moll.softgarden.io/job/123/apply", "softgarden", "moll", "https://moll.softgarden.io", true},
 		// softgarden also serves tenants under a regional career host, <tenant>.career.softgarden.de.
 		// The tenant label is the same board the adapter fetches at <board>.softgarden.io (verified
@@ -309,6 +310,7 @@ func TestRecognize(t *testing.T) {
 		{"ashby bare host no board", "https://jobs.ashbyhq.com", "", "", "", false},
 		{"recruitee bare apex no tenant", "https://recruitee.com/", "", "", "", false},
 		{"personio bare apex no tenant", "https://jobs.personio.com", "", "", "", false},
+		{"selfrecruit bare apex no tenant", "https://selfrecruit.ge/", "", "", "", false},
 		{"hibob bare apex no tenant", "https://careers.hibob.com", "", "", "", false},
 		{"single-tenant geekjob", "https://geekjob.ru/vacancy/6a1e", "", "", "", false},
 		{"teamtailor custom domain not derivable", "https://careers.arrive.com/jobs/1", "", "", "", false},
