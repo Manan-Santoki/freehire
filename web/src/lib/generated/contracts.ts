@@ -1397,6 +1397,27 @@ export interface CandidateCard {
    * recruiter reads a history for anyway.
    */
   roles: CandidateRole[];
+  /**
+   * Education carries only what internal/dict/edulevel resolves from each entry's
+   * degree text, plus its year — never the institution or field of study. An entry
+   * whose degree resolves to nothing is dropped rather than kept under an empty
+   * label: a work-history gap reads worse than absence, but a candidate's set of
+   * degrees carries no such expectation of completeness.
+   */
+  education?: EducationEntry[];
+  /**
+   * Certifications are internal/dict/certification canonicals. A name the dictionary
+   * does not resolve emits nothing, the same whitelisting Skills gets from skilltag.
+   */
+  certifications?: string[];
+}
+/**
+ * EducationEntry is one education item, reduced to what a dictionary can vouch for:
+ * the degree's level and the year, never the institution.
+ */
+export interface EducationEntry {
+  level?: string;
+  year?: { year: number; month?: number };
 }
 /**
  * CandidateRole is one position: what it was, when, and what it was built with.
