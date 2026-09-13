@@ -16,12 +16,15 @@ type inventoryRow struct {
 }
 
 // requiredInventoryColumns are the header columns parseInventory must find. Order in the
-// input file does not matter; each is looked up by name.
-var requiredInventoryColumns = []string{"name", "slug", "url"}
+// input file does not matter, extra columns are ignored, and each is looked up by name.
+// "slug" is deliberately absent here: it is never read downstream (see inventoryRow's doc
+// comment), so an inventory that carries no slug column of its own (e.g. Phenom's) must
+// still parse.
+var requiredInventoryColumns = []string{"name", "url"}
 
-// parseInventory reads a `name,slug,url` CSV into rows. It returns an error — and no rows
-// — when the header is missing a required column or the body is not valid CSV (inconsistent
-// field count, unterminated quote).
+// parseInventory reads a `name,slug,url` CSV into rows — "slug" is optional. It returns an
+// error — and no rows — when the header is missing a required column or the body is not
+// valid CSV (inconsistent field count, unterminated quote).
 func parseInventory(r io.Reader) ([]inventoryRow, error) {
 	cr := csv.NewReader(r)
 	header, err := cr.Read()
@@ -38,6 +41,7 @@ func parseInventory(r io.Reader) ([]inventoryRow, error) {
 			return nil, fmt.Errorf("missing required column %q", name)
 		}
 	}
+	slugIdx, hasSlug := col["slug"]
 
 	var rows []inventoryRow
 	for {
@@ -48,11 +52,14 @@ func parseInventory(r io.Reader) ([]inventoryRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse row: %w", err)
 		}
-		rows = append(rows, inventoryRow{
+		row := inventoryRow{
 			Name: record[col["name"]],
-			Slug: record[col["slug"]],
 			URL:  record[col["url"]],
-		})
+		}
+		if hasSlug {
+			row.Slug = record[slugIdx]
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }

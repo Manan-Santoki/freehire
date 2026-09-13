@@ -29,6 +29,24 @@ func TestParseInventoryReturnsRows(t *testing.T) {
 	}
 }
 
+func TestParseInventoryToleratesMissingSlugColumn(t *testing.T) {
+	// Some inventories (e.g. Phenom's) carry no slug column at all, and extra columns of
+	// their own — slug is never read downstream (see the inventoryRow doc comment), so its
+	// absence must not fail the run.
+	input := "url,name,company_code,locale,country\n" +
+		"https://jobs.bell.ca,Bell Canada,,en_us,us\n"
+
+	rows, err := parseInventory(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parseInventory: %v", err)
+	}
+
+	want := inventoryRow{Name: "Bell Canada", Slug: "", URL: "https://jobs.bell.ca"}
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("rows = %+v, want [%+v]", rows, want)
+	}
+}
+
 func TestParseInventoryRejectsMissingURLColumn(t *testing.T) {
 	input := "name,slug\nAcme,acme/careers\n"
 
