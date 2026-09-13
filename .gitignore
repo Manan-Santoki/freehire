@@ -122,7 +122,18 @@ hire
 /scratch/
 
 # Environment
+#
+# Default-deny, because the file that leaks is never the one a rule was written for: a copy
+# of .env taken before a risky change (.env.bak.pre-bifrost, .env.old, .env.2026-09-12) holds
+# exactly the same credentials and is named whatever the person was thinking at the time. An
+# allowlist of backup suffixes would only ever cover the shapes somebody already met.
+#
+# The negations name the env files that are meant to be committed — they carry no secrets.
+# Listing one here is the decision to publish it, so a new one must be added deliberately.
 .env
+.env.*
+!.env.example
+!.env.production
 
 # IDE / OS
 .idea/
