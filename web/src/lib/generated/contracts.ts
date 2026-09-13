@@ -255,6 +255,15 @@ export interface Job {
    * nothing" must not reach a reader as "this job needs no clearance".
    */
   requires_clearance?: boolean;
+  /**
+   * AutoApplyAvailable marks a posting whose ATS provider (Source) is one
+   * internal/api/atsapply can currently attempt to fill and submit for (see
+   * AutoApplyProviders) — a best-effort, provider-level eligibility signal,
+   * never a guarantee that a real attempt would succeed. True-or-absent like
+   * RequiresClearance: omitted rather than false, because "not one of the
+   * providers we can drive" must not be read as "checked and ineligible".
+   */
+  auto_apply_available?: boolean;
   posted_at?: string;
   created_at?: string;
   updated_at?: string;

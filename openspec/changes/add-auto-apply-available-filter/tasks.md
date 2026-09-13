@@ -1,25 +1,55 @@
 ## 1. Search document: compute the facet from `source`
 
-- [x] 1.1 Add a small, documented provider-set constant in
-      `internal/search/search` (e.g. `autoApplyProviders`) listing
-      `greenhouse`, `lever`, `ashby`, `workable`. Doc comment states it is a
-      manually-synced mirror of `atsapply.fillProviders` ∪
-      `atsapply.browserUseProviders` (cannot import `internal/api/atsapply` —
-      layering forbids `search`, layer 6, importing `api`, layer 8).
+- [x] 1.1 ~~Add a small, documented provider-set constant in
+      `internal/search/search`~~ Superseded by 1.3 below: the constant
+      (`AutoApplyProviders`) now lives in `internal/job/jobview`, not
+      `internal/search/search` — see the note under 1.3/1.4.
 - [x] 1.2 Add a unit test asserting the constant's exact expected 4-provider
       set (fails loudly if the list is ever edited to something unexpected).
-- [x] 1.3 Add `AutoApplyAvailable bool` to `JobDocument`
-      (`internal/search/search/document.go`, after the existing `AIInterview`
-      field), tagged `json:"auto_apply_available,omitempty"`.
-- [x] 1.4 Compute it inline in `search.FromJob`
-      (`internal/search/search/document.go`) as a lookup of `j.Source` (the
-      raw `db.Job` field `view.Source` is copied from verbatim, so either
-      reads identically — implemented against `j.Source` directly since
-      `FromJob` already has it in scope) against the provider set from 1.1.
+      Now `TestAutoApplyProviders_ExactExpectedSet` in
+      `internal/job/jobview/autoapply_test.go`, moved alongside the constant.
+- [x] 1.3 ~~Add `AutoApplyAvailable bool` to `JobDocument`~~ **Corrected after
+      GitHub PR review** (strelov1/freehire#2768): the spec's own "facet is
+      served and filterable" requirement means the signal must reach the
+      public wire shape, not just the search index document — but the
+      original placement on `JobDocument` only ever flattened into the
+      Meilisearch document; the actual served job object (`jobview.Job`,
+      what `views[i] = hit.Job` extracts for every list/detail/search
+      response) never carried it. Fixed by moving the field onto
+      `jobview.Job` itself (`json:"auto_apply_available,omitempty"`,
+      `internal/job/jobview/jobview.go`, mirroring `RequiresClearance`) and
+      the provider-set constant into `internal/job/jobview/autoapply.go`
+      (job, layer 5) — jobview can't import `internal/search`, so the
+      constant had to move down to where it's needed, not stay up where it
+      was merely convenient. `JobDocument.AutoApplyAvailable` is no longer a
+      separate field: it is promoted from the embedded `jobview.Job`, the
+      same way every other served facet already flattens into the document.
+      Also added `auto_apply_available` to `web/static/openapi.yaml` (query
+      param + `Job` schema property, mirroring `requires_clearance`) and
+      regenerated `web/src/lib/generated/contracts.ts` (`go run
+      ./cmd/gen-contracts`), which now picks up the field since it's a real
+      `jobview.Job` member.
+- [x] 1.4 Compute it inline in `jobview.FromDomain`
+      (`internal/job/jobview/jobview.go`) as a lookup of the job's `Source`
+      against `AutoApplyProviders` (1.3). `search.FromJob` no longer
+      recomputes it — it reuses the value already on the `jobview.Job` it
+      builds via `jobview.FromRow`, one fewer place for the two copies to
+      drift apart than the original design had.
 - [x] 1.5 Add test cases (in `document_test.go` or a new
       `auto_apply_available_test.go`, mirroring `ai_interview` coverage) for:
       each of the four eligible providers marks the document; `recruitee` and
       an arbitrary non-ATS source do not; the JSON omits the key when false.
+      The provider-eligibility cases now live in
+      `internal/job/jobview/autoapply_test.go`
+      (`TestFromDomain_AutoApplyAvailableFacet`, mirroring
+      `TestFromDomain_RequiresClearanceFacet`'s shape); the
+      `internal/search/search/auto_apply_available_test.go` cases stay, now
+      covering only that `FromJob` passes the already-computed value through
+      to the document JSON unchanged.
+      `internal/api/atsapply/auto_apply_facet_sync_test.go`'s cross-check now
+      asserts against `jobview.AutoApplyProviders` (was
+      `search.AutoApplyProviders`), same rationale, atsapply (layer 8) can
+      import job (layer 5) same as it could import search (layer 6).
 
 ## 2. Meilisearch settings and query-filter plumbing
 

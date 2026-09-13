@@ -7,31 +7,11 @@ import (
 	"github.com/strelov1/freehire/internal/platform/db"
 )
 
-// TestAutoApplyProviders_ExactExpectedSet is a local snapshot check, not a
-// cross-package one: it cannot see atsapply's real fillProviders/
-// browserUseProviders (search, layer 6, cannot import atsapply, in api,
-// layer 8), so it only catches an accidental same-PR edit to this literal,
-// not atsapply's own maps drifting away from it unnoticed.
-// TestAutoApplyFacetProvidersMatchThisPackagesOwnMaps in
-// internal/api/atsapply is what closes that real gap, from the side that
-// can see both.
-func TestAutoApplyProviders_ExactExpectedSet(t *testing.T) {
-	want := map[string]bool{
-		"greenhouse": true,
-		"lever":      true,
-		"ashby":      true,
-		"workable":   true,
-	}
-	if len(AutoApplyProviders) != len(want) {
-		t.Fatalf("AutoApplyProviders = %v, want exactly %v", AutoApplyProviders, want)
-	}
-	for provider := range want {
-		if !AutoApplyProviders[provider] {
-			t.Errorf("AutoApplyProviders missing expected provider %q", provider)
-		}
-	}
-}
-
+// The provider allow-list itself now lives in jobview (see
+// jobview.AutoApplyProviders and its own TestAutoApplyProviders_ExactExpectedSet)
+// since FromJob serves the signal on the public wire shape via the embedded
+// jobview.Job, not as a document-only field. These tests cover FromJob's own
+// wiring: that the value jobview computed reaches the document JSON unchanged.
 func TestFromJob_AutoApplyAvailable(t *testing.T) {
 	for _, provider := range []string{"greenhouse", "lever", "ashby", "workable"} {
 		doc, err := FromJob(db.Job{ID: 1, PublicSlug: "s", Source: provider})
