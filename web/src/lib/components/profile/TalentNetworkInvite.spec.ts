@@ -9,11 +9,7 @@ const { getTalentNetwork } = vi.hoisted(() => ({
 
 vi.mock('$lib/api', () => ({ api: { getTalentNetwork } }));
 
-let user: { beta_tester: boolean } | null;
-vi.mock('$lib/auth.svelte', () => ({ currentUser: () => user }));
-
 beforeEach(() => {
-  user = { beta_tester: false };
   getTalentNetwork.mockReset().mockResolvedValue({
     talent_network_visibility: 'off',
     talent_handle: '',
@@ -22,14 +18,9 @@ beforeEach(() => {
 });
 
 describe('TalentNetworkInvite', () => {
-  it('shows the invitation to a non-beta-tester account', async () => {
-    render(TalentNetworkInvite);
-
-    await expect(screen.findByText('Get found without applying')).resolves.toBeTruthy();
-  });
-
-  it('shows the invitation to a beta-tester account too', async () => {
-    user = { beta_tester: true };
+  // No account is excluded any more — the beta gate that once hid this card is retired,
+  // so there is nothing left to distinguish an account by.
+  it('shows the invitation to every signed-in candidate', async () => {
     render(TalentNetworkInvite);
 
     await expect(screen.findByText('Get found without applying')).resolves.toBeTruthy();

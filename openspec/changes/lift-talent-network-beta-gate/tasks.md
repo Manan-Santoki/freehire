@@ -26,9 +26,13 @@ REFACTOR → simplify → review → only then `[x]`.
 - [x] 2.1 `web/src/lib/components/profile/TalentNetworkInvite.svelte`: removed the `beta`
       derived value and its use in the `{#if beta && status === 'ready'}` guard — the
       card now shows to every signed-in candidate once `status === 'ready'`. Updated the
-      comment above it. Added `TalentNetworkInvite.spec.ts` (no test file existed before)
-      covering both a beta-tester and a non-beta-tester account seeing the invitation;
-      confirmed RED against the pre-change component first.
+      comment above it. Added `TalentNetworkInvite.spec.ts` (no test file existed before);
+      confirmed RED against the pre-change component with both a beta-tester and a
+      non-beta-tester case. **Post-review simplification**: once GREEN, the component no
+      longer reads `currentUser`/`beta_tester` at all, so the two cases were an
+      unmocked-effect duplicate of each other (same finding shape as 1.3's Go test).
+      Collapsed to one test and dropped the now-pointless `$lib/auth.svelte` mock
+      (flagged as a Minor nit by code review).
 - [x] 2.2 `web/src/lib/accountNav.ts`: removed the
       `{ href: '/my/talent-network', label: 'Talent Network', betaOnly: true }` entry and
       its preceding comment block. Leave the Mentorship `betaOnly` entry and the
