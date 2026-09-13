@@ -121,6 +121,9 @@ var atsBoards = []struct{ host, source, mode string }{
 	{"jobs.deel.com", "deel", modePath},
 	{"jobs.gem.com", "gem", modePath},
 	{"jobs.jobvite.com", "jobvite", modePath},
+	// HERP's board sits at /v1/<board>/… — "v1" is platform machinery, reserved below, the
+	// same shape Gusto's "boards" word already uses.
+	{"herp.careers", "herp", modePath},
 	{"jobs.quickin.io", "quickin", modePath},
 	{"jobs.talenthr.io", "talenthr", modePath},
 	{"careers.pageuppeople.com", "pageup", modePathNumeric},
@@ -416,7 +419,9 @@ var noBoardFirstSegments = map[string][]string{
 
 var reservedSegments = map[string][]string{
 	"jobs.jobvite.com": {"careers"},
-	"greenhouse.io":    {"embed", "job_app", "job_board", "js"},
+	// HERP addresses every board at /v1/<board>/…; "v1" is the platform's own path word.
+	"herp.careers":  {"v1"},
+	"greenhouse.io": {"embed", "job_app", "job_board", "js"},
 	// Gusto's board listing is /boards/<board>; "boards" is the platform's word, never a tenant.
 	"jobs.gusto.com": {"boards"},
 }
