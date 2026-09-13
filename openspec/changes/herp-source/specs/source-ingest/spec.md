@@ -5,7 +5,9 @@
 The system SHALL register a `herp` adapter so a HERP-hosted careers catalogue
 (`herp.careers/v1/<board>`) can be crawled by board id. The company's listing page SHALL be
 fetched as HTML; the adapter SHALL collect every link matching `/v1/<board>/<jobID>` (a single
-path segment after the board, excluding `/apply`) as a job, and every link matching
+path segment after the board, excluding `/apply` and the platform's own reserved words — `top`,
+its optional distinct landing page, linked from every listing and job page of a board that has
+one) as a job, and every link matching
 `/v1/<board>/requisition-groups/<uuid>` as a requisition group, whose OWN page SHALL be fetched
 the same way and its job links added to the same set (one level of expansion; no further
 nesting or pagination is expected). A link SHALL be matched by its resolved host and path
@@ -28,6 +30,14 @@ posting Unreadable, leaving every other job unaffected.
 - **WHEN** a board's listing page links to `/v1/<board>/requisition-groups/<uuid>`
 - **THEN** that group's own page is fetched and every job link found there is added to the
   same job set as the board's direct links
+
+#### Scenario: The platform's own "top" landing-page link is not mistaken for a job
+
+- **WHEN** a board's listing or job page carries a header link back to its own `/v1/<board>/top`
+  landing page (a real, live shape on a subset of HERP boards)
+- **THEN** that link is not collected as a job, since its detail page carries no `JobPosting`
+  block and would otherwise be marked Unreadable on every crawl, permanently withholding that
+  board's stale-job close
 
 #### Scenario: A share-widget link is not mistaken for a job or a group
 

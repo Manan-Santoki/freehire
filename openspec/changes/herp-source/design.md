@@ -71,3 +71,15 @@ consistent with the `Job.WorkMode` contract (structured signal only), this adapt
 - **No bespoke prober means `cmd/harvest-boards` pays a full crawl per candidate when
   discovering new HERP boards**, the same cost profile Cornerstone/Taleo-style adapters already
   have via the same fallback. Acceptable for HERP's inventory size (~970 companies).
+- **Platform navigation sharing the job link's own host and path shape is a real, demonstrated
+  risk, not a hypothetical one.** Code review caught that a board's optional `/v1/<board>/top`
+  landing page — real, live, and present on a measurable share of HERP companies — passed the
+  original host+path check exactly like a real job link would, and its detail page (no
+  `JobPosting` block) would have been marked Unreadable on every single crawl. Because
+  `internal/ingest/pipeline`'s stale-job close withholds once a board's Unreadable share crosses
+  a small threshold, this was not a one-time miss but a PERMANENT loss of that board's ability
+  to detect a closed posting. `herpNonJobSegments` excludes the literal `top` segment, the same
+  reserved-word pattern this codebase already uses for Gusto's `boards` and Jobvite's `careers`.
+  The lesson for any FUTURE `atsboard`/adapter addition: "host+path shape, never substring"
+  guards against an unrelated host, not against the platform's OWN machinery living at the same
+  host and path depth as a real tenant link — that still needs an explicit reserved-word check.

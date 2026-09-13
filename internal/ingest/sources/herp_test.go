@@ -40,6 +40,18 @@ func TestIsHerpJobLinkRejectsRequisitionGroupPath(t *testing.T) {
 	}
 }
 
+// Some companies configure a distinct "top" landing page, whose header carries a link back
+// to it (career-page-header__link) on every listing and job page of that board — a single
+// path segment indistinguishable in shape from a real opaque HERP job id. Confirmed live
+// (e.g. herp.careers/v1/clueitinc/top). Left unexcluded, it would be probed as a job on
+// every crawl of that board and its detail page (the listing page itself, no JobPosting
+// block) marked Unreadable forever, permanently withholding that board's stale-job close.
+func TestIsHerpJobLinkRejectsTopLandingPageLink(t *testing.T) {
+	if isHerpJobLink("clueitinc", "/v1/clueitinc/top") {
+		t.Error("want the platform's own \"top\" landing-page link NOT treated as a job")
+	}
+}
+
 func TestIsHerpJobLinkRejectsOtherBoard(t *testing.T) {
 	if isHerpJobLink("a244", "/v1/other-board/GnoQonoXGBZi") {
 		t.Error("want a link for a different board rejected")

@@ -38,3 +38,10 @@
 - [x] 5.2 Confirm `herp` needs no `cmd/harvest-boards` prober entry — verify it resolves via
       `adapterProber` fallback (added to the existing
       `TestProberForFallsBackToTheProvidersAdapter` table)
+
+## 6. Review fix
+
+- [x] 6.1 Code review (live-verified against real herp.careers pages) found the platform's own
+      `/v1/<board>/top` landing-page link passes the job-link shape check on boards that have
+      one, permanently withholding that board's stale-job close. Excluded the literal `top`
+      segment (`herpNonJobSegments`), with a regression test reproducing the live case
