@@ -52,11 +52,11 @@ func TestFromJob_AutoApplyAvailable_NotEligibleProvider(t *testing.T) {
 	}
 }
 
-func TestFromJob_AutoApplyAvailable_OmittedFromJSONWhenFalse(t *testing.T) {
-	doc, err := FromJob(db.Job{ID: 1, PublicSlug: "s", Source: "recruitee"})
-	if err != nil {
-		t.Fatalf("FromJob: %v", err)
-	}
+// marshalToMap round-trips a JobDocument through JSON into a generic map, so a
+// test can assert a key's presence (or absence) rather than just its value —
+// `omitempty` drops the key entirely, which a typed struct field can't observe.
+func marshalToMap(t *testing.T, doc JobDocument) map[string]any {
+	t.Helper()
 	b, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -65,8 +65,16 @@ func TestFromJob_AutoApplyAvailable_OmittedFromJSONWhenFalse(t *testing.T) {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if _, present := raw["auto_apply_available"]; present {
-		t.Errorf("auto_apply_available key present in JSON when false, want omitted: %s", b)
+	return raw
+}
+
+func TestFromJob_AutoApplyAvailable_OmittedFromJSONWhenFalse(t *testing.T) {
+	doc, err := FromJob(db.Job{ID: 1, PublicSlug: "s", Source: "recruitee"})
+	if err != nil {
+		t.Fatalf("FromJob: %v", err)
+	}
+	if _, present := marshalToMap(t, doc)["auto_apply_available"]; present {
+		t.Error("auto_apply_available key present in JSON when false, want omitted")
 	}
 }
 
@@ -75,15 +83,7 @@ func TestFromJob_AutoApplyAvailable_PresentInJSONWhenTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromJob: %v", err)
 	}
-	b, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if v, present := raw["auto_apply_available"]; !present || v != true {
+	if v, present := marshalToMap(t, doc)["auto_apply_available"]; !present || v != true {
 		t.Errorf("auto_apply_available = %v, present=%v, want true, present=true", v, present)
 	}
 }
