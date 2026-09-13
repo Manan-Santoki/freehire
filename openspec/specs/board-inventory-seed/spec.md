@@ -76,11 +76,18 @@ require a database connection or make any network request to complete successful
 - **THEN** it completes successfully and writes the expected output seed files
 
 ### Requirement: A structurally invalid input file fails the run
-When the input file cannot be parsed as CSV, or is missing one of the required `name`,
-`slug`, `url` columns, the tool SHALL exit with a non-zero status and an error identifying
-the problem, and SHALL NOT write any output seed file.
+When the input file cannot be parsed as CSV, or is missing one of the required `name` or
+`url` columns, the tool SHALL exit with a non-zero status and an error identifying the
+problem, and SHALL NOT write any output seed file. A `slug` column is never required — some
+inventories (e.g. Phenom's) carry no slug of their own, and the column is never read
+downstream — so its absence alone SHALL NOT fail the run.
 
 #### Scenario: A CSV missing the url column is rejected
 
 - **WHEN** the input file's header row does not include a `url` column
 - **THEN** the tool exits non-zero, reports the missing column, and writes no output files
+
+#### Scenario: A CSV with no slug column still parses
+
+- **WHEN** the input file's header row has `name` and `url` columns but no `slug` column
+- **THEN** the tool parses every row normally, leaving each row's slug empty
