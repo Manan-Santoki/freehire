@@ -40,11 +40,18 @@ The outage was found by a person noticing the site was slow. Every signal that c
 named it existed somewhere and none of it was watched, so this section is what turns the
 change from "this specific hole is closed" into "the next one is visible".
 
-- [x] 7.1 `observability.NewPoolCollector` publishes acquired / idle / max and
-      `EmptyAcquireCount` — the counter that rises only when a caller found nothing free and
-      had to WAIT, i.e. the bottleneck rather than the workload. Nothing read `pool.Stat()`
-      before this. A Collector, not a polled gauge: it reads at scrape time, so there is no
-      interval to choose.
+- [x] 7.1 `observability.NewPoolCollector` publishes acquired / idle / max, `EmptyAcquireCount`
+      and `AcquireDuration`. Nothing read `pool.Stat()` before this. A Collector, not a polled
+      gauge: it reads at scrape time, so there is no interval to choose.
+
+      The two wait metrics are not interchangeable, and finding that out cost a second pass.
+      `EmptyAcquireCount` was meant to be the alerting signal — "rises only when a caller found
+      nothing free" — and on production it measured **15/s against a pool one-tenth occupied**,
+      because pgx counts an acquire that waited at all, microseconds included. It describes
+      concurrency, not a bottleneck. `AcquireDuration` is the one that carries a verdict: its
+      per-second rate is dimensionless and exact — seconds waited per second elapsed IS the
+      average number of callers queued. Ten thousand waits of a microsecond and ten waits of two
+      minutes are indistinguishable by count and obvious by duration.
 - [x] 7.2 `freehire_http_request_duration_seconds`, by route pattern. `requestBucket` carries
       `minute`/`total`/`errors` and had no field a duration could go into, so p95 was
       unanswerable — which is why "slow" was invisible until it became "down". Buckets stop at
@@ -59,10 +66,26 @@ change from "this specific hole is closed" into "the next one is visible".
 
 - [x] 8.1 `gofmt -l .` clean, `go vet ./...` clean, `go vet -tags=integration ./...` clean,
       `go test ./...` — 226 packages ok, 0 failures.
-- [ ] 8.2 k6: reproduce the attack against the **idle** colour's API port on prod and record
-      before/after. `perf/k6` already carries the siting rule and the `FORCE_SCRAPER` latch.
-- [ ] 8.3 Deploy; confirm `/api/v1/jobs?offset=179500` answers 400 and the ordinary list still
-      serves.
+- [x] 8.2 `perf/k6/deepoffset.js` — one VU, strictly sequential, its own `FORCE_DEEP_OFFSET`
+      latch. Run against BOTH colours on the prod host while blue still held the pre-fix
+      commit and green the fixed one: same host, same Postgres, the two versions side by side.
+
+      | offset | before (`564024c3`) | after (`07b63825d`) |
+      |---|---|---|
+      | 0 | 2.193s | 3.334s |
+      | 1,000 | 4.336s | 0.871s |
+      | 10,000 | 3.987s | **0.211s refused** |
+      | 50,000 | 20.243s | **0.211s refused** |
+      | 179,500 | **53.968s** | **0.239s refused** |
+
+      The climbing curve is the defect; it is gone. 54s → 0.24s, and no database work at all.
+- [x] 8.3 Deployed (autodeploy, `07b63825d`). All five Postgres lists plus the Meili search
+      answer 400 in 0.26–0.80s at `offset=179500`; the boundary page (`offset=9900&limit=100`)
+      still serves 200, and the ordinary first page answers in 0.96s. The new pool and latency
+      metrics are live on the active colour's `/metrics`.
 - [ ] 8.4 Ship the alert rules to litellm-host AFTER the binary, per the deploy-order note in
-      the rules file: the pool rule's `noDataState: Alerting` pages immediately if the series
-      is not being published yet.
+      the rules file. **Blocked on a follow-up**: verifying 7.1 on production showed
+      `empty_acquire_total` running at 15/s against a pool one-tenth occupied, so an alert on
+      that rate would fire permanently. The rule now reads `acquire_wait_seconds_total`, whose
+      per-second rate is the average number of callers queued — which the binary must publish
+      first.
