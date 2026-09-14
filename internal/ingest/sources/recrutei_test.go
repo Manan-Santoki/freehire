@@ -196,3 +196,36 @@ func TestRecruteiUnreadableDetailIsMarkedNotDropped(t *testing.T) {
 		t.Errorf("ExternalID = %q, want 1", jobs[0].ExternalID)
 	}
 }
+
+// recruteiStringLocationItemJSON builds a listing item whose "location" is a bare JSON
+// STRING rather than the array shape every other test uses — the shape found live in
+// production on ~20% of a real tenant's postings (broke the very first live crawl with
+// "cannot unmarshal string into []string" the day this adapter shipped).
+func recruteiStringLocationItemJSON(id int, title, location, publicLink string) string {
+	return `{"id":` + strconv.Itoa(id) + `,"title":"` + title + `","regime":"CLT","company_name":"Acme","location":"` +
+		location + `","public_link":"` + publicLink + `","slug":"slug","client":null,"pcd":false}`
+}
+
+func TestRecruteiFetchToleratesAStringLocation(t *testing.T) {
+	board := "acme"
+	naoInformado := recruteiStringLocationItemJSON(1, "Vaga A", "Não informado", "https://jobs.recrutei.com.br/acme/vacancy/1-a")
+	otherString := recruteiStringLocationItemJSON(2, "Vaga B", "Remoto", "https://jobs.recrutei.com.br/acme/vacancy/2-b")
+	fake := (&routedHTTP{}).
+		route(recruteiListingURL(board), recruteiListingJSON(naoInformado, otherString)).
+		route("1-a", recruteiDetailHTML("Vaga A", "<p>A</p>", "14/07/2025 14:37:27")).
+		route("2-b", recruteiDetailHTML("Vaga B", "<p>B</p>", "14/07/2025 14:37:27"))
+
+	jobs, err := NewRecrutei(fake).Fetch(context.Background(), CompanyEntry{Board: board})
+	if err != nil {
+		t.Fatalf("Fetch: %v, want a string \"location\" to decode rather than fail the whole board", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("got %d jobs, want 2", len(jobs))
+	}
+	if jobs[0].Location != "" {
+		t.Errorf("Location = %q, want empty for the \"Não informado\" placeholder", jobs[0].Location)
+	}
+	if jobs[1].Location != "Remoto" {
+		t.Errorf("Location = %q, want the literal string carried through for any other value", jobs[1].Location)
+	}
+}

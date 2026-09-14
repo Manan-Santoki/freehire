@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -67,12 +68,41 @@ type recruteiDepartment struct {
 // read straight from here — the detail page's own copies of location/employmentType are
 // unreliable (see design.md: a literal "undefined" locality and a constant "FULL_TIME").
 type recruteiItem struct {
-	ID          int      `json:"id"`
-	Title       string   `json:"title"`
-	Regime      string   `json:"regime"`
-	CompanyName string   `json:"company_name"`
-	Location    []string `json:"location"`
-	PublicLink  string   `json:"public_link"`
+	ID          int              `json:"id"`
+	Title       string           `json:"title"`
+	Regime      string           `json:"regime"`
+	CompanyName string           `json:"company_name"`
+	Location    recruteiLocation `json:"location"`
+	PublicLink  string           `json:"public_link"`
+}
+
+// recruteiLocation decodes the listing item's "location" field, which the platform emits as
+// EITHER a JSON array of strings (the shape every sample carried during design) or, for a
+// posting with no stated address, the bare Portuguese placeholder string "Não informado"
+// ("not stated") — found live on ~20% of a real tenant's postings, which broke the very
+// first production crawl with "cannot unmarshal string into []string" the day this adapter
+// shipped. "Não informado" decodes to an empty slice (no location, never a literal
+// placeholder string in the job — the same posture the detail page's "undefined" leak
+// already earned in design.md); any OTHER bare string is kept as a single-element location,
+// since nothing observed live rules out a real value ever being sent that way.
+type recruteiLocation []string
+
+func (l *recruteiLocation) UnmarshalJSON(b []byte) error {
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err == nil {
+		*l = arr
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if s != "" && s != "Não informado" {
+		*l = []string{s}
+	} else {
+		*l = nil
+	}
+	return nil
 }
 
 // list fetches the tenant's whole listing in one POST and verifies the declared total against
@@ -102,7 +132,7 @@ func (s recrutei) list(ctx context.Context, board string) ([]recruteiItem, error
 // that answers but carries no JobPosting ld+json block drops the posting instead.
 func (s recrutei) detail(ctx context.Context, e CompanyEntry, it recruteiItem) (Job, bool) {
 	id := strconv.Itoa(it.ID)
-	location := joinNonEmpty(it.Location...)
+	location := joinNonEmpty([]string(it.Location)...)
 	company := firstNonEmpty(it.CompanyName, e.Company)
 
 	root, err := s.http.GetHTML(ctx, it.PublicLink)
