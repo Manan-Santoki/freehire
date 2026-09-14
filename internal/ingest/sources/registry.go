@@ -220,7 +220,6 @@ func All(c HTTPClient) map[string]Source {
 		NewNeogov(c),
 		NewDeel(c),
 		NewScalis(c),
-		NewHumanBit(c),
 		NewVouch(c),
 		NewRecruitingSolutions(c),
 		NewUKG(c),
@@ -442,6 +441,17 @@ func All(c HTTPClient) map[string]Source {
 	registry["aijobs"] = cookieSessionSource[aijobsHTTP](c, func(h aijobsHTTP) Source {
 		return NewAijobs(h, aijobsMaxNewPerRun)
 	})
+	// HumanBit's listing page is a single, unpaginated ~5.6 MB payload that measured ~18s to
+	// fetch — past the standard 15s client timeout, which made every crawl fail
+	// intermittently with "context deadline exceeded" in production. Swap in the
+	// long-timeout transport only when there is a real client to serve; the taxonomy path
+	// (c == nil, e.g. FilterableProviders) must stay transport-free, per the invariant
+	// Taxonomy documents.
+	if c == nil {
+		registry["humanbit"] = NewHumanBit(nil)
+	} else {
+		registry["humanbit"] = NewHumanBit(NewLongTimeoutClient())
+	}
 	// meta/uber/gusto are NOT served by the shared client: Meta's edge 400s the default Go
 	// TLS+HTTP/2 fingerprint and Uber's and Gusto's Cloudflare edges challenge it, so all three
 	// need the shared Chrome-fingerprint transport (fingerprintHTTP, also used by the

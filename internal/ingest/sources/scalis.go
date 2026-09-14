@@ -130,9 +130,13 @@ type scalisPosting struct {
 	Workplace       string   `json:"workplace"`
 	Payment         string   `json:"payment"`
 	Skills          []string `json:"skills"`
-	Company         struct {
-		Name string `json:"name"`
-	} `json:"company"`
+	// Company is deliberately NOT decoded: a Scalis board is single-tenant, so the
+	// curator-configured CompanyEntry.Company is authoritative. React's RSC flight also
+	// deduplicates repeated identical objects across an array — every posting after the
+	// first carries "company" as a path-backreference STRING ("$5:2:props:...") rather
+	// than a literal object, which a typed field would fail to unmarshal (this broke
+	// every crawl of boldbusiness in production). Leaving the field out entirely means
+	// json.Unmarshal skips it regardless of its shape.
 	Locations []struct {
 		City    string `json:"city"`
 		Country string `json:"country"`
@@ -181,7 +185,7 @@ func scalisToJob(e CompanyEntry, desc string, p scalisPosting) (Job, bool) {
 		ExternalID:     p.ID,
 		URL:            fmt.Sprintf("https://%s.scalis.ai/job/%s", e.Board, p.ID),
 		Title:          strings.TrimSpace(p.Title),
-		Company:        firstNonEmpty(p.Company.Name, e.Company),
+		Company:        e.Company,
 		Location:       location,
 		Description:    sanitizeHTML(desc),
 		Remote:         workMode == "remote" || isRemote(p.Title+" "+location),

@@ -61,8 +61,12 @@ func TestScalisFetchSinglePageAndMaps(t *testing.T) {
 	if j1.Title != "Senior Backend Engineer" {
 		t.Errorf("Title = %q", j1.Title)
 	}
-	if j1.Company != "BOLD Business" {
-		t.Errorf("Company = %q", j1.Company)
+	// A Scalis board is single-tenant, so the posting's own "company" field is never
+	// read — the curator-configured name is authoritative, and it must be even when
+	// the posting happens to carry a literal company object (see
+	// TestScalisFetchIgnoresCompanyBackreferenceString for the case it isn't literal).
+	if j1.Company != "Fallback Co" {
+		t.Errorf("Company = %q, want the configured CompanyEntry.Company", j1.Company)
 	}
 	if j1.Location != "Bogota, CO" {
 		t.Errorf("Location = %q, want %q", j1.Location, "Bogota, CO")
@@ -224,6 +228,40 @@ func TestScalisFetchFailsOnUnrecognizedPageShape(t *testing.T) {
 	fake := (&routedHTTP{}).route(scalisListingURLFor(1), scalisWrongShapeHTML)
 	if _, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{Board: "boldbusiness"}); err == nil {
 		t.Fatal("Fetch succeeded despite results being an object, not an array")
+	}
+}
+
+// scalisDedupedCompanyHTML mirrors a live capture from boldbusiness.scalis.ai: React's RSC
+// flight deduplicates repeated identical objects, so every posting after the first has its
+// "company" field replaced with a path-backreference STRING ("$5:2:props:...") rather than
+// the literal {"name": "..."} object earlier postings carry. This is not a text-row
+// reference (nextFlightTextRows never resolves it) — it names a JSON PATH elsewhere in the
+// same tree, which no existing decoder helper understands. A struct field trying to
+// unmarshal it as an object fails outright: this is the shape that broke prod (issue: scalis
+// "boldbusiness" page 1: decode initialData: json: cannot unmarshal string into Go struct
+// field scalisPosting.results.company of type struct { Name string "json:\"name\"" }).
+const scalisDedupedCompanyHTML = `<html><body>
+<script>self.__next_f.push([1,"27:{\"initialData\":{\"results\":[{\"id\":\"aaaa1111-0000-4000-8000-000000000001\",\"title\":\"Senior Backend Engineer\",\"company\":{\"name\":\"BOLD Business\"},\"locations\":[],\"employment\":\"FULL_TIME\",\"workplace\":\"REMOTE\",\"payment\":\"SALARY\",\"skills\":[],\"salary\":{\"min\":null,\"max\":null,\"currency\":null},\"description\":\"$28\",\"descriptionHtml\":\"$29\",\"createdAt\":\"2026-06-18T17:10:41.385Z\"},{\"id\":\"aaaa1111-0000-4000-8000-000000000002\",\"title\":\"Support Engineer\",\"company\":\"$5:2:props:initialData:results:0:company\",\"locations\":[],\"employment\":\"CONTRACTOR\",\"workplace\":\"HYBRID\",\"payment\":\"HOURLY\",\"skills\":[],\"salary\":{\"min\":null,\"max\":null,\"currency\":null},\"description\":\"$2a\",\"descriptionHtml\":\"$2b\",\"createdAt\":\"2026-07-01T09:00:00.000Z\"}],\"count\":2,\"paginationCount\":2}}\n28:T15,Reports to: Team Lead\n29:T14,<p>Build things.</p>\n2a:Tf,Reports to: CTO\n2b:T15,<p>Ship features.</p>\n"])</script>
+</body></html>`
+
+func TestScalisFetchIgnoresCompanyBackreferenceString(t *testing.T) {
+	fake := (&routedHTTP{}).
+		route(scalisListingURLFor(1), scalisDedupedCompanyHTML).
+		route(scalisListingURLFor(2), scalisEmptyPageHTML)
+
+	jobs, err := NewScalis(fake).Fetch(context.Background(), CompanyEntry{
+		Company: "BOLD Business", Provider: "scalis", Board: "boldbusiness",
+	})
+	if err != nil {
+		t.Fatalf("Fetch: %v, want the dedup-backreference company field to be ignored, not decoded", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("got %d jobs, want 2", len(jobs))
+	}
+	for _, j := range jobs {
+		if j.Company != "BOLD Business" {
+			t.Errorf("job %q Company = %q, want the configured CompanyEntry.Company", j.ExternalID, j.Company)
+		}
 	}
 }
 
