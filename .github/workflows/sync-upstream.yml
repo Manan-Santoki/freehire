@@ -91,25 +91,28 @@ jobs:
           CONFLICTS: ${{ steps.merge.outputs.conflicts }}
         run: |
           existing=$(gh issue list --label sync-conflict --state open --json number --jq '.[0].number')
-          body="Automatic merge of upstream \`${UPSTREAM_REPO}\` main into \`${DEPLOY_BRANCH}\` failed in run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}.
-
-Conflicting files:
-\`\`\`
-${CONFLICTS}
-\`\`\`
-
-Resolve locally, then push:
-\`\`\`sh
-git fetch origin && git checkout ${DEPLOY_BRANCH} && git merge origin/main
-# fix conflicts, then
-git push origin ${DEPLOY_BRANCH}
-\`\`\`
-The deployment stays on the last good commit until this is pushed."
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            echo "Automatic merge of upstream \`${UPSTREAM_REPO}\` main into \`${DEPLOY_BRANCH}\` failed in ${run_url}."
+            echo
+            echo "Conflicting files:"
+            echo '```'
+            echo "${CONFLICTS}"
+            echo '```'
+            echo
+            echo "Resolve locally, then push:"
+            echo '```sh'
+            echo "git fetch origin && git checkout ${DEPLOY_BRANCH} && git merge origin/main"
+            echo "# fix conflicts, then"
+            echo "git push origin ${DEPLOY_BRANCH}"
+            echo '```'
+            echo "The deployment stays on the last good commit until this is pushed."
+          } > /tmp/body.md
           gh label create sync-conflict --color d73a4a --description "Upstream merge needs a human" 2>/dev/null || true
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
+            gh issue comment "$existing" --body-file /tmp/body.md
           else
-            gh issue create --title "Upstream merge conflict in ${DEPLOY_BRANCH}" --label sync-conflict --body "$body"
+            gh issue create --title "Upstream merge conflict in ${DEPLOY_BRANCH}" --label sync-conflict --body-file /tmp/body.md
           fi
 
   reindex:
