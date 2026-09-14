@@ -43,5 +43,5 @@
 
 ## 5. Close the submission
 
-- [ ] 5.1 After merge and deploy, add `recrutei/digisystem` via `cmd/add-board --apply` on
+- [x] 5.1 After merge and deploy, add `recrutei/digisystem` via `cmd/add-board --apply` on
       prod and delete `board_submissions` id 115
