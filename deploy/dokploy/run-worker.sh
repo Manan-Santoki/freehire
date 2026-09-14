@@ -18,6 +18,20 @@ case "$worker" in
     fi
     budget=15m
     ;;
+  notify|remind|nudge)
+    # Saved-search alerts, application reminders and nudges need a delivery channel.
+    if [ -z "${NOTIFY_EMAIL_FROM:-}" ] && [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+      echo "$worker: skipped because neither NOTIFY_EMAIL_FROM nor TELEGRAM_BOT_TOKEN is set"
+      exit 0
+    fi
+    budget=10m
+    ;;
+  onboarding)
+    if [ -z "${NOTIFY_EMAIL_FROM:-}" ] || [ -z "${ONBOARDING_REPLY_TO:-}" ]; then
+      echo "$worker: skipped because NOTIFY_EMAIL_FROM or ONBOARDING_REPLY_TO is unset"
+      exit 0
+    fi
+    ;;
   tg-ingest|liveness|rollup-views|recount-companies|rollup-stats|rollup-facets|rollup-company|capture-apply-form|auth-cleanup|similar-backfill) ;;
   *) echo "unsupported scheduled worker: $worker" >&2; exit 2 ;;
 esac

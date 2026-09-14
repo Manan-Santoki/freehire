@@ -82,6 +82,10 @@ Outbound mail (verification codes, password reset, alerts, digests) needs
 `NOTIFY_EMAIL_FROM` plus either `RESEND_API_KEY` (Resend, no AWS account needed; the
 sender's domain must be verified in the Resend dashboard) or AWS SES credentials. Until
 one is set, sign-up works but the "confirm your email" prompt cannot be satisfied.
+The `notify` (saved-search alerts, every 5 min), `remind` and `nudge` workers are in
+[workers.crontab](workers.crontab) but `run-worker.sh` skips them until a delivery channel
+(`NOTIFY_EMAIL_FROM` or `TELEGRAM_BOT_TOKEN`) exists; `onboarding` also needs
+`ONBOARDING_REPLY_TO`.
 
 ## Search and maintenance
 

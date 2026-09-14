@@ -15,3 +15,7 @@
 11 2 * * * /app/deploy/dokploy/run-worker.sh liveness
 31 3 * * * /app/deploy/dokploy/run-worker.sh deduplicate
 57 * * * * /app/deploy/dokploy/run-worker.sh rollup-views
+*/5 * * * * /app/deploy/dokploy/run-worker.sh notify
+*/15 * * * * /app/deploy/dokploy/run-worker.sh remind
+*/30 * * * * /app/deploy/dokploy/run-worker.sh nudge
+9 * * * * /app/deploy/dokploy/run-worker.sh onboarding
