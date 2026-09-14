@@ -117,6 +117,9 @@ func TestPyjamahrFetchPaginatesListsAndHydrates(t *testing.T) {
 	if j1.URL != "https://jobs.pyjamahr.com/dodo-payments/talent-acquisition-intern-2" {
 		t.Errorf("URL = %q", j1.URL)
 	}
+	if j1.ExperienceYearsMin == nil || *j1.ExperienceYearsMin != 0 {
+		t.Errorf("ExperienceYearsMin = %v, want a real 0 (\"no experience required\" is a stated fact, not absent data)", j1.ExperienceYearsMin)
+	}
 
 	j2 := jobs[1]
 	if j2.WorkMode != "remote" {
@@ -127,6 +130,35 @@ func TestPyjamahrFetchPaginatesListsAndHydrates(t *testing.T) {
 	}
 	if j2.SalaryMin != nil || j2.SalaryMax != nil {
 		t.Errorf("SalaryMin/Max = %v/%v, want nil (is_salary_visible=false)", j2.SalaryMin, j2.SalaryMax)
+	}
+}
+
+// pyjamahrDetailHiddenSalary carries real, non-null salary bounds but is_salary_visible
+// false — isolating the visibility gate from the null-bounds branch (a fixture where BOTH
+// conditions would hide the salary can't tell which one the code is actually checking).
+const pyjamahrDetailHiddenSalary = `{"id":1,"uuid":"ZZ","title":"A",
+"job_type":"FULLTIME","description":"<p>A.</p>","min_salary":50000.0,"max_salary":80000.0,
+"currency":"INR","salary_type":"ANNUAL","is_salary_visible":false,"skill":[],
+"min_experience":2.0,"workplace_type":"ON_SITE","remote":false,"created_at":"2026-09-08T08:59:05+05:30"}`
+
+func TestPyjamahrSalaryHiddenDespiteRealBoundsPresent(t *testing.T) {
+	board := "acme"
+	item := `{"id":1,"slug":"a","title":"A","min_experience":2.0,"max_experience":5.0,"country":"India","location":"India","other_locations":[],"department_name":null,"workplace_type":"ON_SITE","product":null}`
+	page := `{"count":1,"next":null,"previous":null,"results":[` + item + `]}`
+	fake := (&routedHTTP{}).
+		route(pyjamahrListingURL(board, 1), page).
+		route(pyjamahrDetailURL(board, 1), pyjamahrDetailHiddenSalary)
+
+	jobs, err := NewPyjamahr(fake).Fetch(context.Background(), CompanyEntry{Board: board})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].SalaryMin != nil || jobs[0].SalaryMax != nil {
+		t.Errorf("SalaryMin/Max = %v/%v, want nil: is_salary_visible=false must hide real bounds, not just null ones",
+			jobs[0].SalaryMin, jobs[0].SalaryMax)
 	}
 }
 

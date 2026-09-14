@@ -117,11 +117,12 @@ func (s pyjamahr) detail(ctx context.Context, e CompanyEntry, it pyjamahrItem) (
 	workMode := firstNonEmpty(workplaceTypeMode(strings.ReplaceAll(d.WorkplaceType, "_", "-")), workModeFromRemote(d.Remote))
 	salaryMin, salaryMax, salaryCurrency, salaryPeriod := pyjamahrSalary(d)
 
-	var experienceMin *int
-	if d.MinExperience > 0 {
-		v := int(d.MinExperience)
-		experienceMin = &v
-	}
+	// An explicit 0 is "no prior experience required" — a stated fact, not absent data
+	// (the same distinction internal/job/jobfacts.go's own ExperienceYearsMin doc makes) —
+	// so it is always set, never gated behind a truthiness check that would misread it as
+	// unknown and fall back to the description-text heuristic instead.
+	minExperience := int(d.MinExperience)
+	experienceMin := &minExperience
 
 	return Job{
 		ExternalID:         id,
