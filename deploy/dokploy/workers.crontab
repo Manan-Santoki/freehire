@@ -19,3 +19,4 @@
 */15 * * * * /app/deploy/dokploy/run-worker.sh remind
 */30 * * * * /app/deploy/dokploy/run-worker.sh nudge
 9 * * * * /app/deploy/dokploy/run-worker.sh onboarding
+*/30 * * * * /app/deploy/dokploy/run-worker.sh hydrate-adzuna-description

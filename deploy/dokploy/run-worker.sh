@@ -26,6 +26,15 @@ case "$worker" in
     fi
     budget=10m
     ;;
+  hydrate-adzuna-description)
+    # Adzuna's API returns a ~500-char snippet; this fetches the full posting. Pointless
+    # without Adzuna crawls, so it follows the same key.
+    if [ -z "${ADZUNA_APP_ID:-}" ] || [ -z "${ADZUNA_APP_KEY:-}" ]; then
+      echo "$worker: skipped because ADZUNA_APP_ID/ADZUNA_APP_KEY are unset"
+      exit 0
+    fi
+    budget=25m
+    ;;
   onboarding)
     if [ -z "${NOTIFY_EMAIL_FROM:-}" ] || [ -z "${ONBOARDING_REPLY_TO:-}" ]; then
       echo "$worker: skipped because NOTIFY_EMAIL_FROM or ONBOARDING_REPLY_TO is unset"

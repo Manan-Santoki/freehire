@@ -39,6 +39,20 @@ existing live boards, and inserts new boards as pending. It can resume after an
 interruption. Run it deliberately, not on every deployment: a retired historical
 board can otherwise be reintroduced by a later import.
 
+**A provider that was ever seen without its credentials is disabled in `ingest_schedule`
+with a reason, and adding the key later does NOT re-enable it.** After setting
+`ADZUNA_APP_ID/KEY`, `REED_API_KEY`, `USAJOBS_API_KEY` or `WHATJOBS_PUBLISHER_IDS`, run once
+in the scheduler container (the Dokploy schedule `enable-adzuna` does exactly this; edit
+`--provider` for the others):
+
+```sh
+/app/schedule-board --provider=adzuna --enable --apply
+```
+
+Adzuna's API returns a ~500-character snippet; `hydrate-adzuna-description` (every 30 min in
+[workers.crontab](workers.crontab)) fetches the full posting for jobs crawled from then on.
+Postings that existed before it was enabled need `/app/seed-adzuna-description-queue` once.
+
 Configure other providers with `schedule-board`. Large providers need shards so
 their complete board list can be visited within a crawl budget. Sources that require
 missing API credentials should be disabled with an explicit reason until configured.
