@@ -47,6 +47,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    networks:
+      - default
+      - crawl
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

@@ -80,7 +80,7 @@ func run() int {
 	if image := os.Getenv("INGEST_DOCKER_IMAGE"); image != "" {
 		launcher = ingestsched.DockerLauncher{
 			Image: image, Network: os.Getenv("INGEST_DOCKER_NETWORK"), Prefix: os.Getenv("INGEST_DOCKER_PREFIX"),
-			Environment: []string{"DATABASE_URL", "GOMAXPROCS", "SOURCES_PROXY_URL", "FIRECRAWL_API_KEY",
+			Environment: []string{"DATABASE_URL", "REDIS_URL", "GOMAXPROCS", "SOURCES_PROXY_URL", "FIRECRAWL_API_KEY",
 				"ADZUNA_APP_ID", "ADZUNA_APP_KEY", "REED_API_KEY", "USAJOBS_API_KEY", "WHATJOBS_PUBLISHER_IDS",
 				"HYDRATION_RETRY_DAYS", "BODY_REFRESH_DAYS", "BODY_REFRESH_SLICE"},
 		}
