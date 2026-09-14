@@ -292,6 +292,9 @@ func All(c HTTPClient) map[string]Source {
 		// Recrutei: Brazilian multi-tenant ATS, board = tenant slug; listing is one POST to the
 		// platform's own internal frontend API, detail comes from the page's ld+json block.
 		NewRecrutei(c),
+		// RecruiterFlow: recruiting-agency board = agency slug; the whole listing is embedded
+		// as a bare JS variable on the page, detail comes from the page's ld+json block.
+		NewRecruiterflow(c),
 		NewMyCareersFuture(c),
 		NewWorkingNomads(c),
 		NewPowerToFly(c),
