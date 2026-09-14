@@ -83,6 +83,9 @@ services:
     build: .
     entrypoint: ["/app/migrate"]
     restart: "no"
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy
@@ -92,6 +95,13 @@ services:
   app:
     build: .
     image: "${FREEHIRE_IMAGE:-freehire-worker:local}"
+    env_file:
+      # Dokploy writes every variable from its Environment tab to .env beside this
+      # file. Passing the file through means a variable added there reaches the
+      # binaries without also being listed under `environment:` below (which still
+      # wins where both name a key). See deploy/dokploy/env.template for the full list.
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy
@@ -146,6 +156,8 @@ services:
       WHATJOBS_PUBLISHER_IDS: "${WHATJOBS_PUBLISHER_IDS:-}"
       GMAIL_TOKEN_KEY: "${GMAIL_TOKEN_KEY:-}"
       NOTIFY_EMAIL_FROM: "${NOTIFY_EMAIL_FROM:-}"
+      # Mail goes out through Resend when this is set (no AWS needed); otherwise SES.
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
       MAILBOX_DOMAIN: "${MAILBOX_DOMAIN:-}"
       MAIL_INBOUND_QUEUE_URL: "${MAIL_INBOUND_QUEUE_URL:-}"
       MAIL_INBOUND_BUCKET: "${MAIL_INBOUND_BUCKET:-}"
@@ -165,6 +177,9 @@ services:
     user: "0:0"
     restart: unless-stopped
     entrypoint: ["/app/supercronic", "/app/deploy/dokploy/scheduler.crontab"]
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -186,6 +201,9 @@ services:
     image: "${FREEHIRE_IMAGE:-freehire-worker:local}"
     restart: unless-stopped
     entrypoint: ["/app/supercronic", "/app/deploy/dokploy/workers.crontab"]
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       migrate:
         condition: service_completed_successfully

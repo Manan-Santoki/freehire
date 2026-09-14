@@ -51,9 +51,14 @@ Running crawl containers keep their exit status until the scheduler records it.
 commits (this directory, `docker-compose.dokploy.yml`, the Dockerfile worker list, the
 Docker crawl launcher, and the migrate search_path fix). To ship a newer upstream:
 
+`.github/workflows/sync-upstream.yml` does this every three days (and on demand from the
+Actions tab): it fast-forwards `main`, merges it into `dokploy` and pushes, which Dokploy
+deploys. A conflict fails the run and opens a `sync-conflict` issue. By hand, with
+`origin` = this fork and `upstream` = strelov1/freehire:
+
 ```sh
-git fetch origin && git checkout main && git merge --ff-only origin/main && git push fork main
-git checkout dokploy && git merge main && git push fork dokploy   # Dokploy auto-deploys
+git fetch upstream && git checkout main && git merge --ff-only upstream/main && git push origin main
+git checkout dokploy && git merge main && git push origin dokploy   # Dokploy auto-deploys
 ```
 
 Migrations apply on start through the `migrate` service. Meilisearch settings do NOT:
@@ -63,7 +68,20 @@ return 400 until the next `reindex`, which builds a fresh index with the new set
 swaps it in. After such a deploy, trigger the disabled Dokploy schedule `reindex` (runs
 `run-worker.sh reindex` in the `workers` container, so it shares the search lock) rather
 than waiting for the six-hourly cron. `search-settings-drift` reports the same gap as a
-metric.
+metric. With `DOKPLOY_URL` and `DOKPLOY_API_KEY` repository secrets set, the sync workflow
+runs that schedule itself once the deploy is done.
+
+## Environment
+
+[env.template](env.template) lists every variable the binaries read, grouped by feature,
+with the ones already set on this deployment marked. The compose file passes Dokploy's
+whole `.env` through to `app`, `workers`, `scheduler` and `migrate`, so a variable pasted
+into the Dokploy Environment tab takes effect on the next deploy.
+
+Outbound mail (verification codes, password reset, alerts, digests) needs
+`NOTIFY_EMAIL_FROM` plus either `RESEND_API_KEY` (Resend, no AWS account needed; the
+sender's domain must be verified in the Resend dashboard) or AWS SES credentials. Until
+one is set, sign-up works but the "confirm your email" prompt cannot be satisfied.
 
 ## Search and maintenance
 
