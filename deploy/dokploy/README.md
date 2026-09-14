@@ -45,6 +45,26 @@ missing API credentials should be disabled with an explicit reason until configu
 The scheduler reports disabled providers, completed runs, failures, and saturation.
 Running crawl containers keep their exit status until the scheduler records it.
 
+## Upgrading from upstream
+
+`main` on this fork tracks `strelov1/freehire`; `dokploy` is `main` plus the deployment
+commits (this directory, `docker-compose.dokploy.yml`, the Dockerfile worker list, the
+Docker crawl launcher, and the migrate search_path fix). To ship a newer upstream:
+
+```sh
+git fetch origin && git checkout main && git merge --ff-only origin/main && git push fork main
+git checkout dokploy && git merge main && git push fork dokploy   # Dokploy auto-deploys
+```
+
+Migrations apply on start through the `migrate` service. Meilisearch settings do NOT:
+a release that adds a filterable or sortable attribute (upstream ships these in
+`internal/search/search/client.go`) makes `/api/v1/jobs/facets` and the affected filters
+return 400 until the next `reindex`, which builds a fresh index with the new settings and
+swaps it in. After such a deploy, trigger the disabled Dokploy schedule `reindex` (runs
+`run-worker.sh reindex` in the `workers` container, so it shares the search lock) rather
+than waiting for the six-hourly cron. `search-settings-drift` reports the same gap as a
+metric.
+
 ## Search and maintenance
 
 After initial ingestion, run in the workers container:
