@@ -25,9 +25,28 @@
 
 ## 5. The status page sees a saturated pool
 
-- [x] 5.1 `currentSiteHealth` reads `pool.Stat()`; at or above 90% of the pool held, the site reads `degraded`.
-- [x] 5.2 Tests at both boundaries, on an idle pool, on a pool reporting no capacity (the division guard), and that the signal can never outrank `down`. Exempt from the traffic floor on purpose — that floor is a sampling argument about a FRACTION, and during the outage almost nothing completed.
-- [x] 5.3 `pool_pressure` on the wire; `StatusBoard.svelte` names it only when it is what makes the site degraded.
+- [x] 5.1 `currentSiteHealth` reads `pool.Stat()` and reports the fraction as `pool_pressure`.
+
+      **This shipped REVERSED from how it was written, and the reversal is the finding.** The
+      task said "at or above 90% of the pool held, the site reads `degraded`", and that was
+      built — then removed before it could do harm. `StartSiteStatusSampler` takes ONE reading
+      every five minutes and `RecordSiteStatusSample` keeps the day's WORST severity, while the
+      live pool — sampled every 5s against the healthy production site — reads 9/10 and 10/10
+      inside the same two minutes it otherwise spends at 0/10. Real traffic is bursty and
+      touching the ceiling is ordinary, so one unlucky sample would have painted a whole day
+      degraded and the 90-day history strip would have gone yellow permanently, with no way to
+      walk it back.
+
+      An instant cannot carry that verdict. The number is reported and the Grafana rule judges
+      it, averaging over five minutes (0.125-0.235 healthy against the outage's sustained 1.0) —
+      history this process does not keep. Same lesson as §7.1's three drafts, found the same
+      way: by measuring the live pool instead of reasoning about it.
+- [x] 5.2 Tests pin the arithmetic and the division guard (a pool reporting no capacity yields 0,
+      because "I cannot measure this" must not render as "everything is held"), plus the decision
+      itself: an exhausted pool must read `operational` from `deriveSiteStatus`.
+- [x] 5.3 `pool_pressure` on the wire; `StatusBoard.svelte` reports it beside the error rate,
+      unconditionally. An earlier draft showed the line only above 90% and phrased it as a
+      warning — which would have cried wolf on the same ordinary bursts.
 
 ## 6. Docs
 
@@ -83,9 +102,21 @@ change from "this specific hole is closed" into "the next one is visible".
       answer 400 in 0.26–0.80s at `offset=179500`; the boundary page (`offset=9900&limit=100`)
       still serves 200, and the ordinary first page answers in 0.96s. The new pool and latency
       metrics are live on the active colour's `/metrics`.
-- [ ] 8.4 Ship the alert rules to litellm-host AFTER the binary, per the deploy-order note in
-      the rules file. **Blocked on a follow-up**: verifying 7.1 on production showed
-      `empty_acquire_total` running at 15/s against a pool one-tenth occupied, so an alert on
-      that rate would fire permanently. The rule now reads `acquire_wait_seconds_total`, whose
-      per-second rate is the average number of callers queued — which the binary must publish
-      first.
+- [x] 8.4 Alert rules live on litellm-host, shipped after the binary as the deploy-order note
+      requires. Grafana logged `starting to provision alerting` → `finished to provision
+      alerting` with nothing between; `alert_rule` holds 23 rules including the three new ones;
+      no evaluation errors; `alert_instance` is empty, so nothing is firing falsely.
+
+      Every expression was checked against live Prometheus BEFORE shipping, which is what a
+      `noDataState: Alerting` rule demands: pool occupancy 0.235 (threshold 0.7), p95 latency
+      0.53s (threshold 2s), 400-rate 0.034/s (threshold 2/s).
+
+      Getting the pool expression right took three drafts and two live measurements, and both
+      discarded ones looked correct on paper. `rate(empty_acquire_total)` read 15–39/s on a pool
+      one tenth occupied — pgx counts an acquire that waited at all, microseconds included.
+      `rate(acquire_seconds_total)` read 1.36 s/s on that same idle pool, and the claim that
+      this was "the average number of callers queued" was wrong: pgx's `AcquireDuration` is the
+      total duration of ALL acquires, instant hand-offs included. What works is averaged
+      occupancy — instantaneous `acquired/max` is bursty (sampled 9/10, 10/10, then 0/10 for
+      most of two minutes), but over five minutes it settles at 0.125–0.235 while the outage
+      held 10/10 for fifty minutes.
