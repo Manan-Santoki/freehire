@@ -7,9 +7,11 @@ validate each board live, and print (or --write) ready-to-paste YAML.
 
 Usage:
     python3 scripts/discover_boards.py --query "fintech berlin" \
-            --provider ashby,lever --channel ddg,github,google,cc [--write] [--limit N]
+            --provider ashby,lever --channel ddg,github,google,serping,cc [--write] [--limit N]
 
-Stdlib only; the github channel shells out to `gh`; google needs GOOGLE_CSE_KEY/_CX.
+Stdlib only; the github channel shells out to `gh`; google needs GOOGLE_CSE_KEY/_CX;
+serping needs SERPINGAPI_KEY (https://serpingapi.com — a Google SERP API, not a
+Custom Search replacement: no `cx` engine, but the same `site:` query shape works).
 """
 
 from __future__ import annotations
@@ -49,9 +51,12 @@ BROWSER_UA = (
 )
 
 
-def get_text(url: str, timeout: int = 25) -> str:
-    """GET a URL with a browser UA, returning decoded text ('' on failure)."""
-    req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
+def get_text(url: str, timeout: int = 25, headers: dict[str, str] | None = None) -> str:
+    """GET a URL with a browser UA (plus any extra headers), returning decoded text ('' on failure)."""
+    hdrs = {"User-Agent": BROWSER_UA}
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(url, headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read().decode("utf-8", "replace")
@@ -91,6 +96,29 @@ def channel_google(host: str, query: str, limit: int) -> set[str]:
     )
     try:
         return parse_cse_items(json.loads(body))
+    except Exception:
+        return set()
+
+
+def parse_serping_items(obj: dict) -> set[str]:
+    """Extract result links from a Serping API (Google SERP JSON) response."""
+    return {it["link"] for it in obj.get("organic", []) if it.get("link")}
+
+
+def channel_serping(host: str, query: str, limit: int) -> set[str]:
+    """site:<host> <query> via Serping API (env-gated)."""
+    key = os.environ.get("SERPINGAPI_KEY")
+    if not key:
+        print("  ! serping channel skipped (set SERPINGAPI_KEY)", file=sys.stderr)
+        return set()
+    q = urllib.parse.quote(f"site:{host} {query}")
+    num = min(limit, 100) if limit else 10
+    body = get_text(
+        f"https://api.serpingapi.com/v1/search?q={q}&num={num}",
+        headers={"X-API-Key": key},
+    )
+    try:
+        return parse_serping_items(json.loads(body))
     except Exception:
         return set()
 
@@ -153,6 +181,7 @@ def channel_cc(host: str, query: str, limit: int) -> set[str]:
 CHANNELS = {
     "ddg": channel_ddg,
     "google": channel_google,
+    "serping": channel_serping,
     "github": channel_github,
     "cc": channel_cc,
 }
@@ -185,7 +214,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Query-driven ATS board discovery")
     ap.add_argument("--query", default="", help="search term for this run")
     ap.add_argument("--provider", default="", help="comma list; default = all")
-    ap.add_argument("--channel", default="ddg", help="comma list from ddg,google,github,cc")
+    ap.add_argument("--channel", default="ddg", help="comma list from ddg,google,serping,github,cc")
     ap.add_argument("--write", action="store_true", help="append survivors to sources/<provider>.yml")
     ap.add_argument("--limit", type=int, default=20, help="cap results per channel/provider")
     args = ap.parse_args()

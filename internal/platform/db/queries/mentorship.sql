@@ -6,8 +6,8 @@
 INSERT INTO mentors (
     user_id, company_slug, slug, display_name, headline, bio, topics, languages, timezone,
     session_duration_min, buffer_before_min, buffer_after_min, min_notice_min,
-    horizon_days, meeting_url, show_photo
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    horizon_days, meeting_url, show_photo, seniority
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 RETURNING *;
 
 -- name: GetMentorByUserID :one
@@ -59,6 +59,7 @@ SET display_name = sqlc.arg(display_name),
     horizon_days = sqlc.arg(horizon_days),
     meeting_url = sqlc.arg(meeting_url),
     show_photo = sqlc.arg(show_photo),
+    seniority = sqlc.arg(seniority),
     updated_at = now()
 -- Keyed on user_id ALONE, which UNIQUE (user_id) makes a single row. Taking an id as well
 -- would mean the caller reading the profile first just to learn one, which is a round trip
@@ -125,6 +126,13 @@ WHERE m.status = 'approved' AND NOT m.paused
   AND (sqlc.narg(company_slug)::text IS NULL OR m.company_slug = sqlc.narg(company_slug)::text)
   AND (sqlc.narg(topic)::text IS NULL OR sqlc.narg(topic)::text = ANY (m.topics))
   AND (sqlc.narg(language)::text IS NULL OR sqlc.narg(language)::text = ANY (m.languages))
+  AND (sqlc.narg(seniority)::text IS NULL OR m.seniority = sqlc.narg(seniority)::text)
+  -- Unescaped, matching companies.sql's and gmail.sql's own text search — see
+  -- mentor-directory-filters' design.md for why this change does not revisit that.
+  AND (sqlc.narg(query)::text IS NULL
+       OR m.display_name ILIKE '%' || sqlc.narg(query)::text || '%'
+       OR m.headline ILIKE '%' || sqlc.narg(query)::text || '%')
+  AND (NOT sqlc.arg(no_reviews_only)::bool OR COALESCE(r.rating_count, 0) = 0)
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT sqlc.arg(row_limit);
 
@@ -237,6 +245,28 @@ FROM mentor_busy_intervals
 WHERE mentor_id = $1
   AND starts_at < sqlc.arg(window_end) AND ends_at > sqlc.arg(window_start)
 ORDER BY starts_at;
+
+-- name: UpsertMentorBusyInterval :exec
+-- One row per synced busy interval, source fixed to 'google_calendar' (the only writer
+-- of this source). external_id is not Google's — a free/busy period carries no
+-- identifier — but the interval's own bounds, concatenated (see busysync.externalID), so
+-- a re-sync of an unchanged interval updates rather than duplicates, exactly as the
+-- table's unique constraint intends for an events-based sync.
+INSERT INTO mentor_busy_intervals (mentor_id, starts_at, ends_at, source, external_id)
+VALUES ($1, $2, $3, 'google_calendar', $4)
+ON CONFLICT (mentor_id, source, external_id) DO UPDATE
+SET starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, synced_at = now();
+
+-- name: DeleteMentorBusyIntervalsInWindow :exec
+-- Half of the sync's replace-the-window reconcile (see mentor-calendar-busy-sync's
+-- design.md): every 'google_calendar' interval for this mentor starting before
+-- window_end is cleared, then UpsertMentorBusyInterval re-inserts what free/busy
+-- currently reports — in one transaction, so ListBusy never sees a partial reconcile.
+-- No lower bound: the sync worker only ever writes intervals starting at or after "now",
+-- so a row this misses is one no run has ever produced, and a mentor's every synced
+-- interval always starts before some future run's window_end.
+DELETE FROM mentor_busy_intervals
+WHERE mentor_id = $1 AND source = 'google_calendar' AND starts_at < sqlc.arg(window_end);
 
 -- name: ListBookingsBySeeker :many
 -- The seeker's own sessions, newest first. Upcoming and past are split by the caller

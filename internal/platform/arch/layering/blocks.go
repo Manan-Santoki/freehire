@@ -84,8 +84,9 @@ var blocks = map[string][]string{
 		"worker",
 	},
 	"dict": {
-		"answertopic", "classify", "companyname", "industrytag", "lang", "location", "normalize",
-		"roletype", "skilladjacency", "skillbundle", "skilltag", "slugmint",
+		"answertopic", "certification", "classify", "companyname", "edulevel", "industrytag",
+		"lang", "location", "normalize", "roletype", "skilladjacency", "skillbundle", "skilltag",
+		"slugmint",
 		// skillvec/gen is the registry generator — a main package that reads skilltag
 		// and writes skillvec's source. It never ships in a binary, but it is a package
 		// in the repo, so it needs a block like any other.
@@ -150,7 +151,13 @@ var blocks = map[string][]string{
 		"talentnetwork",
 	},
 	"job": {
-		"applydate", "collections", "ghost", "ghostreport", "job", "jobdedup",
+		"applydate", "collections",
+		// dictgap turns LLM enrichment facts already in the catalogue into ranked
+		// candidate gaps for the deterministic dict/skilltag and dict/classify
+		// dictionaries — a fact about postings' recorded facets, not an AI/enrichment
+		// concern, the same footing reqextract and wikicompany take below.
+		"dictgap",
+		"ghost", "ghostreport", "job", "jobdedup",
 		"jobderive", "jobfacts", "jobhash", "jobreality", "jobview", "liveness",
 		"outboundurl", "privatejob",
 		// recentfeed polls recent_feed_outbox and groups the batch by
@@ -201,7 +208,13 @@ var blocks = map[string][]string{
 	// billing would import a community integration — and the guard would say so.
 	"engage": {
 		"broadcast", "community", "companyfeedback", "discordlink", "emailnotify", "emailprefs",
-		"linkedinauth", "mailpreview", "mentorship", "notify", "nudge", "onboarding",
+		"linkedinauth", "mailpreview", "mentorship",
+		// mentorship/busysync is named in full, per the auth/oauth convention: it is a
+		// sub-package of mentorship and takes its parent's block, but the sync worker
+		// reaches into application (gmailsync) the way mentorship itself does for the
+		// calendar-write consent, so it is listed rather than left implicit.
+		"mentorship/busysync",
+		"notify", "nudge", "onboarding",
 		// processreport holds candidate-reported facts about how a company hires (today:
 		// that it screens with an AI interviewer). It sits beside companyfeedback and not
 		// in job, because what it stores is what a PERSON reported, not a property the

@@ -30,6 +30,7 @@
   const hasGmail = $derived(!!gmail?.connected);
   const hasCalendar = $derived(gmail?.calendar_connected === true);
   const hasMentorCalendar = $derived(gmail?.mentor_calendar_connected === true);
+  const hasMentorBusySync = $derived(gmail?.mentor_busy_sync_connected === true);
 
   async function loadGmail() {
     gmailLoading = true;
@@ -90,6 +91,7 @@
     const gmailFailed = params.get('gmail_error');
     const calendarFailed = params.get('calendar_error');
     const mentorCalendarFailed = params.get('mentor_calendar_error');
+    const mentorBusyFailed = params.get('mentor_busy_error');
     if (gmailFailed) {
       googleNotice = { ok: false, text: GMAIL_CONNECT_ERRORS[gmailFailed] ?? 'Connecting Gmail failed. Try again.' };
     } else if (calendarFailed) {
@@ -102,6 +104,11 @@
         ok: false,
         text: CALENDAR_CONNECT_ERRORS[mentorCalendarFailed] ?? 'Connecting Calendar failed. Try again.',
       };
+    } else if (mentorBusyFailed) {
+      googleNotice = {
+        ok: false,
+        text: CALENDAR_CONNECT_ERRORS[mentorBusyFailed] ?? 'Connecting Calendar failed. Try again.',
+      };
     } else if (params.get('gmail') === 'connected') {
       googleNotice = { ok: true, text: 'Gmail connected — your ATS mail will show up in the Inbox shortly.' };
     } else if (params.get('calendar') === 'connected') {
@@ -110,6 +117,11 @@
       googleNotice = {
         ok: true,
         text: 'Calendar connected — your mentorship bookings will get an automatic Meet link.',
+      };
+    } else if (params.get('mentor_busy') === 'connected') {
+      googleNotice = {
+        ok: true,
+        text: 'Calendar connected — your busy time will be kept out of your mentorship slots.',
       };
     } else {
       return;
@@ -244,6 +256,36 @@
   const CONNECTED_BADGE_CLASS = 'border-brand-ring/40 text-brand-strong';
 </script>
 
+{#snippet googleConsentRow(
+  label: string,
+  connected: boolean,
+  connectedText: string,
+  disconnectedText: string,
+  connectHref: string,
+)}
+  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+    <div class="min-w-0">
+      <div class="flex items-center gap-1.5 text-sm">
+        <CalendarDays class="h-3.5 w-3.5 text-muted-foreground" />
+        {label}
+        {#if connected}
+          <Badge variant="outline" class={CONNECTED_BADGE_CLASS}>Connected</Badge>
+        {/if}
+      </div>
+      <p class="text-xs text-muted-foreground">{connected ? connectedText : disconnectedText}</p>
+    </div>
+    {#if !connected && gmail?.available}
+      <!-- eslint-disable svelte/no-navigation-without-resolve -- an API route the browser must navigate to so Google can redirect it back, not a SvelteKit page to resolve -->
+      <a
+        href={connectHref}
+        class="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+        >Connect</a
+      >
+      <!-- eslint-enable svelte/no-navigation-without-resolve -->
+    {/if}
+  </div>
+{/snippet}
+
 <div class="flex flex-col gap-4">
   <div class="flex flex-col gap-1">
     <h1 class="text-2xl font-semibold tracking-tight">Integrations</h1>
@@ -311,58 +353,35 @@
         {/if}
 
         <!-- Calendar: a separate consent, so it needs its own status and its own connect. -->
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-          <div class="min-w-0">
-            <div class="flex items-center gap-1.5 text-sm">
-              <CalendarDays class="h-3.5 w-3.5 text-muted-foreground" /> Calendar
-              {#if hasCalendar}
-                <Badge variant="outline" class={CONNECTED_BADGE_CLASS}>Connected</Badge>
-              {/if}
-            </div>
-            <p class="text-xs text-muted-foreground">
-              {hasCalendar
-                ? 'Accepted interviews appear on the Tracking calendar.'
-                : 'Connecting Mail does not grant this — it asks separately.'}
-            </p>
-          </div>
-          {#if !hasCalendar && gmail?.available}
-            <!-- eslint-disable svelte/no-navigation-without-resolve -- an API route the browser must navigate to so Google can redirect it back, not a SvelteKit page to resolve -->
-            <a
-              href="/api/v1/me/calendar/connect"
-              class="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-              >Connect</a
-            >
-            <!-- eslint-enable svelte/no-navigation-without-resolve -->
-          {/if}
-        </div>
+        {@render googleConsentRow(
+          'Calendar',
+          hasCalendar,
+          'Accepted interviews appear on the Tracking calendar.',
+          'Connecting Mail does not grant this — it asks separately.',
+          '/api/v1/me/calendar/connect',
+        )}
 
         <!-- Mentor calendar: a THIRD, separate write consent — never inferred from the
              read-only Calendar grant above, which candidates connect for an unrelated
              purpose and must not silently be handed write access over. -->
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-          <div class="min-w-0">
-            <div class="flex items-center gap-1.5 text-sm">
-              <CalendarDays class="h-3.5 w-3.5 text-muted-foreground" /> Mentor calendar
-              {#if hasMentorCalendar}
-                <Badge variant="outline" class={CONNECTED_BADGE_CLASS}>Connected</Badge>
-              {/if}
-            </div>
-            <p class="text-xs text-muted-foreground">
-              {hasMentorCalendar
-                ? 'New mentorship bookings get an automatic Google Meet link.'
-                : 'For mentors: get an automatic Google Meet link on every booking instead of a fixed link.'}
-            </p>
-          </div>
-          {#if !hasMentorCalendar && gmail?.available}
-            <!-- eslint-disable svelte/no-navigation-without-resolve -- an API route the browser must navigate to so Google can redirect it back, not a SvelteKit page to resolve -->
-            <a
-              href="/api/v1/me/mentor-calendar/connect"
-              class="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-              >Connect</a
-            >
-            <!-- eslint-enable svelte/no-navigation-without-resolve -->
-          {/if}
-        </div>
+        {@render googleConsentRow(
+          'Mentor calendar',
+          hasMentorCalendar,
+          'New mentorship bookings get an automatic Google Meet link.',
+          'For mentors: get an automatic Google Meet link on every booking instead of a fixed link.',
+          '/api/v1/me/mentor-calendar/connect',
+        )}
+
+        <!-- Mentor calendar sync: a FOURTH, separate consent — it shares the read-only
+             Calendar grant's own scope (Google has no narrower one for free/busy alone),
+             but must never be inferred from that unrelated grant. -->
+        {@render googleConsentRow(
+          'Mentor calendar sync',
+          hasMentorBusySync,
+          'Your busy time from Google Calendar is kept out of your mentorship slots.',
+          'For mentors: keep your existing Google Calendar commitments out of your mentorship slots.',
+          '/api/v1/me/mentor-busy-sync/connect',
+        )}
       </div>
     {/if}
 

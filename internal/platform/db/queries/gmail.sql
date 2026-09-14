@@ -2,8 +2,12 @@
 -- The grant row as the status endpoint reads it. `scopes` is included because the two
 -- consents are separate: a connected mailbox says nothing about the calendar, and a
 -- calendar grant may have no mailbox behind it, so the row's existence cannot answer
--- either question on its own.
-SELECT user_id, email, status, sync_cursor, connected_at, last_synced_at, scopes
+-- either question on its own. `mentor_busy_sync_opted_in` is included for the same
+-- reason again, one purpose further: `scopes` alone cannot say whether THIS consent was
+-- given, since it reuses the same calendar.readonly scope the candidate-side calendar
+-- grant already requests.
+SELECT user_id, email, status, sync_cursor, connected_at, last_synced_at, scopes,
+    mentor_busy_sync_opted_in
 FROM gmail_connections
 WHERE user_id = $1;
 
@@ -48,13 +52,47 @@ SELECT user_id, email, sync_cursor
 FROM gmail_connections
 WHERE status = 'connected' AND email <> '';
 
+-- name: SetMentorBusySyncOptedIn :exec
+-- Records that a mentor completed the busy-sync connect flow's own callback. Set only
+-- there, never inferred from `scopes` alone: calendar.readonly is the same scope the
+-- unrelated candidate-side calendar grant already requests, so scope presence cannot
+-- tell the two purposes apart (see mentor-calendar-busy-sync's design.md).
+UPDATE gmail_connections SET mentor_busy_sync_opted_in = true WHERE user_id = $1;
+
+-- name: ListMentorBusySyncConnections :many
+-- Drives cmd/mentor-busy-sync: every mentor whose account both explicitly opted in to
+-- busy-sync AND still holds a usable calendar.readonly grant, and whose profile is
+-- published — an unapproved or withdrawn mentor offers no bookable slots, so their busy
+-- time is not worth an API call until they are approved (the very next run picks them up
+-- once they are). The scope check is defensive alongside the flag: a grant can lose a
+-- scope outside our control, and this worker must not call an API it no longer holds.
+SELECT m.id AS mentor_id, gc.user_id
+FROM gmail_connections gc
+JOIN mentors m ON m.user_id = gc.user_id
+WHERE gc.status = 'connected'
+  AND gc.mentor_busy_sync_opted_in
+  AND sqlc.arg(calendar_scope)::text = ANY(gc.scopes)
+  AND m.status = 'approved';
+
 -- name: SetGmailSynced :exec
 UPDATE gmail_connections
 SET sync_cursor = $2, last_synced_at = now()
 WHERE user_id = $1;
 
 -- name: SetGmailStatus :exec
-UPDATE gmail_connections SET status = $2 WHERE user_id = $1;
+-- A move to 'needs_reconsent' also clears mentor_busy_sync_opted_in — every caller
+-- (gmail-sync, cal-sync, mentor-calendar-write, mentor-busy-sync) marks that status only
+-- when this account's ONE shared refresh token has failed, and the flag exists solely to
+-- gate a consent that same token covers. Left standing, a later reconnect through an
+-- UNRELATED flow (which restores status to 'connected' while still requesting
+-- calendar.readonly) would silently resume busy-sync without the mentor ever revisiting
+-- its own connect screen — see mentor-calendar-busy-sync's design.md. Fixed here, once,
+-- rather than in each caller: they all share this exact statement, and duplicating the
+-- clear in only one of them is precisely the gap a code review found.
+UPDATE gmail_connections
+SET status = $2,
+    mentor_busy_sync_opted_in = CASE WHEN $2 = 'needs_reconsent' THEN false ELSE mentor_busy_sync_opted_in END
+WHERE user_id = $1;
 
 -- name: DeleteGmailConnection :exec
 DELETE FROM gmail_connections WHERE user_id = $1;

@@ -258,6 +258,10 @@ type Querier interface {
 	// not rewritten — and the affected set is bounded to two boards, so unlike the
 	// multi-million-row backfills this needs no chunking.
 	BackfillProfessionITBoardTech(ctx context.Context, boardPatterns []string) (int64, error)
+	// Add a host to the blocklist, attributed to the blocking moderator. ON CONFLICT DO NOTHING
+	// makes blocking an already-blocked host a no-op rather than an error (submission.Service.Reject
+	// calls this every time block_domain is set, whether or not the host is new).
+	BlockHost(ctx context.Context, arg BlockHostParams) error
 	// Find the ashby board already carrying a job with this Ashby job id — for company careers
 	// pages that embed Ashby via the ashby_jid widget param (the board slug is JS-rendered, absent
 	// from the URL/markup). external_id is "<board>:<uuid>"; served by the
@@ -574,6 +578,8 @@ type Querier interface {
 	// credential at all; guarding on both would let a pre-0119 row — secret set, id null —
 	// read as unclaimed and be overwritten, orphaning a key that is still spending.
 	ClaimUserLLMKey(ctx context.Context, arg ClaimUserLLMKeyParams) (ClaimUserLLMKeyRow, error)
+	// The id span cmd/report-classify-drift walks. Same shape as SkillGapReportBounds.
+	ClassifyDriftReportBounds(ctx context.Context) (ClassifyDriftReportBoundsRow, error)
 	// Drop an application's pipeline progress while keeping the record — the notes are the
 	// candidate's own text, and reconsidering is not a claim the process never happened.
 	// Clearing both stage and applied_at is what takes it off the board (see columnOf).
@@ -1499,6 +1505,14 @@ type Querier interface {
 	DeleteMailbox(ctx context.Context, userID int64) error
 	// The mentor_id guard scopes the delete to the owner's own schedule.
 	DeleteMentorAvailabilityRule(ctx context.Context, arg DeleteMentorAvailabilityRuleParams) (int64, error)
+	// Half of the sync's replace-the-window reconcile (see mentor-calendar-busy-sync's
+	// design.md): every 'google_calendar' interval for this mentor starting before
+	// window_end is cleared, then UpsertMentorBusyInterval re-inserts what free/busy
+	// currently reports — in one transaction, so ListBusy never sees a partial reconcile.
+	// No lower bound: the sync worker only ever writes intervals starting at or after "now",
+	// so a row this misses is one no run has ever produced, and a mentor's every synced
+	// interval always starts before some future run's window_end.
+	DeleteMentorBusyIntervalsInWindow(ctx context.Context, arg DeleteMentorBusyIntervalsInWindowParams) error
 	// Clears the recurring week, leaving dated overrides alone. The cabinet edits the week as
 	// a whole — a schedule is a shape, not a list of rows a user reasons about individually —
 	// so a save is this followed by inserts, inside one transaction.
@@ -2214,7 +2228,10 @@ type Querier interface {
 	// The grant row as the status endpoint reads it. `scopes` is included because the two
 	// consents are separate: a connected mailbox says nothing about the calendar, and a
 	// calendar grant may have no mailbox behind it, so the row's existence cannot answer
-	// either question on its own.
+	// either question on its own. `mentor_busy_sync_opted_in` is included for the same
+	// reason again, one purpose further: `scopes` alone cannot say whether THIS consent was
+	// given, since it reuses the same calendar.readonly scope the candidate-side calendar
+	// grant already requests.
 	GetGmailConnection(ctx context.Context, userID int64) (GetGmailConnectionRow, error)
 	GetGmailRefreshToken(ctx context.Context, userID int64) (GetGmailRefreshTokenRow, error)
 	// What a write caller (mentor-google-meet-link's CreateMeetEvent) needs in one round
@@ -2788,6 +2805,8 @@ type Querier interface {
 	// carries nine other columns a gate has no use for — and a gate that reads a whole user
 	// row invites somebody to branch on a second field from it later.
 	IsBetaTester(ctx context.Context, id int64) (bool, error)
+	// Whether a normalized host (see submission.normalizeHost) is on the submission blocklist.
+	IsHostBlocked(ctx context.Context, host string) (bool, error)
 	// Cursor read: has this rotated file (by content signature) been applied? The
 	// signature is stable across rename and gzip, so a re-run recognizes the same file.
 	IsViewLogFileProcessed(ctx context.Context, signature int64) (bool, error)
@@ -3568,6 +3587,31 @@ type Querier interface {
 	ListJobListMembershipForJob(ctx context.Context, arg ListJobListMembershipForJobParams) ([]ListJobListMembershipForJobRow, error)
 	// A user's job lists, most recently updated first (the account-area order).
 	ListJobLists(ctx context.Context, userID int64) ([]ListJobListsRow, error)
+	// One chunk of the skill-gap report: every (job id, raw skill phrase) pair LLM
+	// enrichment recorded, for jobs in an id range.
+	//
+	// The CASE inside the LATERAL call keeps the query safe regardless of what the
+	// query planner decides to do: jsonb_array_elements_text errors on a non-array JSON
+	// value, and this call does not rely on a later WHERE predicate being pushed down
+	// ahead of it to avoid that — substituting '[]'::jsonb for anything that is not a
+	// JSON array (enrichment.skills absent, enrichment itself an empty object, or
+	// defensively some other JSON shape) makes the call total on its own: it always
+	// sees an array, and a job with no skills array simply contributes zero rows.
+	//
+	// The LIMIT bounds how many (id, skill) pairs one statement returns, not how many
+	// jobs it reads. Unlike ListJobsForRequirementsBackfill's one-row-per-job cap, this
+	// is a one-row-per-(job, skill) LATERAL expansion, so the LIMIT is not guaranteed to
+	// land on a job-id boundary — the caller (cmd/report-skill-gaps) accounts for that:
+	// when a chunk comes back full, it holds back the last id's rows and resumes AT
+	// that id rather than past it, so a job's skill list is never read half-counted.
+	//
+	// enriched_at IS NOT NULL, not `enrichment IS NOT NULL`: jobs.enrichment defaults to
+	// '{}'::jsonb NOT NULL (migration 0001), so a job that has never been enriched still
+	// has a non-NULL enrichment column — enriched_at is the real "this job has actually
+	// been enriched" signal. The CASE above already makes an unenriched row contribute
+	// zero rows on its own (an empty object has no 'skills' array), so this filter is a
+	// cheaper way to skip most of the table rather than a correctness requirement.
+	ListJobSkillsForGapReport(ctx context.Context, arg ListJobSkillsForGapReportParams) ([]ListJobSkillsForGapReportRow, error)
 	// Newest-added first: created_at is when the job entered the catalogue (stable
 	// across re-ingests), so fresh ingests surface on top regardless of how old the
 	// platform's posted_at is. id breaks ties within one ingest batch.
@@ -3658,6 +3702,13 @@ type Querier interface {
 	// The other half of the busy set: intervals read from the mentor's own calendar. Empty
 	// until that sync ships, and carries only the bounds — no title, no attendee.
 	ListMentorBusyIntervals(ctx context.Context, arg ListMentorBusyIntervalsParams) ([]ListMentorBusyIntervalsRow, error)
+	// Drives cmd/mentor-busy-sync: every mentor whose account both explicitly opted in to
+	// busy-sync AND still holds a usable calendar.readonly grant, and whose profile is
+	// published — an unapproved or withdrawn mentor offers no bookable slots, so their busy
+	// time is not worth an API call until they are approved (the very next run picks them up
+	// once they are). The scope check is defensive alongside the flag: a grant can lose a
+	// scope outside our control, and this worker must not call an API it no longer holds.
+	ListMentorBusySyncConnections(ctx context.Context, calendarScope string) ([]ListMentorBusySyncConnectionsRow, error)
 	// All of the caller's own feedback on a company, across every category they've
 	// reviewed it under — the write dialog's "which categories have I already
 	// used" read. Not filtered by status, same reasoning as GetMyCompanyFeedback.
@@ -3717,6 +3768,11 @@ type Querier interface {
 	// Capped at 500 as a runaway-growth guard — far above any plausible backlog; a queue
 	// that deep needs bulk triage, not a longer page.
 	ListPendingReports(ctx context.Context) ([]ListPendingReportsRow, error)
+	// id+url of every pending submission, used only to find which OTHER pending rows share the
+	// host being blocked (see RejectAndBlockHost in the submission package): host matching needs
+	// Go's net/url normalization (see submission.normalizeHost), so this fetches the candidates
+	// and the caller filters in Go rather than duplicating that normalization in SQL.
+	ListPendingSubmissionURLs(ctx context.Context) ([]ListPendingSubmissionURLsRow, error)
 	// The moderator review queue: pending submissions, newest first, with the submitter's
 	// email so the moderator can judge provenance. Capped at 500 as a runaway-growth
 	// guard — far above any plausible backlog; a queue that deep needs bulk triage,
@@ -3892,6 +3948,36 @@ type Querier interface {
 	// First page of a thread's replies, oldest first. LEFT JOIN so an authorless reply
 	// still returns — a future AI reply, or one whose author deleted their account.
 	ListThreadRepliesFirst(ctx context.Context, arg ListThreadRepliesFirstParams) ([]ListThreadRepliesFirstRow, error)
+	// One chunk of the classify-drift report: every distinct title among enriched jobs in
+	// an id range, with how many jobs in THIS CHUNK carried it and one representative
+	// enrichment seniority/category pair (MIN picks an arbitrary but deterministic one —
+	// the report only needs a disagreement signal per title, not a distribution across
+	// postings that share a title but disagree with each other).
+	//
+	// Deliberately NO row LIMIT, unlike ListJobSkillsForGapReport: GROUP BY already caps
+	// this statement's output at the number of DISTINCT titles in the id range, which is
+	// always far below the range's row count, so the id range width alone (the caller's
+	// chunk-size knob) is what bounds one statement's cost. A LIMIT on top of an
+	// unordered GROUP BY would silently drop titles from the chunk rather than bounding
+	// memory, with no id to resume from — aggregated rows carry no single id to resume a
+	// partial chunk from, unlike the per-row chunks elsewhere in this file.
+	//
+	// Grouping happens per chunk, not across the whole table: a title spanning more than
+	// one id range comes back as more than one row, one per chunk it appears in. The
+	// caller (cmd/report-classify-drift) merges those by title across chunks.
+	//
+	// enriched_at IS NOT NULL, not `enrichment IS NOT NULL` or is_tech/closed_at:
+	// jobs.enrichment defaults to '{}'::jsonb NOT NULL (migration 0001), so a job that
+	// has never been enriched still has a non-NULL enrichment column — enriched_at is
+	// the real "this job has actually been enriched" signal, the same one
+	// EnqueuePendingJobs uses to decide what still needs enriching. A title's dictionary
+	// answer is a fact about the title text alone, independent of whether the posting is
+	// open or confirmed technical, and filtering on either would hide real drift on
+	// titles that skew toward one state. COALESCE to '' rather than leaving the
+	// aggregate nullable: a title where every enriched job left a facet unstated is
+	// exactly the "no opinion" case dictgap.ClassifyDriftCandidates already treats as
+	// empty.
+	ListTitlesForClassifyDrift(ctx context.Context, arg ListTitlesForClassifyDriftParams) ([]ListTitlesForClassifyDriftRow, error)
 	// The owner's per-CV panel: every traced link of one CV with what is known about it. Owner-scoped.
 	//
 	// Clicks flagged as automated are counted separately rather than filtered out, so the UI's "include
@@ -4254,6 +4340,10 @@ type Querier interface {
 	// Mark a pending submission rejected with an optional reason, recording the deciding
 	// moderator. Scoped to status='pending' (see MarkSubmissionApproved). No job is created.
 	MarkSubmissionRejected(ctx context.Context, arg MarkSubmissionRejectedParams) (JobSubmission, error)
+	// Bulk-reject every given id still pending, recording the same moderator and reason on
+	// each — the sibling half of RejectAndBlockHost. Scoped to status='pending' like the
+	// single-row Mark* queries, so a row already decided by the time this runs is left alone.
+	MarkSubmissionsRejectedByIDs(ctx context.Context, arg MarkSubmissionsRejectedByIDsParams) ([]JobSubmission, error)
 	// Completion: the post was processed (jobs written, or no vacancy found). Run in
 	// the same transaction as the extracted jobs' UpsertJob calls.
 	MarkTelegramPostExtracted(ctx context.Context, arg MarkTelegramPostExtractedParams) error
@@ -5582,6 +5672,15 @@ type Querier interface {
 	// backfill pass racing behind it — plus is_current, which this only ever turns TRUE, never
 	// back to false, when the caller found a present-reading label is_current disagreed with.
 	SetExperienceEmploymentBackfilledDates(ctx context.Context, arg SetExperienceEmploymentBackfilledDatesParams) (int64, error)
+	// A move to 'needs_reconsent' also clears mentor_busy_sync_opted_in — every caller
+	// (gmail-sync, cal-sync, mentor-calendar-write, mentor-busy-sync) marks that status only
+	// when this account's ONE shared refresh token has failed, and the flag exists solely to
+	// gate a consent that same token covers. Left standing, a later reconnect through an
+	// UNRELATED flow (which restores status to 'connected' while still requesting
+	// calendar.readonly) would silently resume busy-sync without the mentor ever revisiting
+	// its own connect screen — see mentor-calendar-busy-sync's design.md. Fixed here, once,
+	// rather than in each caller: they all share this exact statement, and duplicating the
+	// clear in only one of them is precisely the gap a code review found.
 	SetGmailStatus(ctx context.Context, arg SetGmailStatusParams) error
 	SetGmailSynced(ctx context.Context, arg SetGmailSyncedParams) error
 	// Targeted enrichment write used by the enrichment command: set only the payload
@@ -5644,6 +5743,11 @@ type Querier interface {
 	// leave an orphaned Google event. No WHERE beyond the id — this always follows a
 	// successful CreateMentorBooking for the same row, in the same request.
 	SetMentorBookingCalendarEvent(ctx context.Context, arg SetMentorBookingCalendarEventParams) error
+	// Records that a mentor completed the busy-sync connect flow's own callback. Set only
+	// there, never inferred from `scopes` alone: calendar.readonly is the same scope the
+	// unrelated candidate-side calendar grant already requests, so scope presence cannot
+	// tell the two purposes apart (see mentor-calendar-busy-sync's design.md).
+	SetMentorBusySyncOptedIn(ctx context.Context, userID int64) error
 	// The mentor's own switch. Deliberately independent of status: pausing and resuming
 	// need no moderator, and neither may alter what the moderator decided.
 	SetMentorPaused(ctx context.Context, arg SetMentorPausedParams) (Mentor, error)
@@ -5809,6 +5913,9 @@ type Querier interface {
 	// 90-day interval (rather than `>=` against 89) reads the same as "trailing 90
 	// days" everywhere else this feature says it.
 	SiteStatusHistory(ctx context.Context) ([]SiteStatusHistoryRow, error)
+	// The id span cmd/report-skill-gaps walks. Same MIN/MAX-over-the-primary-key shape as
+	// RequirementsDerivedBackfillBounds — two index probes, deliberately unfiltered.
+	SkillGapReportBounds(ctx context.Context) (SkillGapReportBoundsRow, error)
 	// ---------------------------------------------------------------------------
 	// Skill demand history (the personal GET /me/market-pulse read)
 	// ---------------------------------------------------------------------------
@@ -6338,6 +6445,12 @@ type Querier interface {
 	// it via SetJobEnrichment's overlay). The conflict reopens a previously closed posting
 	// (closed_at = NULL) since the moderator is re-asserting it.
 	UpsertManualJob(ctx context.Context, arg UpsertManualJobParams) (Job, error)
+	// One row per synced busy interval, source fixed to 'google_calendar' (the only writer
+	// of this source). external_id is not Google's — a free/busy period carries no
+	// identifier — but the interval's own bounds, concatenated (see busysync.externalID), so
+	// a re-sync of an unchanged interval updates rather than duplicates, exactly as the
+	// table's unique constraint intends for an events-based sync.
+	UpsertMentorBusyInterval(ctx context.Context, arg UpsertMentorBusyIntervalParams) error
 	// One review per booking, editable. booking_id is the primary key, so a second submission
 	// is an update by construction rather than by a service check — which is also why the
 	// review count cannot drift from the number of reviewed sessions.

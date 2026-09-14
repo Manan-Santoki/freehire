@@ -185,6 +185,11 @@ func (h *inboxHandlers) register(api fiber.Router, mw middleware) {
 		// else's calendar, so it gets its own explicit ask.
 		api.Get("/me/mentor-calendar/connect", mw.cookie, h.MentorCalendarConnect)
 		api.Get("/me/mentor-calendar/callback", mw.optionalCookie, h.MentorCalendarCallback)
+		// A mentor's own busy-sync consent, beside the other three: it shares
+		// calendar.readonly with the candidate's read-only flow above, but must be its
+		// own explicit ask — see gmail_connections.mentor_busy_sync_opted_in.
+		api.Get("/me/mentor-busy-sync/connect", mw.cookie, h.MentorBusySyncConnect)
+		api.Get("/me/mentor-busy-sync/callback", mw.optionalCookie, h.MentorBusySyncCallback)
 		api.Post("/me/gmail/sync", mw.key, h.SyncGmail)
 	}
 	// Hosted-mailbox option: status is always available (reports unavailable when
@@ -211,6 +216,11 @@ const calendarStateCookieName = "hire_calendar_state"
 // none of the three can complete another.
 const mentorCalendarStateCookieName = "hire_mentor_calendar_state"
 
+// mentorBusyStateCookieName carries the mentor busy-sync consent's own CSRF state — a
+// fourth flow, sharing calendar.readonly with the candidate's read-only calendar
+// connection but never its cookie, so completing one can never complete the other.
+const mentorBusyStateCookieName = "hire_mentor_busy_state"
+
 // integrationsPath is where both the mail and calendar OAuth callbacks land, success or
 // failure — the Integrations tab is the one surface that owns connect/disconnect for
 // every third-party account.
@@ -228,58 +238,96 @@ func (h *inboxHandlers) GmailConnect(c *fiber.Ctx) error {
 	return c.Redirect(h.gmailConnector.AuthCodeURL(state), fiber.StatusFound)
 }
 
+// oauthCallbackFlow is what tells one "return from Google" callback apart from another:
+// its own CSRF cookie, its own query-param vocabulary, and the two steps that are
+// genuinely its business — exchanging the code and persisting what came back. Everything
+// else (state verification, a declined-consent redirect, extracting the code, encrypting
+// the token, the final redirect) is identical across all four flows in this file and
+// lives once, in runOAuthCallback.
+type oauthCallbackFlow struct {
+	// name identifies the flow in the server-side log line only — never shown to the
+	// caller, since the redirect marker (errorParam) is what the SPA reads.
+	name         string
+	stateCookie  string
+	errorParam   string
+	successQuery string
+	exchange     func(ctx context.Context, code string) (refreshToken string, scopes []string, err error)
+	persist      func(ctx context.Context, userID int64, refreshTokenEnc string, scopes []string) error
+}
+
+// runOAuthCallback is the shared body every callback below delegates to. A declined
+// consent echoes the state and carries ?error=access_denied instead of a code, so the
+// state check alone cannot stand in for reading it: treating a missing code as "nothing
+// to do" would tell the caller their grant was connected the moment they had just
+// refused it.
+func (h *inboxHandlers) runOAuthCallback(c *fiber.Ctx, flow oauthCallbackFlow) error {
+	redirect := func(qs string, err error) error {
+		log.Printf("%s: %s: %v", flow.name, qs, err)
+		return c.Redirect(h.frontendOrigin+integrationsPath+"?"+qs, fiber.StatusFound)
+	}
+	userID, ok := auth.UserID(c)
+	if !ok {
+		return redirect(flow.errorParam+"=auth", errors.New("no authenticated user"))
+	}
+	cookieState := c.Cookies(flow.stateCookie)
+	oauth.ClearStateCookieNamed(c, flow.stateCookie, h.cookieSecure)
+	if cookieState == "" || c.Query("state") != cookieState {
+		return redirect(flow.errorParam+"=state", errors.New("state cookie missing or mismatched"))
+	}
+	if refusal := c.Query("error"); refusal != "" {
+		return redirect(flow.errorParam+"=denied", errors.New(refusal))
+	}
+	code := c.Query("code")
+	if code == "" {
+		return redirect(flow.errorParam+"=exchange", errors.New("missing code"))
+	}
+	refresh, scopes, err := flow.exchange(c.Context(), code)
+	if err != nil {
+		return redirect(flow.errorParam+"=exchange", err)
+	}
+	enc, err := h.gmailCipher.Encrypt(refresh)
+	if err != nil {
+		return redirect(flow.errorParam+"=exchange", err)
+	}
+	if err := flow.persist(c.Context(), userID, enc, scopes); err != nil {
+		return redirect(flow.errorParam+"=exchange", err)
+	}
+	return c.Redirect(h.frontendOrigin+integrationsPath+"?"+flow.successQuery, fiber.StatusFound)
+}
+
 // GmailCallback finishes the flow: it verifies state, exchanges the code for a
 // refresh token + the connected address, stores the token encrypted, and
 // redirects back to the Integrations tab — the surface the connect was started
 // from. Failures redirect with ?gmail_error (never JSON); the underlying cause
 // is logged server-side first (like oauthFail), since the generic redirect
 // marker tells the user nothing.
+//
+// The only one of the four callbacks whose exchange needs a fourth return value (the
+// connected address) and whose persist step is two queries, not one — both threaded
+// through runOAuthCallback's shared shape via the closure below rather than widening
+// oauthCallbackFlow for a single caller.
 func (h *inboxHandlers) GmailCallback(c *fiber.Ctx) error {
-	redirect := func(qs string, err error) error {
-		log.Printf("gmail connect: %s: %v", qs, err)
-		return c.Redirect(h.frontendOrigin+integrationsPath+"?"+qs, fiber.StatusFound)
-	}
-	userID, ok := auth.UserID(c)
-	if !ok {
-		return redirect("gmail_error=auth", errors.New("no authenticated user"))
-	}
-	cookieState := c.Cookies(gmailStateCookieName)
-	oauth.ClearStateCookieNamed(c, gmailStateCookieName, h.cookieSecure)
-	if cookieState == "" || c.Query("state") != cookieState {
-		return redirect("gmail_error=state", errors.New("state cookie missing or mismatched"))
-	}
-	// Google echoes the state on its refusal redirect too, so reaching here says nothing
-	// about whether consent was given. A declined screen arrives as ?error=access_denied
-	// with no code at all, and treating that as "nothing to do" told the candidate their
-	// mailbox was connected when they had just refused it.
-	if refusal := c.Query("error"); refusal != "" {
-		return redirect("gmail_error=denied", errors.New(refusal))
-	}
-	code := c.Query("code")
-	if code == "" {
-		return redirect("gmail_error=exchange", errors.New("missing code"))
-	}
-	refresh, email, granted, err := h.gmailConnector.Exchange(c.Context(), code)
-	if err != nil {
-		return redirect("gmail_error=exchange", err)
-	}
-	enc, err := h.gmailCipher.Encrypt(refresh)
-	if err != nil {
-		return redirect("gmail_error=exchange", err)
-	}
-	if err := h.queries.UpsertGmailConnection(c.Context(), db.UpsertGmailConnectionParams{
-		UserID: userID, Email: email, RefreshTokenEnc: enc,
-	}); err != nil {
-		return redirect("gmail_error=exchange", err)
-	}
-	// Record what this grant covers. cal-sync selects connections by their recorded
-	// scopes, so a row that never says what it holds is a row no worker can use.
-	if err := h.queries.RecordGrantScopes(c.Context(), db.RecordGrantScopesParams{
-		UserID: userID, Scopes: granted,
-	}); err != nil {
-		return redirect("gmail_error=exchange", err)
-	}
-	return c.Redirect(h.frontendOrigin+integrationsPath+"?gmail=connected", fiber.StatusFound)
+	var email string
+	return h.runOAuthCallback(c, oauthCallbackFlow{
+		name: "gmail connect", stateCookie: gmailStateCookieName,
+		errorParam: "gmail_error", successQuery: "gmail=connected",
+		exchange: func(ctx context.Context, code string) (string, []string, error) {
+			refresh, addr, scopes, err := h.gmailConnector.Exchange(ctx, code)
+			email = addr
+			return refresh, scopes, err
+		},
+		persist: func(ctx context.Context, userID int64, enc string, scopes []string) error {
+			if err := h.queries.UpsertGmailConnection(ctx, db.UpsertGmailConnectionParams{
+				UserID: userID, Email: email, RefreshTokenEnc: enc,
+			}); err != nil {
+				return err
+			}
+			// Record what this grant covers. cal-sync selects connections by their
+			// recorded scopes, so a row that never says what it holds is a row no
+			// worker can use.
+			return h.queries.RecordGrantScopes(ctx, db.RecordGrantScopesParams{UserID: userID, Scopes: scopes})
+		},
+	})
 }
 
 // CalendarConnect starts the calendar consent. Its own state cookie: two flows in flight
@@ -300,45 +348,23 @@ func (h *inboxHandlers) CalendarConnect(c *fiber.Ctx) error {
 // It lands back on Integrations rather than the tracking calendar: that is the surface
 // the connect was started from, same as the mail flow.
 func (h *inboxHandlers) CalendarCallback(c *fiber.Ctx) error {
-	redirect := func(qs string, err error) error {
-		log.Printf("calendar connect: %s: %v", qs, err)
-		return c.Redirect(h.frontendOrigin+integrationsPath+"?"+qs, fiber.StatusFound)
-	}
-	userID, ok := auth.UserID(c)
-	if !ok {
-		return redirect("calendar_error=auth", errors.New("no authenticated user"))
-	}
-	cookieState := c.Cookies(calendarStateCookieName)
-	oauth.ClearStateCookieNamed(c, calendarStateCookieName, h.cookieSecure)
-	if cookieState == "" || c.Query("state") != cookieState {
-		return redirect("calendar_error=state", errors.New("state cookie missing or mismatched"))
-	}
-	// A declined consent echoes the state and carries ?error=access_denied instead of a
-	// code, so the state check above cannot stand in for reading it — see GmailCallback.
-	if refusal := c.Query("error"); refusal != "" {
-		return redirect("calendar_error=denied", errors.New(refusal))
-	}
-	code := c.Query("code")
-	if code == "" {
-		return redirect("calendar_error=exchange", errors.New("missing code"))
-	}
-	refresh, granted, err := h.gmailConnector.ExchangeCalendar(c.Context(), code)
-	if err != nil {
-		return redirect("calendar_error=exchange", err)
-	}
-	enc, err := h.gmailCipher.Encrypt(refresh)
-	if err != nil {
-		return redirect("calendar_error=exchange", err)
-	}
-	if err := h.queries.UpsertCalendarGrant(c.Context(), db.UpsertCalendarGrantParams{
-		// What Google says the grant covers, not what we asked for: the two differ
-		// whenever a candidate declines part of a consent, and the record is what
-		// every worker's filter reads.
-		UserID: userID, RefreshTokenEnc: enc, Scopes: granted,
-	}); err != nil {
-		return redirect("calendar_error=exchange", err)
-	}
-	return c.Redirect(h.frontendOrigin+integrationsPath+"?calendar=connected", fiber.StatusFound)
+	return h.runOAuthCallback(c, oauthCallbackFlow{
+		name: "calendar connect", stateCookie: calendarStateCookieName,
+		errorParam: "calendar_error", successQuery: "calendar=connected",
+		exchange: h.gmailConnector.ExchangeCalendar,
+		persist:  h.persistCalendarGrant,
+	})
+}
+
+// persistCalendarGrant records what a read-only-calendar-scoped grant covers — shared by
+// CalendarCallback and MentorCalendarCallback, whose only difference is which scope they
+// asked Google for. What Google says the grant covers, not what we asked for: the two
+// differ whenever a candidate declines part of a consent, and the record is what every
+// worker's filter reads.
+func (h *inboxHandlers) persistCalendarGrant(ctx context.Context, userID int64, enc string, scopes []string) error {
+	return h.queries.UpsertCalendarGrant(ctx, db.UpsertCalendarGrantParams{
+		UserID: userID, RefreshTokenEnc: enc, Scopes: scopes,
+	})
 }
 
 // MentorCalendarConnect starts a mentor's calendar.events write consent — its own
@@ -359,43 +385,48 @@ func (h *inboxHandlers) MentorCalendarConnect(c *fiber.Ctx) error {
 //
 // It lands back on Integrations, the surface every connect flow here starts from.
 func (h *inboxHandlers) MentorCalendarCallback(c *fiber.Ctx) error {
-	redirect := func(qs string, err error) error {
-		log.Printf("mentor calendar connect: %s: %v", qs, err)
-		return c.Redirect(h.frontendOrigin+integrationsPath+"?"+qs, fiber.StatusFound)
-	}
-	userID, ok := auth.UserID(c)
-	if !ok {
-		return redirect("mentor_calendar_error=auth", errors.New("no authenticated user"))
-	}
-	cookieState := c.Cookies(mentorCalendarStateCookieName)
-	oauth.ClearStateCookieNamed(c, mentorCalendarStateCookieName, h.cookieSecure)
-	if cookieState == "" || c.Query("state") != cookieState {
-		return redirect("mentor_calendar_error=state", errors.New("state cookie missing or mismatched"))
-	}
-	// A declined consent echoes the state and carries ?error=access_denied instead of a
-	// code, so the state check above cannot stand in for reading it — see GmailCallback.
-	if refusal := c.Query("error"); refusal != "" {
-		return redirect("mentor_calendar_error=denied", errors.New(refusal))
-	}
-	code := c.Query("code")
-	if code == "" {
-		return redirect("mentor_calendar_error=exchange", errors.New("missing code"))
-	}
-	refresh, granted, err := h.gmailConnector.ExchangeMentorCalendar(c.Context(), code)
+	return h.runOAuthCallback(c, oauthCallbackFlow{
+		name: "mentor calendar connect", stateCookie: mentorCalendarStateCookieName,
+		errorParam: "mentor_calendar_error", successQuery: "mentor_calendar=connected",
+		exchange: h.gmailConnector.ExchangeMentorCalendar,
+		persist:  h.persistCalendarGrant,
+	})
+}
+
+// MentorBusySyncConnect starts a mentor's busy-sync consent — its own flow, own state
+// cookie, sharing calendar.readonly with the candidate's read-only calendar flow but
+// never inferred from it (see gmail_connections.mentor_busy_sync_opted_in).
+func (h *inboxHandlers) MentorBusySyncConnect(c *fiber.Ctx) error {
+	state, err := oauth.NewState()
 	if err != nil {
-		return redirect("mentor_calendar_error=exchange", err)
+		return err
 	}
-	enc, err := h.gmailCipher.Encrypt(refresh)
-	if err != nil {
-		return redirect("mentor_calendar_error=exchange", err)
-	}
-	if err := h.queries.UpsertCalendarGrant(c.Context(), db.UpsertCalendarGrantParams{
-		// What Google says the grant covers, not what we asked for — see CalendarCallback.
-		UserID: userID, RefreshTokenEnc: enc, Scopes: granted,
-	}); err != nil {
-		return redirect("mentor_calendar_error=exchange", err)
-	}
-	return c.Redirect(h.frontendOrigin+integrationsPath+"?mentor_calendar=connected", fiber.StatusFound)
+	oauth.SetStateCookieNamed(c, mentorBusyStateCookieName, state, h.cookieSecure)
+	return c.Redirect(h.gmailConnector.MentorBusyAuthCodeURL(state), fiber.StatusFound)
+}
+
+// MentorBusySyncCallback finishes it: verify state, exchange the code, store the grant,
+// and record the explicit opt-in — the flag that tells this consent apart from an
+// unrelated calendar.readonly grant the account may already hold. Failures redirect with
+// ?mentor_busy_error and are logged server-side first, exactly as the other flows do.
+//
+// It lands back on Integrations, the surface every connect flow here starts from.
+func (h *inboxHandlers) MentorBusySyncCallback(c *fiber.Ctx) error {
+	return h.runOAuthCallback(c, oauthCallbackFlow{
+		name: "mentor busy sync connect", stateCookie: mentorBusyStateCookieName,
+		errorParam: "mentor_busy_error", successQuery: "mentor_busy=connected",
+		exchange: h.gmailConnector.ExchangeMentorBusy,
+		persist: func(ctx context.Context, userID int64, enc string, scopes []string) error {
+			if err := h.persistCalendarGrant(ctx, userID, enc, scopes); err != nil {
+				return err
+			}
+			// The explicit opt-in itself. persistCalendarGrant above records what the
+			// grant COVERS; this records that the mentor consented to THIS purpose with
+			// it — the distinction the design exists for, since covering
+			// calendar.readonly is not proof of that on its own.
+			return h.queries.SetMentorBusySyncOptedIn(ctx, userID)
+		},
+	})
 }
 
 // GmailStatus reports whether the caller has connected Gmail.
@@ -410,7 +441,7 @@ func (h *inboxHandlers) GmailStatus(c *fiber.Ctx) error {
 		// key), so the SPA hides the Connect button when it would 404.
 		return c.JSON(fiber.Map{"data": fiber.Map{
 			"connected": false, "available": h.gmailReady(), "calendar_connected": false,
-			"mentor_calendar_connected": false,
+			"mentor_calendar_connected": false, "mentor_busy_sync_connected": false,
 		}})
 	}
 	if err != nil {
@@ -437,6 +468,12 @@ func (h *inboxHandlers) GmailStatus(c *fiber.Ctx) error {
 		// connected — that reading would leave their profile's meeting link optional and
 		// every new booking silently landing with no link at all.
 		"mentor_calendar_connected": conn.Status == "connected" && slices.Contains(conn.Scopes, gmailsync.CalendarEventsScope),
+		// Whether this grant covers busy-sync. Gated on the explicit opt-in flag AND the
+		// scope AND status, unlike calendar_connected: the scope alone cannot tell this
+		// consent apart from the unrelated grant above (both request calendar.readonly),
+		// so the flag is what mentor_busy_sync_opted_in exists to answer — see
+		// mentor-calendar-busy-sync's design.md.
+		"mentor_busy_sync_connected": conn.MentorBusySyncOptedIn && conn.Status == "connected" && slices.Contains(conn.Scopes, gmailsync.CalendarScope),
 	}})
 }
 

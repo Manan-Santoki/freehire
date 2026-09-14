@@ -49,6 +49,21 @@ def test_parse_cse_items_empty_on_no_items():
     assert d.parse_cse_items({}) == set()
 
 
+def test_parse_serping_items_extracts_links():
+    obj = {"organic": [
+        {"title": "x", "link": "https://jobs.ashbyhq.com/Clipbook/abc", "position": 1},
+        {"title": "y", "link": "https://jobs.ashbyhq.com/Other", "position": 2},
+    ]}
+    assert d.parse_serping_items(obj) == {
+        "https://jobs.ashbyhq.com/Clipbook/abc",
+        "https://jobs.ashbyhq.com/Other",
+    }
+
+
+def test_parse_serping_items_empty_on_no_organic():
+    assert d.parse_serping_items({}) == set()
+
+
 def test_channel_github_extracts_from_fragments():
     import discover_boards as dd
     orig = dd.github_fragments

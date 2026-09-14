@@ -14,6 +14,10 @@
 </script>
 
 {#if profile}
+  <div class="mb-4">
+    <TalentNetworkInvite />
+  </div>
+
   {#key profile.updated_at}
     <ProfileForm
       {profile}
@@ -35,11 +39,5 @@
 
   <div class="mt-4">
     <RoleCard {profile} onProfileChanged={handleSaved} />
-  </div>
-
-  <!-- Last, deliberately: the offer to be found reads as a next step once the profile
-       above is filled in, and as a distraction before it. -->
-  <div class="mt-4">
-    <TalentNetworkInvite />
   </div>
 {/if}

@@ -221,6 +221,12 @@ func publicReadRoutes(t *testing.T, throttler ratelimit.Throttler) (map[string]*
 		// reached past its limiter nil-dereferences into recover, which is the
 		// assertion, rather than needing a real catalogue behind it.
 		"talentCatalogHandlers": mount((&talentCatalogHandlers{}).register),
+		// The public company-feedback list. It was registered with no limiter at all
+		// until the deep-offset change, which is exactly the omission
+		// TestPublicReadLimiters_EveryMountingRegisterIsDriven cannot catch on its own:
+		// that guard checks a register that DOES mount one is driven here, so a register
+		// mounting none is invisible to it. Driving it now is what keeps the key honest.
+		"companyFeedbackHandlers": mount((&companyFeedbackHandlers{}).registerPublic),
 	}, iss
 }
 

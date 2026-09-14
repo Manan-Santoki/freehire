@@ -55,31 +55,69 @@ const (
 	// siteDownErrorRate: at or above this fraction reads down even though the
 	// database itself answers.
 	siteDownErrorRate = 0.5
+	// siteDegradedPoolPressure: at or above this fraction of the connection pool held
+	// at once, the site reads degraded even while the database answers and the error
+	// fraction looks clean.
+	//
+	// It exists because on 2026-09-14 this page read "All systems operational" for the
+	// 54 minutes nginx spent answering 504. Every other signal here was blind to that
+	// outage by construction: the error fraction counts only responses this process
+	// PRODUCED, and a request queued for a pooled connection produces none; pool.Ping
+	// succeeds in microseconds while every connection is held; and latency is not
+	// measured at all. The pool's own occupancy was the one live signal that had the
+	// outage's shape, and nothing read it.
+	//
+	// 0.9 rather than 1.0 because full is already too late to be a warning — by then
+	// callers are queuing — and because a pool momentarily at its cap under ordinary
+	// load is normal. It is deliberately capped at degraded; see deriveSiteStatus.
+	siteDegradedPoolPressure = 0.9
 )
 
+// poolPressure is the fraction of the connection pool held at once. A pool reporting no
+// capacity (unconfigured, or closed) yields 0 rather than dividing by zero — "I cannot
+// measure this" must not render as "everything is held".
+func poolPressure(acquired, maxConns int32) float64 {
+	if maxConns <= 0 {
+		return 0
+	}
+	return float64(acquired) / float64(maxConns)
+}
+
 // deriveSiteStatus maps the site's own live signals to its status:
-//   - down    when the database is unreachable, regardless of error rate;
-//   - operational when the database is up and there isn't enough traffic in
-//     the window to trust the error fraction;
+//   - down    when the database is unreachable, regardless of every other signal;
 //   - down    when the database is up but the error fraction is at or above
 //     siteDownErrorRate;
 //   - degraded when the error fraction exceeds siteDegradedErrorRate;
+//   - degraded when the connection pool is held at or above siteDegradedPoolPressure;
 //   - operational otherwise.
-func deriveSiteStatus(dbUp bool, errorRate float64, totalRequests int64) providerStatus {
+//
+// Pool pressure is checked LAST and can only raise operational to degraded — never soften
+// a worse verdict, and never reach down on its own. A saturated pool means requests are
+// queuing; that is a different and weaker claim than "the database does not answer" or
+// "half of all responses are errors", and stating it as either would make the page less
+// truthful rather than more.
+//
+// It is also the one signal deliberately exempt from the traffic floor. The floor exists
+// so a couple of unlucky requests right after a deploy cannot read as an outage — a
+// sampling argument, which applies to a FRACTION of requests and not to an occupancy read
+// directly from the pool. During the 2026-09-14 outage almost nothing completed, so the
+// floor was suppressing the error fraction at exactly the moment the pool was full.
+func deriveSiteStatus(dbUp bool, errorRate float64, totalRequests int64, poolPressure float64) providerStatus {
 	if !dbUp {
 		return statusDown
 	}
-	if totalRequests < minSiteRequestsForSignal {
-		return statusOperational
+	if totalRequests >= minSiteRequestsForSignal {
+		switch {
+		case errorRate >= siteDownErrorRate:
+			return statusDown
+		case errorRate > siteDegradedErrorRate:
+			return statusDegraded
+		}
 	}
-	switch {
-	case errorRate >= siteDownErrorRate:
-		return statusDown
-	case errorRate > siteDegradedErrorRate:
+	if poolPressure >= siteDegradedPoolPressure {
 		return statusDegraded
-	default:
-		return statusOperational
 	}
+	return statusOperational
 }
 
 // severityOrder is the single source of truth for the integer severity
@@ -194,9 +232,15 @@ type statusProvider struct {
 // internal/platform/observability.ErrorRate) — never from an external
 // Prometheus query.
 type siteHealth struct {
-	Status        providerStatus     `json:"status"`
-	Database      string             `json:"database"`
-	ErrorRate     float64            `json:"error_rate"`
+	Status    providerStatus `json:"status"`
+	Database  string         `json:"database"`
+	ErrorRate float64        `json:"error_rate"`
+	// PoolPressure is the fraction of the database connection pool held at once, 0..1.
+	// Carried on the wire beside ErrorRate because the two answer different questions and
+	// the page needs both: the error fraction describes the requests that FINISHED, this
+	// one describes the requests that cannot start. On 2026-09-14 the first read clean for
+	// the whole outage precisely because nothing was finishing.
+	PoolPressure  float64            `json:"pool_pressure"`
 	WindowMinutes int                `json:"window_minutes"`
 	History       []siteHistoryEntry `json:"history"`
 }
@@ -241,11 +285,18 @@ func siteHistoryFromRows(rows []db.SiteStatusHistoryRow) []siteHistoryEntry {
 func currentSiteHealth(ctx context.Context, pool *pgxpool.Pool) (health siteHealth, dbUp bool) {
 	errorRate, totalRequests := observability.ErrorRate(siteErrorWindow)
 	dbUp = pool.Ping(ctx) == nil
+
+	// Stat reads counters the pool already keeps in memory — no query, no round trip — so
+	// this costs nothing on a path that answers an unauthenticated public page.
+	stat := pool.Stat()
+	pressure := poolPressure(stat.AcquiredConns(), stat.MaxConns())
+
 	return siteHealth{
-		Status:        deriveSiteStatus(dbUp, errorRate, totalRequests),
+		Status:        deriveSiteStatus(dbUp, errorRate, totalRequests, pressure),
 		Database:      dbStatusLabel(dbUp),
 		ErrorRate:     errorRate,
 		WindowMinutes: int(siteErrorWindow / time.Minute),
+		PoolPressure:  pressure,
 	}, dbUp
 }
 
