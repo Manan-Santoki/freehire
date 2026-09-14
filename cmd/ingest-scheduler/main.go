@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/strelov1/freehire/internal/ingest/ingestsched"
@@ -75,9 +76,18 @@ func run() int {
 	}()
 
 	cfg := config.LoadIngestScheduler()
+	var launcher ingestsched.Launcher = ingestsched.NewSystemdLauncher(cfg.IngestBinary, cfg.WorkingDir, cfg.EnvFile, cfg.RunAs)
+	if image := os.Getenv("INGEST_DOCKER_IMAGE"); image != "" {
+		launcher = ingestsched.DockerLauncher{
+			Image: image, Network: os.Getenv("INGEST_DOCKER_NETWORK"), Prefix: os.Getenv("INGEST_DOCKER_PREFIX"),
+			Environment: []string{"DATABASE_URL", "GOMAXPROCS", "SOURCES_PROXY_URL", "FIRECRAWL_API_KEY",
+				"ADZUNA_APP_ID", "ADZUNA_APP_KEY", "REED_API_KEY", "USAJOBS_API_KEY", "WHATJOBS_PUBLISHER_IDS",
+				"HYDRATION_RETRY_DAYS", "BODY_REFRESH_DAYS", "BODY_REFRESH_SLICE"},
+		}
+	}
 	scheduler := ingestsched.Scheduler{
 		Repo:     ingestsched.NewQueriesRepository(db.New(pool)),
-		Launcher: ingestsched.NewSystemdLauncher(cfg.IngestBinary, cfg.WorkingDir, cfg.EnvFile, cfg.RunAs),
+		Launcher: launcher,
 		Cap:      cfg.Cap,
 		Grace:    cfg.Grace,
 		Apply:    cfg.Apply,

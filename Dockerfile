@@ -20,7 +20,18 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/hire ./cmd/server
  && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/ \
       ./cmd/ingest ./cmd/enrich ./cmd/reindex ./cmd/tg-ingest ./cmd/tg-extract \
       ./cmd/backfill-derive ./cmd/liveness ./cmd/notify ./cmd/import-collections \
-      ./cmd/recount-companies ./cmd/migrate
+      ./cmd/recount-companies ./cmd/migrate ./cmd/import-board-catalog ./cmd/add-board \
+      ./cmd/ingest-scheduler ./cmd/schedule-board ./cmd/search-drain \
+      ./cmd/rollup-stats ./cmd/rollup-facets ./cmd/rollup-company ./cmd/rollup-views \
+      ./cmd/reindex-companies ./cmd/build-suggestions ./cmd/capture-apply-form \
+      ./cmd/harvest-boards ./cmd/harvest-ats ./cmd/harvest-orphans \
+      ./cmd/auth-cleanup ./cmd/apple-revoke ./cmd/gmail-sync ./cmd/cal-sync \
+      ./cmd/classify-mail ./cmd/mail-ingest ./cmd/remind ./cmd/nudge ./cmd/onboarding \
+      ./cmd/mentorship-remind ./cmd/auto-apply ./cmd/auto-apply-orchestrate \
+      ./cmd/queue-metrics ./cmd/search-settings-drift ./cmd/similar-backfill
+RUN CGO_ENABLED=0 GOBIN=/out go install github.com/aptible/supercronic@v0.2.49
+
+FROM docker:28-cli AS dockercli
 
 # --- typst stage: fetch the pinned, statically-linked typst binary used to render CV
 # PDFs (internal/cv). The musl build is fully static, so it runs on distroless/static;
@@ -45,12 +56,14 @@ FROM debian:stable-slim
 WORKDIR /app
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends poppler-utils ca-certificates \
+ && apt-get install -y --no-install-recommends poppler-utils ca-certificates chromium util-linux postgresql-client \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 65532 nonroot \
  && useradd --system --uid 65532 --gid nonroot --home-dir /app nonroot \
  && pdftotext -v
-COPY --from=build /out/hire /out/ingest /out/enrich /out/reindex /out/tg-ingest /out/tg-extract /out/backfill-derive /out/liveness /out/notify /out/import-collections /out/recount-companies /out/migrate /app/
+COPY --from=build /out/ /app/
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY deploy/dokploy /app/deploy/dokploy
 # The migration runner reads its *.sql files from the image (WORKDIR /app, default
 # -dir migrations), so /app/migrate works the same as `go run ./cmd/migrate` on the host.
 COPY --from=build /src/migrations /app/migrations

@@ -28,6 +28,9 @@ services:
       # the whole init and leaves a half-built schema). The `migrate` service below
       # owns the schema instead — the project's real migration runner, one
       # transaction per file, honouring the no-transaction markers.
+    networks:
+      - default
+      - crawl
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hire -d hire"]
       interval: 5s
@@ -85,6 +88,7 @@ services:
 
   app:
     build: .
+    image: "${FREEHIRE_IMAGE:-freehire-worker:local}"
     depends_on:
       db:
         condition: service_healthy
@@ -94,7 +98,7 @@ services:
         condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
-    environment:
+    environment: &app-environment
       PORT: "8080"
       DATABASE_URL: "postgres://hire:hire@db:5432/hire?sslmode=disable"
       S3_ENDPOINT: "${S3_ENDPOINT:-http://minio:9000}"
@@ -102,7 +106,7 @@ services:
       S3_ACCESS_KEY: "${S3_ACCESS_KEY:-minioadmin}"
       S3_SECRET_KEY: "${S3_SECRET_KEY:-minioadmin}"
       AWS_REGION: "${AWS_REGION:-us-east-1}"
-      PII_FILTER_URL: "${PII_FILTER_URL:-}"
+      PII_FILTER_URL: "${PII_FILTER_URL:-http://pii-filter:8099/detect}"
       # LLM-backed features stay disabled until these are set (catalogue works without them).
       LLM_BASE_URL: "${LLM_BASE_URL:-}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
@@ -130,6 +134,76 @@ services:
       MEILI_URL: "http://meilisearch:7700"
       MEILI_MASTER_KEY: "${MEILI_MASTER_KEY:-dev-insecure-meili-key}"
       REDIS_URL: "redis://redis:6379/0"
+      SOURCES_PROXY_URL: "${SOURCES_PROXY_URL:-}"
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY:-}"
+      ADZUNA_APP_ID: "${ADZUNA_APP_ID:-}"
+      ADZUNA_APP_KEY: "${ADZUNA_APP_KEY:-}"
+      REED_API_KEY: "${REED_API_KEY:-}"
+      USAJOBS_API_KEY: "${USAJOBS_API_KEY:-}"
+      WHATJOBS_PUBLISHER_IDS: "${WHATJOBS_PUBLISHER_IDS:-}"
+      GMAIL_TOKEN_KEY: "${GMAIL_TOKEN_KEY:-}"
+      NOTIFY_EMAIL_FROM: "${NOTIFY_EMAIL_FROM:-}"
+      MAILBOX_DOMAIN: "${MAILBOX_DOMAIN:-}"
+      MAIL_INBOUND_QUEUE_URL: "${MAIL_INBOUND_QUEUE_URL:-}"
+      MAIL_INBOUND_BUCKET: "${MAIL_INBOUND_BUCKET:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AUTO_APPLY_ORCHESTRATOR_SECRET: "${AUTO_APPLY_ORCHESTRATOR_SECRET:-}"
+      INNGEST_EVENT_API_URL: "${INNGEST_EVENT_API_URL:-}"
+      INNGEST_EVENT_KEY: "${INNGEST_EVENT_KEY:-}"
+      INNGEST_SIGNING_KEY: "${INNGEST_SIGNING_KEY:-}"
+
+  # Database claims bound the crawl fleet and survive container restarts. Only
+  # this scheduler needs Docker access; each launched crawl runs as nonroot,
+  # with one CPU, 2 GiB RAM, a timeout, and access only to the crawl network.
+  scheduler:
+    build: .
+    image: "${FREEHIRE_IMAGE:-freehire-worker:local}"
+    user: "0:0"
+    restart: unless-stopped
+    entrypoint: ["/app/supercronic", "/app/deploy/dokploy/scheduler.crontab"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-environment
+      GOMAXPROCS: "2"
+      INGEST_SCHEDULER_APPLY: "1"
+      INGEST_SCHEDULER_CAP: "${INGEST_SCHEDULER_CAP:-4}"
+      INGEST_DOCKER_IMAGE: "${FREEHIRE_IMAGE:-freehire-worker:local}"
+      INGEST_DOCKER_NETWORK: "${FREEHIRE_CRAWL_NETWORK:-freehire-hire-crawl}"
+      INGEST_DOCKER_PREFIX: "${FREEHIRE_CRAWL_PREFIX:-freehire-hire}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    cpus: 1
+    mem_limit: 1g
+
+  workers:
+    build: .
+    image: "${FREEHIRE_IMAGE:-freehire-worker:local}"
+    restart: unless-stopped
+    entrypoint: ["/app/supercronic", "/app/deploy/dokploy/workers.crontab"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-environment
+      GOMAXPROCS: "2"
+      ENRICH_CONCURRENCY: "2"
+      APPLY_FORM_CONCURRENCY: "2"
+      APPLY_FORM_MAX_PER_RUN: "500"
+      MEILI_DATA_DIR: /meili_data
+      REINDEX_MIN_FREE_GB: "70"
+    volumes:
+      - meilisearch_data:/meili_data:ro
+    cpus: 2
+    mem_limit: 4g
+
+  pii-filter:
+    build: ./services/pii-filter
+    restart: unless-stopped
+    cpus: 2
+    mem_limit: 6g
 
   # SvelteKit SSR frontend + nginx (:80). This is the only public service; the
   # Dokploy Domain points hire.msantoki.com at it. nginx routes /api and /health
@@ -148,3 +222,7 @@ volumes:
   pgdata:
   meilisearch_data:
   minio_data:
+
+networks:
+  crawl:
+    name: "${FREEHIRE_CRAWL_NETWORK:-freehire-hire-crawl}"

@@ -80,6 +80,7 @@ hire
 /queue-metrics
 /recount-companies
 /reindex
+/import-board-catalog
 /remind
 /resolve-url
 /rollup-company

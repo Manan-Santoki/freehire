@@ -71,6 +71,12 @@ stuck run is reclaimed, and how the fleet's concurrency is bounded. Replaces
 
 ## How it works
 
+Dokploy uses `DockerLauncher` instead of `SystemdLauncher` when
+`INGEST_DOCKER_IMAGE` is set. It uses the same claims, reaping, timeout, and capacity
+logic. `INGEST_DOCKER_NETWORK` and `INGEST_DOCKER_PREFIX` scope sibling containers to
+the deployment. A missing Docker container is an unknown/failed outcome, never
+assumed successful. See [Dokploy operations](../../../deploy/dokploy/README.md).
+
 `cmd/ingest-scheduler` runs once a minute (`Type=oneshot`, so it cannot stack on itself)
 and calls `Scheduler.Tick`:
 
