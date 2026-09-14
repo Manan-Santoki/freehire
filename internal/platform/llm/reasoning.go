@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 )
 
 // ReasoningEffort is how much deliberation a call asks the model for, sent as the
@@ -90,6 +92,9 @@ func (t *reasoningInjector) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 
 	effort := reasoningOf(req.Context())
+	if effort == ReasoningDefault {
+		effort = defaultReasoningFromEnv()
+	}
 	if effort == ReasoningDefault || req.Body == nil {
 		return next.RoundTrip(req)
 	}
@@ -147,4 +152,15 @@ func withReasoningEffort(body json.RawMessage, effort ReasoningEffort) (json.Raw
 	}
 
 	return patched, nil
+}
+
+// defaultReasoningFromEnv is the deployment-wide effort for calls that name none:
+// LLM_REASONING_EFFORT, e.g. "low", "medium", "high" or "xhigh", passed through verbatim
+// because which words a model accepts is the gateway's business. Empty keeps today's
+// behaviour (nothing sent). A call that asked for an effort of its own — the résumé
+// extractor's "none", the fit analysis's first stage — is not overridden: those chose
+// deliberately, for the reasons on ReasoningEffort, and a transcription task that suddenly
+// deliberates at "xhigh" is the timeout that comment describes.
+func defaultReasoningFromEnv() ReasoningEffort {
+	return ReasoningEffort(strings.TrimSpace(os.Getenv("LLM_REASONING_EFFORT")))
 }
