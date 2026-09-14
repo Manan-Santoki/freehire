@@ -178,14 +178,16 @@ type middleware struct {
 	throttler ratelimit.Throttler
 }
 
-// pageParams reads and clamps the shared limit/offset pagination query params.
-func pageParams(c *fiber.Ctx) (limit, offset int) {
-	return pageParamsBounded(c, defaultLimit, maxLimit)
-}
-
-// pageParamsBounded is pageParams with caller-supplied bounds, for endpoints whose page is
-// sized differently from the shared list cap (the tracking board, which is unpaginated and
-// needs the whole set; the role-cluster copies list, which pages a handful of city openings).
+// pageParamsBounded reads and clamps the shared limit/offset pagination query params, with
+// caller-supplied bounds for endpoints whose page is sized differently from the shared list
+// cap (the tracking board, which is unpaginated and needs the whole set; the role-cluster
+// copies list, which pages a handful of city openings).
+//
+// The unbounded-depth reader. Every PUBLIC list calls pageParamsWindowed below instead; what
+// is left here are the caller's own resources — the tracking board, the inbox, the
+// notification list — where the set is one user's and the depth is theirs to walk. A
+// convenience wrapper defaulting the two bounds used to sit above this and every remaining
+// caller passes its own, so it is gone rather than kept for symmetry.
 //
 // It is the ONLY place the offset query param is read, and a test enforces that. The clamp to
 // MaxInt32 is the reason: every paginated column binds as a Postgres int4, Fiber's QueryInt is

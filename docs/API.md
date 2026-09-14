@@ -72,7 +72,7 @@ Pagination is bounded on **every** list endpoint: `offset + limit` may not excee
 
 The bound is a refusal rather than a clamp, deliberately: a clamped page would answer 200 carrying rows you did not ask for, and a client walking pages would loop over the same page forever without being able to tell. A 400 means "there is no such page", which is the truth.
 
-It applies whichever store answers the endpoint, and it is not the same thing as the rate limit. A rate limit bounds requests per minute; on an endpoint whose `offset` you choose, the work per request is also yours to choose — so a client inside its request budget can still be asking for far more work than the budget implies. Both bounds exist and neither substitutes for the other. (On 2026-09-14 a crawler that was collecting 429s from the rate limiter still took the catalogue offline for 54 minutes by walking `offset` to ~180,000.)
+It applies whichever store answers the endpoint, and it is not the same thing as the rate limit. A rate limit bounds requests per minute; on an endpoint whose `offset` you choose, the work per request is also yours to choose — so a client inside its request budget can still be asking for far more work than the budget implies. Both bounds exist and neither substitutes for the other.
 
 ## Errors
 
