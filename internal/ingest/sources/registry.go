@@ -280,6 +280,7 @@ func All(c HTTPClient) map[string]Source {
 		NewTheHub(c),
 		NewCompleo(c),
 		NewInstaffo(c),
+		NewTechTree(c),
 		NewGetonbrd(c),
 		NewVagas(c),
 		// GeekHunter: Brazilian tech-recruitment ATS, board = company slug; listing and detail
