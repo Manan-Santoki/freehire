@@ -1,0 +1,145 @@
+# Keeps this deployment fork current with strelov1/freehire.
+#
+# Every 3 days (and on demand): fast-forward `main` to upstream main, merge it into
+# `dokploy`, push. Dokploy watches `dokploy` and auto-deploys the push. A merge conflict
+# fails the run and opens an issue instead of pushing anything.
+#
+# Optional second job: with DOKPLOY_URL and DOKPLOY_API_KEY repository secrets set, it waits
+# for the Dokploy deploy to finish and runs the `reindex` schedule, so a release that adds
+# Meilisearch attributes does not leave /api/v1/jobs/facets returning 400 until the next
+# six-hourly rebuild (see deploy/dokploy/README.md, "Upgrading from upstream").
+name: Sync upstream into dokploy
+
+on:
+  schedule:
+    - cron: "0 3 */3 * *" # every 3 days, 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: strelov1/freehire
+  DEPLOY_BRANCH: dokploy
+  DOKPLOY_COMPOSE_ID: 6qOZkrUOAmHfymA1v68Dj
+  DOKPLOY_REINDEX_SCHEDULE_ID: bKBv3wJRvpiIqU4Xl76bi
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.merge.outputs.pushed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_BRANCH }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream main
+        run: git fetch "https://github.com/${UPSTREAM_REPO}.git" main:refs/remotes/upstream/main
+
+      - name: Fast-forward main to upstream
+        # main must stay a pure mirror of upstream; a non-fast-forward here means someone
+        # committed to main directly. Reported, not fatal — the deploy branch is what matters.
+        continue-on-error: true
+        run: |
+          if git push origin refs/remotes/upstream/main:refs/heads/main; then
+            echo "main -> $(git rev-parse --short upstream/main)"
+          else
+            echo "::warning::main could not be fast-forwarded to upstream; it has local commits"
+            exit 1
+          fi
+
+      - name: Merge upstream main into the deploy branch
+        id: merge
+        run: |
+          before=$(git rev-parse HEAD)
+          echo "upstream: $(git rev-parse --short upstream/main) ($(git rev-list --count HEAD..upstream/main) new commit(s))"
+          if ! git merge --no-edit -m "Merge upstream ${UPSTREAM_REPO} main into ${DEPLOY_BRANCH}" upstream/main; then
+            {
+              echo "conflicts<<EOF"
+              git diff --name-only --diff-filter=U
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+            echo "::error::merge conflict with upstream main; nothing was pushed"
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" = "$before" ]; then
+            echo "already up to date"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            git push origin "HEAD:${DEPLOY_BRANCH}"
+            echo "pushed ${DEPLOY_BRANCH} -> $(git rev-parse --short HEAD); Dokploy will deploy it"
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open an issue for the conflict
+        if: failure() && steps.merge.outputs.conflicts != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          existing=$(gh issue list --label sync-conflict --state open --json number --jq '.[0].number')
+          body="Automatic merge of upstream \`${UPSTREAM_REPO}\` main into \`${DEPLOY_BRANCH}\` failed in run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}.
+
+Conflicting files:
+\`\`\`
+${CONFLICTS}
+\`\`\`
+
+Resolve locally, then push:
+\`\`\`sh
+git fetch origin && git checkout ${DEPLOY_BRANCH} && git merge origin/main
+# fix conflicts, then
+git push origin ${DEPLOY_BRANCH}
+\`\`\`
+The deployment stays on the last good commit until this is pushed."
+          gh label create sync-conflict --color d73a4a --description "Upstream merge needs a human" 2>/dev/null || true
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "Upstream merge conflict in ${DEPLOY_BRANCH}" --label sync-conflict --body "$body"
+          fi
+
+  reindex:
+    # Only when something was pushed, and only if the Dokploy API secrets exist.
+    needs: sync
+    if: needs.sync.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the Dokploy deploy, then rebuild the search index
+        env:
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+        run: |
+          if [ -z "$DOKPLOY_URL" ] || [ -z "$DOKPLOY_API_KEY" ]; then
+            echo "::notice::DOKPLOY_URL / DOKPLOY_API_KEY secrets are not set. If this release added search attributes, run the 'reindex' schedule in Dokploy by hand."
+            exit 0
+          fi
+          base="${DOKPLOY_URL%/}"
+          sleep 90 # let the push webhook start the build
+          for i in $(seq 1 80); do
+            status=$(curl -fsS -H "x-api-key: $DOKPLOY_API_KEY" "$base/api/compose.one?composeId=$DOKPLOY_COMPOSE_ID" | jq -r .composeStatus)
+            echo "deploy status: $status"
+            case "$status" in
+              done) break ;;
+              error) echo "::error::Dokploy deploy failed; not reindexing"; exit 1 ;;
+              *) sleep 30 ;;
+            esac
+          done
+          [ "$status" = "done" ] || { echo "::error::deploy did not finish in time"; exit 1; }
+          echo "running the reindex schedule"
+          curl -fsS --max-time 7200 -X POST -H "x-api-key: $DOKPLOY_API_KEY" -H "content-type: application/json" \
+            -d "{\"scheduleId\":\"$DOKPLOY_REINDEX_SCHEDULE_ID\"}" "$base/api/schedule.runManually"
+          echo; echo "reindex finished"
