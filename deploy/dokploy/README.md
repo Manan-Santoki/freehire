@@ -61,7 +61,9 @@ posting liveness, captured
 application forms, public Telegram channel crawling and extraction, and auth cleanup.
 Telegram channels are already seeded by migration 0130; no Telegram login is needed. Enrichment runs only with complete LLM settings.
 All Meilisearch writers share a lock; rebuilds wait for an existing drain to finish,
-and incremental pushes defer while a rebuild holds it. The real search volume is
+and incremental pushes defer while a rebuild holds it. Suggestions run at 04:45 UTC,
+after the midnight rebuild's four-hour budget and fifteen-minute lock wait; company
+rebuilds run in odd hours so they cannot occupy that window. The real search volume is
 mounted read-only in workers so the rebuild's disk-space guard measures its disk.
 
 The scheduler image must match `INGEST_DOCKER_IMAGE`; the Compose image settings do

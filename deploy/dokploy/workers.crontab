@@ -4,8 +4,8 @@
 7 * * * * /app/deploy/dokploy/run-worker.sh recount-companies
 17 * * * * /app/deploy/dokploy/run-worker.sh rollup-facets
 27 * * * * /app/deploy/dokploy/run-worker.sh rollup-company
-37 * * * * /app/deploy/dokploy/run-worker.sh reindex-companies
-47 */6 * * * /app/deploy/dokploy/run-worker.sh build-suggestions
+37 1-23/2 * * * /app/deploy/dokploy/run-worker.sh reindex-companies
+45 4 * * * /app/deploy/dokploy/run-worker.sh build-suggestions
 */15 * * * * /app/deploy/dokploy/run-worker.sh enrich
 3,33 * * * * /app/deploy/dokploy/run-worker.sh capture-apply-form
 43 * * * * /app/deploy/dokploy/run-worker.sh similar-backfill -limit 200 -batch 100 -workers 1
