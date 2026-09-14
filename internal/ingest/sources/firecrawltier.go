@@ -166,7 +166,13 @@ func ApplyFirecrawlEgress(registry map[string]Source) error {
 	if err != nil {
 		return err
 	}
-	api, err := firecrawl.New(firecrawl.Config{APIKey: key, MaxPagesPerRun: budget})
+	// FIRECRAWL_API_URL points the tier at a self-hosted Firecrawl (its API root, no
+	// trailing path); empty keeps the vendor's api.firecrawl.dev.
+	api, err := firecrawl.New(firecrawl.Config{
+		APIKey:         key,
+		BaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("FIRECRAWL_API_URL")), "/"),
+		MaxPagesPerRun: budget,
+	})
 	if err != nil {
 		return fmt.Errorf("sources: hosted tier: %w", err)
 	}
