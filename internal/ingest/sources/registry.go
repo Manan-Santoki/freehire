@@ -289,6 +289,9 @@ func All(c HTTPClient) map[string]Source {
 		// GeekHunter: Brazilian tech-recruitment ATS, board = company slug; listing and detail
 		// both come from parsing the page's own schema.org ld+json blocks.
 		NewGeekHunter(c),
+		// Recrutei: Brazilian multi-tenant ATS, board = tenant slug; listing is one POST to the
+		// platform's own internal frontend API, detail comes from the page's ld+json block.
+		NewRecrutei(c),
 		NewMyCareersFuture(c),
 		NewWorkingNomads(c),
 		NewPowerToFly(c),
