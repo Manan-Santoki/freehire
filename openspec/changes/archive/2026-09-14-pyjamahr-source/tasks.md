@@ -50,7 +50,8 @@
 
 ## 5. Close the submission
 
-- [ ] 5.1 After merge and deploy, add `pyjamahr/dodo-payments` via `cmd/add-board --apply`
+- [x] 5.1 After merge and deploy, add `pyjamahr/dodo-payments` via `cmd/add-board --apply`
       on prod and delete `board_submissions` id 124, then re-verify live via
-      `cmd/ingest pyjamahr` (this initiative's adapters have twice now hit a first-crawl
-      field-shape surprise no design sample or review caught — see recrutei-source)
+      `cmd/ingest pyjamahr` — succeeded on the first live crawl (`ingested=5 failed=0`),
+      unlike scalis/humanbit/recrutei in this same initiative; the code-review-caught
+      `ExperienceYearsMin` fix held up live

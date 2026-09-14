@@ -48,8 +48,8 @@
 
 ## 5. Close the submission
 
-- [ ] 5.1 After merge and deploy, add `recruiterflow/radhires` via `cmd/add-board --apply`
+- [x] 5.1 After merge and deploy, add `recruiterflow/radhires` via `cmd/add-board --apply`
       on prod and delete `board_submissions` id 26, then re-verify live via
-      `cmd/ingest recruiterflow` (this initiative's adapters have twice now hit a
-      first-crawl field-shape surprise no design sample or review caught — see
-      recrutei-source)
+      `cmd/ingest recruiterflow` — succeeded on the first live crawl (`ingested=12
+      failed=0`), unlike scalis/humanbit/recrutei; the independent review's field-shape
+      scrutiny held up this time
