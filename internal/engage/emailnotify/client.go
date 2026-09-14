@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -104,12 +105,22 @@ func (m Message) unsubscribeHeaders() []types.MessageHeader {
 // the render logic it serves lives in the callers and is covered by their tests.
 type Client struct {
 	ses sesAPI
+	// resend, when set, replaces SES as the transport (see resend.go). One or the
+	// other is non-nil, never both.
+	resend *resendTransport
 }
 
 // NewClient builds a Client from AWS config resolved via the default chain
 // (SSO / IAM role / env) — credentials never come from app config, matching the
 // apply service's inbound SES adapter.
+//
+// RESEND_API_KEY in the environment selects the Resend transport instead, for a
+// deployment without AWS; the region is then unused. Read here rather than through
+// config so every worker that sends mail gets the switch without its own wiring.
 func NewClient(ctx context.Context, region string) (*Client, error) {
+	if key := os.Getenv("RESEND_API_KEY"); key != "" {
+		return NewResendClient(key), nil
+	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return nil, fmt.Errorf("emailnotify: aws config: %w", err)
@@ -122,6 +133,9 @@ func NewClient(ctx context.Context, region string) (*Client, error) {
 func (c *Client) Send(ctx context.Context, m Message) error {
 	if err := m.validate(); err != nil {
 		return err
+	}
+	if c.resend != nil {
+		return c.resend.send(ctx, m)
 	}
 	in, err := c.input(m)
 	if err != nil {
