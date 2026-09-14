@@ -162,6 +162,15 @@
             <div class="text-sm opacity-80">
               Database {site.database} · {nfPercent.format(site.error_rate)} error rate over the last {site.window_minutes} min
             </div>
+            <!-- Named only when it is the thing making the site degraded. The error rate
+                 above describes requests that finished; a saturated pool is why requests
+                 cannot start, and stating both unconditionally would bury the one that
+                 matters on the day it matters. -->
+            {#if site.pool_pressure >= 0.9}
+              <div class="text-sm opacity-80">
+                Requests are queuing for a database connection ({nfPercent.format(site.pool_pressure)} of the pool in use)
+              </div>
+            {/if}
           </div>
         </div>
 

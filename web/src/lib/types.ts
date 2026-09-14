@@ -1120,6 +1120,10 @@ interface SiteHealth {
   status: HealthStatus;
   database: 'up' | 'down';
   error_rate: number;
+  /** Fraction of the database connection pool held at once, 0..1. Answers a different
+   *  question from `error_rate`: that one describes requests that FINISHED, this one
+   *  describes requests that cannot start. A saturated pool reads `degraded`. */
+  pool_pressure: number;
   window_minutes: number;
   history: SiteHistoryEntry[];
 }

@@ -815,10 +815,17 @@ components:
       schema:
         type: integer
         minimum: 0
+        # The window is on offset+limit, so this is the ceiling only for the smallest
+        # possible limit. A generator cannot express the real bound; the description is
+        # what states it.
+        maximum: 10000
         default: 0
       description: |
-        Rows to skip. On the job endpoints `offset + limit` may not exceed
-        10000; deeper paging is a 400.
+        Rows to skip. On every list endpoint `offset + limit` may not exceed
+        10000; deeper paging is a 400 ("pagination too deep"), never a clamped
+        page — a 200 carrying rows you did not ask for would leave a client
+        walking pages unable to tell it had reached the end. Narrow with
+        filters rather than paging that far.
     Sort:
       name: sort
       in: query

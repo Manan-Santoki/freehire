@@ -169,7 +169,10 @@ func TestDeriveSiteStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := deriveSiteStatus(tc.dbUp, tc.errorRate, tc.totalRequests); got != tc.want {
+			// An idle pool throughout: these cases are about the error fraction, and a pool
+			// signal of its own would confound them. The pool's own thresholds are covered
+			// in status_pool_saturation_test.go.
+			if got := deriveSiteStatus(tc.dbUp, tc.errorRate, tc.totalRequests, 0); got != tc.want {
 				t.Errorf("deriveSiteStatus(%v, %v, %v) = %q, want %q", tc.dbUp, tc.errorRate, tc.totalRequests, got, tc.want)
 			}
 		})

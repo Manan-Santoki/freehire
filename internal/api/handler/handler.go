@@ -77,6 +77,17 @@ const (
 	// listing: the Kanban board is unpaginated (it fetches everything at once), so
 	// the shared 100 cap would silently hide a heavy user's older applications.
 	trackingMaxLimit = 500
+	// maxPageWindow bounds how deep pagination may reach (offset+limit) on every list
+	// endpoint, whichever store answers it. ~500 pages at the default limit, 100 at the
+	// maximum — past any real browsing, and the cost of one refused request is that the
+	// caller must narrow its filter or page by cursor instead.
+	//
+	// One number for both stores on purpose. It arrived first for the Meili-backed search,
+	// where the index's own deep-paging cost argued for it; the Postgres-backed lists were
+	// left unbounded because their OFFSET walk was slow rather than refused — which is the
+	// gap the 2026-09-14 outage went through. Why a request past it is REFUSED rather than
+	// clamped is argued at pageParamsWindowed.
+	maxPageWindow = 10000
 	// telegramLinkTTL bounds how long a deep-link token is valid — long enough to
 	// open Telegram and tap Start, short enough to limit a leaked link's window.
 	telegramLinkTTL = 10 * time.Minute
@@ -186,6 +197,37 @@ func pageParamsBounded(c *fiber.Ctx, fallback, ceiling int) (limit, offset int) 
 	limit = min(max(c.QueryInt("limit", fallback), 1), ceiling)
 	offset = min(max(c.QueryInt("offset", 0), 0), math.MaxInt32)
 	return limit, offset
+}
+
+// pageParamsWindowed is pageParamsBounded plus the deep-pagination refusal: it answers 400
+// rather than serving a page whose offset reaches past maxPageWindow.
+//
+// The clamp pageParamsBounded already applies bounds the VALUE, so Postgres accepts it; it
+// does not bound the WORK. `LIMIT n OFFSET k` reads and discards k rows before returning
+// any, so an offset the caller chooses sets how much of a table one request walks — and on
+// `jobs` (millions of open rows, `SELECT *`, so every skipped tuple is a heap fetch) that is
+// minutes of disk per request rather than milliseconds.
+//
+// That is not a hypothetical. On 2026-09-14 a crawler walked /api/v1/jobs?offset= in steps of
+// 100 up to ~180,000, eight requests at a time. Each one pinned a pooled connection for over
+// two minutes; ten of them exhausted the pool (defaultMaxConns = 10), every other endpoint
+// queued behind them — /api/v1/threads was served in 15m41s — and nginx answered 504 to
+// 14,007 requests over 54 minutes. The per-IP rate limiter did not help and could not: it
+// bounds requests per minute, and this endpoint's COST PER REQUEST is what the caller
+// controls (see public_read_limit.go, whose budgets are split "by cost, not by path" — a
+// split that assumes a path HAS a fixed cost).
+//
+// Refusing rather than clamping to the ceiling is the deliberate half. A clamped page answers
+// 200 with rows the caller did not ask for, which reads as success: a walker would loop over
+// the same page forever and a person paging would silently see the wrong slice. The same
+// reasoning already decided maxSearchWindow on the Meili-backed lists, and this shares its
+// constant rather than introducing a second number that could drift.
+func pageParamsWindowed(c *fiber.Ctx, fallback, ceiling int) (limit, offset int, err error) {
+	limit, offset = pageParamsBounded(c, fallback, ceiling)
+	if offset+limit > maxPageWindow {
+		return 0, 0, fiber.NewError(fiber.StatusBadRequest, "pagination too deep")
+	}
+	return limit, offset, nil
 }
 
 // listResponse writes the shared paginated-list envelope: the data slice plus a
