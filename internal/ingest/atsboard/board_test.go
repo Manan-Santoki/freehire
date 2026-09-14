@@ -23,6 +23,7 @@ func TestRecognize(t *testing.T) {
 		{"ashby vacancy", "https://jobs.ashbyhq.com/blitzy/a741b4e8-8799", "ashby", "blitzy", "https://jobs.ashbyhq.com/blitzy/a741b4e8-8799", true},
 		{"humanbit vacancy", "https://jobs.humanbit.ai/scrabble-jigsaw/jobs/3e4ec4a3-65f4-41c2-b5d5-a9e12c5fdf4f", "humanbit", "scrabble-jigsaw", "https://jobs.humanbit.ai/scrabble-jigsaw/jobs/3e4ec4a3-65f4-41c2-b5d5-a9e12c5fdf4f", true},
 		{"recrutei vacancy", "https://jobs.recrutei.com.br/digisystem/vacancy/157190-desenvolvedor-fullstack-senior", "recrutei", "digisystem", "https://jobs.recrutei.com.br/digisystem/vacancy/157190-desenvolvedor-fullstack-senior", true},
+		{"pyjamahr vacancy", "https://jobs.pyjamahr.com/dodo-payments/backend-engineer-rust-4", "pyjamahr", "dodo-payments", "https://jobs.pyjamahr.com/dodo-payments/backend-engineer-rust-4", true},
 		{"talenthr vacancy", "https://jobs.talenthr.io/dnext/senior-backend-developer-2/22", "talenthr", "dnext", "https://jobs.talenthr.io/dnext/senior-backend-developer-2/22", true},
 		{"deel path", "https://jobs.deel.com/acme/jobs/123", "deel", "acme", "https://jobs.deel.com/acme/jobs/123", true},
 		{"jobvite path", "https://jobs.jobvite.com/acme/job/oABC", "jobvite", "acme", "https://jobs.jobvite.com/acme/job/oABC", true},
@@ -71,6 +72,7 @@ func TestRecognize(t *testing.T) {
 		{"api host without a board", "https://api.ashbyhq.com/posting-api/job-board", "", "", "", false},
 		{"humanbit bare host no board", "https://jobs.humanbit.ai/", "", "", "", false},
 		{"recrutei bare host no board", "https://jobs.recrutei.com.br/", "", "", "", false},
+		{"pyjamahr bare host no board", "https://jobs.pyjamahr.com/", "", "", "", false},
 		{"api host off-prefix path", "https://api.lever.co/v1/something/else", "", "", "", false},
 		// jobappnetwork (talentReef): the platform's own public apply link already carries the
 		// board in this shape, so this is the same pathprefix mechanism reused on a host that is

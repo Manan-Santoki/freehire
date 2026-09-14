@@ -119,6 +119,7 @@ var atsBoards = []struct{ host, source, mode string }{
 	{"jobs.ashbyhq.com", "ashby", modePath},
 	{"jobs.humanbit.ai", "humanbit", modePath},
 	{"jobs.recrutei.com.br", "recrutei", modePath},
+	{"jobs.pyjamahr.com", "pyjamahr", modePath},
 	{"apply.workable.com", "workable", modePath},
 	{"jobs.deel.com", "deel", modePath},
 	{"jobs.gem.com", "gem", modePath},
