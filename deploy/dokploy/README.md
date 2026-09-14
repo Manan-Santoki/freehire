@@ -65,7 +65,7 @@ Running crawl containers keep their exit status until the scheduler records it.
 commits (this directory, `docker-compose.dokploy.yml`, the Dockerfile worker list, the
 Docker crawl launcher, and the migrate search_path fix). To ship a newer upstream:
 
-`.github/workflows/sync-upstream.yml` does this every three days (and on demand from the
+`.github/workflows/sync-upstream.yml` does this daily at midnight UTC (and on demand from the
 Actions tab): it fast-forwards `main`, merges it into `dokploy` and pushes, which Dokploy
 deploys. A conflict fails the run and opens a `sync-conflict` issue. By hand, with
 `origin` = this fork and `upstream` = strelov1/freehire:

@@ -1,6 +1,6 @@
 # Keeps this deployment fork current with strelov1/freehire.
 #
-# Every 3 days (and on demand): fast-forward `main` to upstream main, merge it into
+# Daily at midnight UTC (and on demand): fast-forward `main` to upstream main, merge it into
 # `dokploy`, push. Dokploy watches `dokploy` and auto-deploys the push. A merge conflict
 # fails the run and opens an issue instead of pushing anything.
 #
@@ -12,7 +12,7 @@ name: Sync upstream into dokploy
 
 on:
   schedule:
-    - cron: "0 3 */3 * *" # every 3 days, 03:00 UTC
+    - cron: "0 0 * * *" # daily, 00:00 UTC
   workflow_dispatch:
 
 permissions:
