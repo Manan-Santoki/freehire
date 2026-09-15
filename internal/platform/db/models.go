@@ -812,6 +812,13 @@ type JobReport struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+type JobSearchPing struct {
+	JobID    int64              `json:"job_id"`
+	Engine   string             `json:"engine"`
+	PingedAt pgtype.Timestamptz `json:"pinged_at"`
+	Kind     string             `json:"kind"`
+}
+
 type JobSemanticChunk struct {
 	JobID      int64           `json:"job_id"`
 	ChunkIndex int16           `json:"chunk_index"`

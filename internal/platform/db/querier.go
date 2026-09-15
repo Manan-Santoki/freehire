@@ -1080,6 +1080,16 @@ type Querier interface {
 	// How many lists a user has — the per-user cap is enforced against this in the
 	// service before a create.
 	CountJobLists(ctx context.Context, userID int64) (int64, error)
+	// How many URLs this engine has been sent since a moment, across BOTH events — what
+	// bounds the day. The budget is the engine's, not the event's: a closure and a new
+	// posting cost the same one call, so counting them separately would let the day's
+	// allowance be spent twice.
+	//
+	// Served by job_search_pings_engine_pinged_at_idx, which is why migration 0163 leaves
+	// that index alone rather than re-keying it by kind: this query never filters on kind,
+	// and an unconstrained column sitting between the two it does filter on costs a planner
+	// without a B-tree skip scan every historical row for that engine.
+	CountJobSearchPingsSince(ctx context.Context, arg CountJobSearchPingsSinceParams) (int64, error)
 	// Per-stage application counts for the Pipeline snapshot. An application is any
 	// row the user applied to or staged (saved-only rows are excluded); a row with
 	// applied_at set but no stage groups under a NULL stage. The Go layer folds these
@@ -3147,6 +3157,23 @@ type Querier interface {
 	// than duplicating the threshold logic across an uncapped and a capped variant. total is the
 	// FULL count before the cap, same convention as ListUnhealthyBoards.Total.
 	ListChronicBoards(ctx context.Context, arg ListChronicBoardsParams) ([]ListChronicBoardsRow, error)
+	// Postings that have CLOSED since they were announced, so the engine can re-read a page
+	// whose validThrough has moved into the past.
+	//
+	// A closure is a re-crawl, never a deletion: the page stays at HTTP 200 and keeps its
+	// JobPosting markup with validThrough retired, which is one of the three ways Google
+	// documents for taking a job posting down. Sending URL_DELETED for a page that is still
+	// online is a misuse of the API, and the API's penalty is the quota.
+	//
+	// Only postings this engine was ALREADY told about ('created'): announcing the closure
+	// of a page an engine never heard of teaches it a dead URL and spends budget doing it.
+	// That also keeps the candidate set naturally small — it can never exceed what has been
+	// announced — which is why this needs no recency window of its own.
+	//
+	// MOST RECENTLY CLOSED first, the mirror of the other query's policy: a stale listing is
+	// most damaging while it is still ranking, and the oldest closures have long since been
+	// re-crawled on Google's own schedule.
+	ListClosedJobsToPing(ctx context.Context, arg ListClosedJobsToPingParams) ([]ListClosedJobsToPingRow, error)
 	// Catalog page: companies with their job counts, most active first. The job count
 	// is read from the denormalized companies.job_count column (maintained by
 	// cmd/recount-companies), so this read does not join jobs. Ordered by job_count
@@ -3661,6 +3688,24 @@ type Querier interface {
 	// inside it. The caller resumes from the last id it saw when a chunk comes back full,
 	// so a dense stretch is walked in bounded steps rather than materialised at once.
 	ListJobsForRequirementsBackfill(ctx context.Context, arg ListJobsForRequirementsBackfillParams) ([]ListJobsForRequirementsBackfillRow, error)
+	// The newest eligible postings this engine has not been told about yet, for
+	// cmd/search-ping. The gate mirrors needsRecentFeed in cmd/ingest/store.go — open,
+	// canonical, public, technical — because a URL worth announcing is a URL the site
+	// itself claims, and those are the same postings.
+	//
+	// NEWEST FIRST is the whole selection policy, and it is doing two jobs. The obvious
+	// one: a posting is most worth announcing while it is still open, and the budget is
+	// far smaller than the catalogue, so anything but recency spends it on pages whose
+	// moment has passed. The second is a quality guard we get for free — the sitemap
+	// additionally excludes the "likely-evergreen" reality class, which lives only in the
+	// search index and cannot be joined here, but that class is earned by a posting
+	// staying open for a long time, so the newest rows have not had the chance to qualify.
+	// Google adjusts the daily quota by the quality of what is submitted, which is why the
+	// divergence is worth naming rather than leaving to be discovered.
+	//
+	// The anti-join is served by job_search_pings_pkey; the ORDER BY by the same
+	// open-and-recent index the public feed uses.
+	ListJobsToPing(ctx context.Context, arg ListJobsToPingParams) ([]ListJobsToPingRow, error)
 	// Incremental keyset scan for `reindex --since`: like ListJobsByIDAfter but only
 	// rows changed at or after the cutoff. Every write path (UpsertJob, the close
 	// sweeps, SetJobEnrichment, UpdateJobDerived on a fingerprint move) stamps
@@ -4908,6 +4953,11 @@ type Querier interface {
 	// for the reason above: a list that only grows cannot express a scope the candidate took
 	// away. An empty list means the exchange did not say, and keeps what we held.
 	RecordGrantScopes(ctx context.Context, arg RecordGrantScopesParams) error
+	// Record that this posting was announced to this engine, for this event. ON CONFLICT DO
+	// NOTHING keeps a re-run after a partial failure from double-spending a budget that is
+	// counted in hundreds per day: the row is what makes the send idempotent, so it is
+	// written per URL as each send succeeds rather than once for the batch at the end.
+	RecordJobSearchPing(ctx context.Context, arg RecordJobSearchPingParams) error
 	// Record (or refresh) a user's view of a job. Idempotent on (user_id, job_id):
 	// the first view creates the row, a repeat view touches viewed_at. Returns the
 	// row so the caller learns the current applied_at in the same round-trip. This
