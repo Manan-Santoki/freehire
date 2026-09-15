@@ -345,6 +345,37 @@ func TestHiringCafeBudgetBoundsDetailRequestsPerRun(t *testing.T) {
 	}
 }
 
+// A covered employer's hit is yielded body-less without a request, so the edge's scarce
+// budget is never spent on a copy the coverage gate will discard.
+func TestHiringCafeFetchNewGatedSkipsCoveredEmployers(t *testing.T) {
+	fake := hiringcafeFake().route("/job/req-seen", hiringcafePageHTML("Acme", `{"job": {"id": "src___seen",
+	  "job_information": {"description": "<p>Also live.</p>"}}}`))
+	src := NewHiringCafe(fake).(CoverageGated)
+	covered := func(names []string) map[string]bool {
+		if len(names) != 2 {
+			t.Errorf("covered asked about %v, want the two live, attributable hits", names)
+		}
+		return map[string]bool{"Acme": true}
+	}
+	jobs, err := src.FetchNewGated(context.Background(), CompanyEntry{Company: "x", Board: "go"},
+		func(string) bool { return false }, covered)
+	if err != nil {
+		t.Fatalf("FetchNewGated: %v", err)
+	}
+	// Every live hit names Acme, so nothing is hydrated: the listing is the only request.
+	if fake.calls != 1 {
+		t.Errorf("requests = %d, want 1 (listing only)", fake.calls)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("len(jobs) = %d, want the two live hits yielded body-less: %+v", len(jobs), jobs)
+	}
+	for _, j := range jobs {
+		if j.Description != "" || j.SeenRefresh {
+			t.Errorf("covered hit = %+v, want body-less and not a refresh", j)
+		}
+	}
+}
+
 func TestHiringCafeMarkers(t *testing.T) {
 	src := NewHiringCafe(nil)
 	if src.Provider() != "hiringcafe" {
@@ -358,6 +389,9 @@ func TestHiringCafeMarkers(t *testing.T) {
 	}
 	if _, ok := src.(HydratingSource); !ok {
 		t.Error("hiringcafe is not a HydratingSource; every crawl would re-read every body")
+	}
+	if _, ok := src.(CoverageGated); !ok {
+		t.Error("hiringcafe is not CoverageGated; it would spend its request budget on copies the gate discards")
 	}
 	if g, ok := src.(sweepGrace); !ok || g.sweepGrace() != 14*24*time.Hour {
 		t.Error("hiringcafe does not declare the 14-day sweep grace its keyword slice needs")

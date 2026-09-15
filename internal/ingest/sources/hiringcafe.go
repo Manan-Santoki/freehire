@@ -94,14 +94,14 @@ const (
 	hiringcafeSweepGrace = 14 * 24 * time.Hour
 	// hiringcafeRequestInterval paces every request on one shared limiter. From residential
 	// egress 800 ms spacing (~1.25 req/s) was served clean over 15 listing pages and detail
-	// pages alike. From the production datacenter address the same pace was served for about
-	// 65 requests in the first 50 s and then answered 429 on every request for as long as the
-	// crawl kept asking (2026-09-15 06:29 UTC); 2 s spacing was refused at about the 30th
-	// request a few minutes later (06:45 UTC), though that may still have been the earlier
-	// block. Four seconds is a quarter of the first rate; the budget and the breaker below
-	// bound what one run can spend if it is still too fast, and board_health is where to
-	// read whether it is.
-	hiringcafeRequestInterval = 4 * time.Second
+	// pages alike. From the production datacenter address the edge blocks after roughly FIFTY
+	// requests in a five-minute window and then answers 429 to everything for as long as the
+	// crawl keeps asking: 65 requests in 50 s at 800 ms (2026-09-15 06:29 UTC) and 47 in
+	// 185 s at 4 s (06:55 UTC) were both refused at about that count, while 20 listing pages
+	// at 4 s were always served. Eight seconds keeps a run under 40 requests per five minutes;
+	// the budget and the breaker below bound what one run can spend if the window is tighter
+	// still, and board_health is where to read whether it is.
+	hiringcafeRequestInterval = 8 * time.Second
 	hiringcafeRequestBurst    = 1
 	// hiringcafeDetailWorkers bounds the detail pool. The limiter sets the pace, not the pool;
 	// a narrow pool only keeps the number of retry ladders in flight small when the edge
@@ -121,12 +121,12 @@ var errHiringcafeGone = errors.New("hiringcafe: posting gone or empty")
 // a var so a test can shorten it.
 var hiringcafeRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second}
 
-// hiringcafeMaxNewPerRun caps how many NEW hits one board hydrates per run. The listing is
-// newest-first, so the budget always buys the freshest postings; what it leaves stays new and
-// is bought on a later run. Four boards × (5 listing pages + 50 detail pages) at 4 s is ~15
-// minutes, inside the scheduler's 50-minute run, and steady state (only what an hour adds)
-// is a fraction of that; over a day the budget still reaches 1,200 new postings a board. A
-// var so a test can narrow it.
+// hiringcafeMaxNewPerRun caps how many NEW, uncovered hits one board hydrates per run. The
+// listing is newest-first, so the budget always buys the freshest postings; what it leaves
+// stays new and is bought on a later run. Four boards × (5 listing pages + 50 detail pages)
+// at 8 s is ~30 minutes, inside the scheduler's 50-minute run, and steady state (only what
+// an hour adds, minus the covered employers the gate discards) is a fraction of that. A var
+// so a test can narrow it.
 var hiringcafeMaxNewPerRun int64 = 50
 
 // hiringcafeCountryNames maps an entry's region (alpha-2) onto the display name the search's
@@ -382,21 +382,52 @@ func (s hiringcafe) list(ctx context.Context, e CompanyEntry) ([]hiringcafeHit, 
 
 func (s hiringcafe) Fetch(ctx context.Context, e CompanyEntry) ([]Job, error) {
 	// List-only fallback (no seen set): hydrate every posting.
-	return s.crawl(ctx, e, nil)
+	hits, err := s.list(ctx, e)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrate(ctx, e, hits, nil, nil)
 }
 
 // FetchNew is the hydrating crawl: the keyword's newest pages are listed every run, but a
 // posting page is fetched only for a hit the catalogue does not already hold. A seen hit is
 // re-listed as a liveness refresh with no request and no content rewrite.
 func (s hiringcafe) FetchNew(ctx context.Context, e CompanyEntry, seen func(externalID string) bool) ([]Job, error) {
-	return s.crawl(ctx, e, seen)
+	hits, err := s.list(ctx, e)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrate(ctx, e, hits, seen, nil)
 }
 
-// crawl lists the slice and hydrates through a narrow pool (the limiter, not the pool, sets
-// the pace). A hit whose body could not be read is DROPPED rather than stored list-only: a
-// stored row is re-offered for hydration only inside pipeline.HydrationRetryWindow, after which
-// it is `seen` forever with no body, while a dropped one stays new and costs one request on
-// the next crawl — the seek asymmetry, and the same cause (refusals arrive in bursts).
+// FetchNewGated is FetchNew told which employers the coverage gate will discard, so their
+// bodies are never bought. It matters more here than on any other aggregator: hiring.cafe
+// indexes the very ATS boards freehire crawls first-party, so most hits are copies the gate
+// discards after ingest (2 of 2, 3 of 4 and 1 of 2 on the first bounded production run), and
+// the edge's request budget is the scarcest thing this adapter has. A covered hit is still
+// yielded, body-less, so the gate sees and counts it.
+func (s hiringcafe) FetchNewGated(ctx context.Context, e CompanyEntry, seen func(externalID string) bool,
+	covered func(companies []string) map[string]bool) ([]Job, error) {
+	hits, err := s.list(ctx, e)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(hits))
+	for _, h := range hits {
+		if job, ok := h.toJob(); ok {
+			names = append(names, job.Company)
+		}
+	}
+	return s.hydrate(ctx, e, hits, seen, covered(names))
+}
+
+// hydrate maps the listed hits to Jobs through a narrow pool (the limiter, not the pool, sets
+// the pace), buying a body only where one is needed: not for a stored hit (a liveness refresh
+// instead) and not for a covered employer (yielded body-less). A hit whose body could not be
+// read is DROPPED rather than stored list-only: a stored row is re-offered for hydration only
+// inside pipeline.HydrationRetryWindow, after which it is `seen` forever with no body, while a
+// dropped one stays new and costs one request on the next crawl — the seek asymmetry, and the
+// same cause (refusals arrive in bursts).
 //
 // Two things bound what a run spends. The budget: only the first hiringcafeMaxNewPerRun new
 // hits of a board are attempted, newest first. The breaker: once a refusal has survived the
@@ -406,11 +437,8 @@ func (s hiringcafe) FetchNew(ctx context.Context, e CompanyEntry, seen func(exte
 // A board that read at least one body still succeeds with what it read; a crawl that listed
 // new postings and read none of them is a failure, not an empty source — that is what a wall
 // looks like from the outside.
-func (s hiringcafe) crawl(ctx context.Context, e CompanyEntry, seen func(externalID string) bool) ([]Job, error) {
-	hits, err := s.list(ctx, e)
-	if err != nil {
-		return nil, err
-	}
+func (s hiringcafe) hydrate(ctx context.Context, e CompanyEntry, hits []hiringcafeHit,
+	seen func(externalID string) bool, skip map[string]bool) ([]Job, error) {
 	var attempted, read atomic.Int64
 	var walled atomic.Bool
 	jobs := fetchDetails(hits, hiringcafeDetailWorkers, func(h hiringcafeHit) (Job, bool) {
@@ -421,6 +449,9 @@ func (s hiringcafe) crawl(ctx context.Context, e CompanyEntry, seen func(externa
 		if seen != nil && seen(h.ID) {
 			base.SeenRefresh = true
 			return base, true
+		}
+		if skip[base.Company] {
+			return base, true // covered by the employer's own ATS; a body would be pure loss
 		}
 		if walled.Load() || attempted.Add(1) > hiringcafeMaxNewPerRun {
 			return Job{}, false // stays new; a later run buys it

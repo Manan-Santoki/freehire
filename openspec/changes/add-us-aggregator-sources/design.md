@@ -26,8 +26,10 @@ prod datacenter IP is the unmeasured variable; the fallback is one line.
 ### The production address is served on a small budget, so a run is bounded three ways
 
 The first production run (2026-09-15) was served ~65 requests in 50 s at 1.25 req/s and
-then refused every request for as long as it kept asking, and a 2 s run was refused near its
-30th request. So: 4 s spacing on one limiter shared by listing and detail; `hiringcafeMaxNewPerRun` new detail pages per board per run
+then refused every request for as long as it kept asking; a bounded 4 s run was refused after
+~47 requests in three minutes. Together that reads as ~50 requests per five minutes per
+address. So: 8 s spacing on one limiter shared by listing and detail; `CoverageGated`, so a
+hit whose employer freehire already crawls first-party (most of them) costs no request; `hiringcafeMaxNewPerRun` new detail pages per board per run
 (newest first — the rest stay new for a later run); and a breaker that stops all detail
 requests for the run once a refusal has survived the retry ladder, because a retried
 refusal is what keeps the block alive. A board keeps what it read; a run that read nothing
@@ -82,8 +84,9 @@ title dictionaries rather than guessed at.
 
 - **hiring.cafe from the prod IP** is unmeasured. Watch `board_health` on the first runs;
   the `firecrawlProviders` fallback is documented in the adapter and in AGENTS.md.
-- **First crawl cost**: one hiring.cafe keyword ≈ 5 listing pages + 50 detail pages per run at
-  4 s ≈ 4 minutes, converging over hourly runs; steady state is only what is new. The scheduler kills a run at 50
+- **First crawl cost**: one hiring.cafe keyword ≈ 5 listing pages + up to 50 uncovered detail
+  pages per run at 8 s ≈ 7 minutes, converging over hourly runs; steady state is only what is
+  new and uncovered. The scheduler kills a run at 50
   minutes and a board cut mid-walk saves nothing, so add keyword boards a few at a time.
 - **GitHub list duplicates**: the two intern lists overlap heavily; both are boards under one
   provider, so the same posting can be stored under two external-id namespaces. The
