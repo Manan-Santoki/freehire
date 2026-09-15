@@ -279,6 +279,13 @@ func All(c HTTPClient) map[string]Source {
 		NewCryptocurrencyJobs(c),
 		NewJobspresso(c),
 		NewStartupAndVC(c),
+		// Hacker News "Ask HN: Who is hiring?": the two newest monthly threads, read whole
+		// through the Algolia HN API — one global feed, company per comment.
+		NewHackerNews(c),
+		// Curated GitHub job lists (SimplifyJobs, vanshb03): board = "owner/repo", one
+		// listings.json per repo read whole each run, bodies hydrated from the posting's own
+		// ATS page where it embeds a schema.org JobPosting.
+		NewGithubLists(c),
 		browserUASource(c, NewFourDayWeek),
 		NewFunctionalWorks(c),
 		NewTheHub(c),
@@ -485,6 +492,10 @@ func All(c HTTPClient) map[string]Source {
 		// the source facet) reads this registry, and an aggregator it does not know is never
 		// suppressed in the cross-source dedup.
 		registry["jobleads"] = NewJobleads(nil)
+		// hiringcafe rides the same fingerprint transport: hiringcafe.com's Cloudflare edge
+		// answers a JS challenge to Go's default TLS fingerprint on every path and serves a
+		// Chrome-shaped one, measured 2026-09-14 (see hiringcafe.go).
+		registry["hiringcafe"] = NewHiringCafe(nil)
 	} else if fp, err := newFingerprintHTTP(); err == nil {
 		registry["meta"] = NewMetaCareers(fp)
 		registry["bayt"] = NewBayt(fp)
@@ -494,6 +505,10 @@ func All(c HTTPClient) map[string]Source {
 		// The search and detail paths are both paced through one limiter per run, wired here
 		// so every board competes for the same bucket (see pacedJobleadsPoster).
 		registry["jobleads"] = NewJobleads(pacedJobleadsPoster(fp))
+		// Paced on a limiter of its own, shared by the listing and detail paths: the edge
+		// rate-limits bursts (429, then a managed challenge after a handful of rapid hits),
+		// and ~1 req/s was served clean — see hiringcafeRequestInterval.
+		registry["hiringcafe"] = NewHiringCafe(pacedHTMLGetter(fp, hiringcafeRequestInterval, hiringcafeRequestBurst))
 	}
 	return registry
 }
