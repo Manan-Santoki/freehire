@@ -40,10 +40,12 @@
 
 - [x] 5.1 `make gen-contracts` (source facet carries the three keys)
 - [x] 5.2 AGENTS.md trap entries for all three
-- [ ] 5.3 After deploy, seed boards: `add-board --provider=hackernews --company="Hacker News — Who is hiring" --apply`;
-      `add-board --provider=githublists --board=SimplifyJobs/New-Grad-Positions --company="SimplifyJobs — New Grad Positions" --apply`
-      (and `SimplifyJobs/Summer2027-Internships`, `vanshb03/Summer2027-Internships`);
-      `add-board --provider=hiringcafe --board="software engineer" --region=US --company="hiring.cafe — software engineer (US)" --apply`
-      (then further keywords a few at a time)
-- [ ] 5.4 Watch `board_health` for `hiringcafe` on the first production runs; if the prod IP
-      is refused, add the `firecrawlProviders` entry
+- [x] 5.3 After deploy, seed boards — done 2026-09-15 06:27 UTC through the Dokploy schedule
+      `seed-us-aggregator-boards` (one boardless `hackernews` row, the three GitHub repos, and
+      four `hiringcafe` US keyword boards: software engineer, software engineer intern,
+      machine learning engineer, data engineer; ids 157555-157562). Further keywords: edit
+      that schedule's command and run it again, a few at a time.
+- [x] 5.4 Watch the first production runs: `hackernews` listed 417 posts, ingested 244, 171
+      skipped as first-party-covered, 0 failed. `hiringcafe` from the production IP was
+      served clean — all four keyword listings walked to the 5-page cap in ~16 s (534, 580,
+      379, 418 hits) with no challenge, so no `firecrawlProviders` entry is needed.
