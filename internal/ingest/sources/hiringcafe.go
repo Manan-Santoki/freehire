@@ -94,11 +94,14 @@ const (
 	hiringcafeSweepGrace = 14 * 24 * time.Hour
 	// hiringcafeRequestInterval paces every request on one shared limiter. From residential
 	// egress 800 ms spacing (~1.25 req/s) was served clean over 15 listing pages and detail
-	// pages alike; from the production datacenter address the same pace was served for about
+	// pages alike. From the production datacenter address the same pace was served for about
 	// 65 requests in the first 50 s and then answered 429 on every request for as long as the
-	// crawl kept asking (measured 2026-09-15 06:29 UTC). Two seconds is half that rate; the
-	// budget and the breaker below bound what one run can spend if it is still too fast.
-	hiringcafeRequestInterval = 2 * time.Second
+	// crawl kept asking (2026-09-15 06:29 UTC); 2 s spacing was refused at about the 30th
+	// request a few minutes later (06:45 UTC), though that may still have been the earlier
+	// block. Four seconds is a quarter of the first rate; the budget and the breaker below
+	// bound what one run can spend if it is still too fast, and board_health is where to
+	// read whether it is.
+	hiringcafeRequestInterval = 4 * time.Second
 	hiringcafeRequestBurst    = 1
 	// hiringcafeDetailWorkers bounds the detail pool. The limiter sets the pace, not the pool;
 	// a narrow pool only keeps the number of retry ladders in flight small when the edge
@@ -120,10 +123,11 @@ var hiringcafeRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second}
 
 // hiringcafeMaxNewPerRun caps how many NEW hits one board hydrates per run. The listing is
 // newest-first, so the budget always buys the freshest postings; what it leaves stays new and
-// is bought on a later run. Four boards × (5 listing pages + 100 detail pages) at 2 s is ~14
-// minutes, well inside the scheduler's 50-minute run, and steady state (only what an hour
-// adds) is a fraction of that. A var so a test can narrow it.
-var hiringcafeMaxNewPerRun int64 = 100
+// is bought on a later run. Four boards × (5 listing pages + 50 detail pages) at 4 s is ~15
+// minutes, inside the scheduler's 50-minute run, and steady state (only what an hour adds)
+// is a fraction of that; over a day the budget still reaches 1,200 new postings a board. A
+// var so a test can narrow it.
+var hiringcafeMaxNewPerRun int64 = 50
 
 // hiringcafeCountryNames maps an entry's region (alpha-2) onto the display name the search's
 // location filter carries. Onboarding a market is one row here plus its boards.
