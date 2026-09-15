@@ -79,9 +79,12 @@ const (
 	// which is the source-scoped composite the catalogue stores as external_id).
 	hiringcafeJobURL = "https://hiringcafe.com/job/%s"
 	// hiringcafeMaxPages bounds one keyword's walk. At ~100 hits a page this is roughly the
-	// newest 1,500 postings of a keyword — what a first crawl can hydrate at ~1 req/s in
-	// under half an hour, and far more than a day adds to any one keyword.
-	hiringcafeMaxPages = 15
+	// newest 500 postings of a keyword, which is far more than the hourly cadence adds to any
+	// one keyword between runs — and what bounds a FIRST crawl: every hit is hydrated at the
+	// shared ~1 req/s, the scheduler kills a provider's run at DefaultRunTimeout (50 min), and
+	// a board whose walk is cut loses its buffered postings, so a handful of new keyword
+	// boards must each fit inside one run with room to spare.
+	hiringcafeMaxPages = 5
 	// hiringcafeSortBy orders the index newest-first (see the type doc).
 	hiringcafeSortBy = "date"
 	// hiringcafeRecentDays is passed because the site's own frontend always sends it; it did

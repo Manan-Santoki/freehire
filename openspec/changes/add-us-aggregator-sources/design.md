@@ -20,14 +20,15 @@ keyless, at ~1 req/s with no challenge across a 15-page walk plus detail pages. 
 reaches the same conclusion with a Firefox fingerprint (impit) and 800 ms spacing. So the
 adapter takes an `HTMLGetter`, is registered in `All`'s fingerprint block, and is NOT added
 to `firecrawlProviders` today: the hosted tier is billed per page and a first keyword crawl
-hydrates ~1,500 of them, while nothing measured says the fingerprint path is refused. The
+hydrates ~500 of them, while nothing measured says the fingerprint path is refused. The
 prod datacenter IP is the unmeasured variable; the fallback is one line.
 
 ### The keyword slice is newest-first and capped, and that is why the sweep waits 14 days
 
 `sortBy: "date"` orders the index newest-first (the default order surfaced 2015 postings on
 page 0). `dateFetchedPastNDays` did not change the stated total at 7 vs 1 days, so it is not a
-window the crawl can rely on; `hiringcafeMaxPages` (15 pages, ~1,500 hits) is. A posting
+window the crawl can rely on; `hiringcafeMaxPages` (5 pages, ~500 hits) is — sized so a first crawl of a few keyword
+boards, every hit hydrated at ~1 req/s, fits inside the scheduler's 50-minute run. A posting
 drifts past that depth as newer ones arrive, so on the 48 h default it would be closed and
 reopened — the whatjobs/jobleads reasoning, and the same 14-day answer.
 
@@ -71,9 +72,9 @@ title dictionaries rather than guessed at.
 
 - **hiring.cafe from the prod IP** is unmeasured. Watch `board_health` on the first runs;
   the `firecrawlProviders` fallback is documented in the adapter and in AGENTS.md.
-- **First crawl cost**: one hiring.cafe keyword ≈ 15 listing pages + ~1,500 detail pages at
-  ~1 req/s ≈ 20-25 minutes; steady state is only what is new. Add keyword boards a few at a
-  time.
+- **First crawl cost**: one hiring.cafe keyword ≈ 5 listing pages + ~500 detail pages at
+  ~1 req/s ≈ 7 minutes; steady state is only what is new. The scheduler kills a run at 50
+  minutes and a board cut mid-walk saves nothing, so add keyword boards a few at a time.
 - **GitHub list duplicates**: the two intern lists overlap heavily; both are boards under one
   provider, so the same posting can be stored under two external-id namespaces. The
   duplicate markers collapse the pair in search, as for schoolspring's keyword overlap.
