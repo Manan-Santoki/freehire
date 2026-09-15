@@ -91,7 +91,9 @@ func (c *fingerprintHTTP) get(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("sources: GET %s: status %d", url, resp.StatusCode)
+		// Typed, so an adapter can branch on the code (isRateLimited, detailUnreadable) the
+		// same way it does on the shared client's errors; the message is unchanged.
+		return nil, &StatusError{Method: fhttp.MethodGet, Code: resp.StatusCode, URL: url}
 	}
 	body, err := io.ReadAll(newCappedReader(resp.Body, url, maxResponseBody))
 	if err != nil {
@@ -153,7 +155,7 @@ func (c *fingerprintHTTP) post(ctx context.Context, url string, payload []byte) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("sources: POST %s: status %d", url, resp.StatusCode)
+		return nil, &StatusError{Method: fhttp.MethodPost, Code: resp.StatusCode, URL: url}
 	}
 	body, err := io.ReadAll(newCappedReader(resp.Body, url, maxResponseBody))
 	if err != nil {
