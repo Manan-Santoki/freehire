@@ -27,8 +27,10 @@ prod datacenter IP is the unmeasured variable; the fallback is one line.
 
 The first production run (2026-09-15) was served ~65 requests in 50 s at 1.25 req/s and
 then refused every request for as long as it kept asking; a bounded 4 s run was refused after
-~47 requests in three minutes. Together that reads as ~50 requests per five minutes per
-address. So: 8 s spacing on one limiter shared by listing and detail; `CoverageGated`, so a
+~47 requests in three minutes. A gated 8 s run was refused after 47 requests in 380 s, and a run started
+eleven minutes after the previous one was served its 47 again: roughly 50 requests per
+ten-minute window per address, a count rather than a rate. So: 20 s spacing on one limiter
+shared by listing and detail, 3 listing pages a keyword; `CoverageGated`, so a
 hit whose employer freehire already crawls first-party (most of them) costs no request; `hiringcafeMaxNewPerRun` new detail pages per board per run
 (newest first — the rest stay new for a later run); and a breaker that stops all detail
 requests for the run once a refusal has survived the retry ladder, because a retried
@@ -84,9 +86,11 @@ title dictionaries rather than guessed at.
 
 - **hiring.cafe from the prod IP** is unmeasured. Watch `board_health` on the first runs;
   the `firecrawlProviders` fallback is documented in the adapter and in AGENTS.md.
-- **First crawl cost**: one hiring.cafe keyword ≈ 5 listing pages + up to 50 uncovered detail
-  pages per run at 8 s ≈ 7 minutes, converging over hourly runs; steady state is only what is
-  new and uncovered. The scheduler kills a run at 50
+- **Yield**: over 97% of hits are employers freehire already crawls first-party and the
+  gate discards them (the first gated run ingested 15 of ~1,300 listed). hiring.cafe is a
+  supplement for employers outside the first-party fleet, not a volume source.
+- **Run cost**: 3 listing pages × 4 boards plus the uncovered details at 20 s ≈ 5-10 minutes
+  an hour, inside the edge's ~50-per-ten-minutes budget. The scheduler kills a run at 50
   minutes and a board cut mid-walk saves nothing, so add keyword boards a few at a time.
 - **GitHub list duplicates**: the two intern lists overlap heavily; both are boards under one
   provider, so the same posting can be stored under two external-id namespaces. The

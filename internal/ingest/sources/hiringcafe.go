@@ -80,12 +80,12 @@ const (
 	// which is the source-scoped composite the catalogue stores as external_id).
 	hiringcafeJobURL = "https://hiringcafe.com/job/%s"
 	// hiringcafeMaxPages bounds one keyword's walk. At ~100 hits a page this is roughly the
-	// newest 500 postings of a keyword, which is far more than the hourly cadence adds to any
-	// one keyword between runs — and what bounds a FIRST crawl: every hit is hydrated at the
-	// shared ~1 req/s, the scheduler kills a provider's run at DefaultRunTimeout (50 min), and
-	// a board whose walk is cut loses its buffered postings, so a handful of new keyword
-	// boards must each fit inside one run with room to spare.
-	hiringcafeMaxPages = 5
+	// newest 300 postings of a keyword, far more than the hourly cadence adds between runs —
+	// and, since over 97% of hits are employers freehire already crawls first-party (measured
+	// on the first production runs), far more than a run will ever hydrate. What bounds it is
+	// the edge's request budget: every listing page spends one of the ~47 requests a
+	// ten-minute window allows (see hiringcafeRequestInterval).
+	hiringcafeMaxPages = 3
 	// hiringcafeSortBy orders the index newest-first (see the type doc).
 	hiringcafeSortBy = "date"
 	// hiringcafeRecentDays is passed because the site's own frontend always sends it; it did
@@ -94,14 +94,14 @@ const (
 	hiringcafeSweepGrace = 14 * 24 * time.Hour
 	// hiringcafeRequestInterval paces every request on one shared limiter. From residential
 	// egress 800 ms spacing (~1.25 req/s) was served clean over 15 listing pages and detail
-	// pages alike. From the production datacenter address the edge blocks after roughly FIFTY
-	// requests in a five-minute window and then answers 429 to everything for as long as the
-	// crawl keeps asking: 65 requests in 50 s at 800 ms (2026-09-15 06:29 UTC) and 47 in
-	// 185 s at 4 s (06:55 UTC) were both refused at about that count, while 20 listing pages
-	// at 4 s were always served. Eight seconds keeps a run under 40 requests per five minutes;
-	// the budget and the breaker below bound what one run can spend if the window is tighter
-	// still, and board_health is where to read whether it is.
-	hiringcafeRequestInterval = 8 * time.Second
+	// pages alike. From the production datacenter address the edge allows a fixed COUNT and
+	// then answers 429 to everything: 65 requests in 50 s at 800 ms, 47 in 185 s at 4 s, and
+	// 47 in 380 s at 8 s were all refused at about that count (2026-09-15, 06:29-07:13 UTC),
+	// while a run started eleven minutes after the previous one was served its 47 again — so
+	// the rule reads as roughly fifty requests per ten-minute window per address. Twenty
+	// seconds keeps any ten minutes of a run at 30; a run of 3 listing pages × 4 boards plus
+	// the uncovered details fits inside that.
+	hiringcafeRequestInterval = 20 * time.Second
 	hiringcafeRequestBurst    = 1
 	// hiringcafeDetailWorkers bounds the detail pool. The limiter sets the pace, not the pool;
 	// a narrow pool only keeps the number of retry ladders in flight small when the edge
@@ -123,11 +123,11 @@ var hiringcafeRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second}
 
 // hiringcafeMaxNewPerRun caps how many NEW, uncovered hits one board hydrates per run. The
 // listing is newest-first, so the budget always buys the freshest postings; what it leaves
-// stays new and is bought on a later run. Four boards × (5 listing pages + 50 detail pages)
-// at 8 s is ~30 minutes, inside the scheduler's 50-minute run, and steady state (only what
-// an hour adds, minus the covered employers the gate discards) is a fraction of that. A var
-// so a test can narrow it.
-var hiringcafeMaxNewPerRun int64 = 50
+// stays new and is bought on a later run. It rarely binds — a board's uncovered slice was
+// 2-12 hits on the first production runs — and exists so a keyword whose employers are
+// mostly NOT covered cannot spend the whole window on one board. A var so a test can
+// narrow it.
+var hiringcafeMaxNewPerRun int64 = 30
 
 // hiringcafeCountryNames maps an entry's region (alpha-2) onto the display name the search's
 // location filter carries. Onboarding a market is one row here plus its boards.

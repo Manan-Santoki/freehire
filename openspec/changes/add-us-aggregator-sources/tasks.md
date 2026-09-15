@@ -51,6 +51,8 @@
       but detail pages were refused with 429 after ~65 requests in 50 s at 1.25 req/s and the
       refusal held while the run kept retrying — fixed by the 2 s pace, the 100-per-board
       per-run budget and the breaker (2.8). No `firecrawlProviders` entry is needed.
-- [x] 2.8 Pace 8 s (the edge allows ~50 requests per five minutes from the production
-      address), per-run new-detail budget, two-worker pool, the refusal breaker, and
-      `CoverageGated` so covered employers' bodies are never bought
+- [x] 2.8 Pace 20 s and 3 listing pages (the edge allows ~50 requests per ten minutes from
+      the production address, a count not a rate), per-run new-detail budget, two-worker
+      pool, the refusal breaker, and `CoverageGated` so covered employers' bodies are never
+      bought. Verified 2026-09-15 07:14 UTC: a gated run finished clean (`failed=0`),
+      ingesting 15 of ~1,300 listed hits — 97-99% were first-party-covered copies.
