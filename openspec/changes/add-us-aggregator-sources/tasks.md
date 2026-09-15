@@ -46,6 +46,9 @@
       machine learning engineer, data engineer; ids 157555-157562). Further keywords: edit
       that schedule's command and run it again, a few at a time.
 - [x] 5.4 Watch the first production runs: `hackernews` listed 417 posts, ingested 244, 171
-      skipped as first-party-covered, 0 failed. `hiringcafe` from the production IP was
-      served clean — all four keyword listings walked to the 5-page cap in ~16 s (534, 580,
-      379, 418 hits) with no challenge, so no `firecrawlProviders` entry is needed.
+      skipped as first-party-covered, 0 failed. `hiringcafe` from the production IP: the
+      listings were served (all four keywords walked to the 5-page cap in ~16 s, no challenge),
+      but detail pages were refused with 429 after ~65 requests in 50 s at 1.25 req/s and the
+      refusal held while the run kept retrying — fixed by the 2 s pace, the 100-per-board
+      per-run budget and the breaker (2.8). No `firecrawlProviders` entry is needed.
+- [x] 2.8 Pace 2 s, per-run new-detail budget, two-worker pool, and the refusal breaker

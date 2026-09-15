@@ -302,6 +302,49 @@ func TestHiringCafeRetriesARefusedBurst(t *testing.T) {
 	}
 }
 
+// Once a refusal survives the retry ladder, no further detail request is made this run: the
+// remaining new hits are dropped (they stay new for the next run) instead of re-earning the
+// block, and a run that read nothing reports the wall.
+func TestHiringCafeBreakerStopsDetailRequestsAfterARefusal(t *testing.T) {
+	saved := hiringcafeRetryDelays
+	hiringcafeRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { hiringcafeRetryDelays = saved }()
+
+	fake := hiringcafeFake().routeErr("/job/", &StatusError{Method: "GET", Code: http.StatusTooManyRequests, URL: "x"})
+	_, err := NewHiringCafe(fake).Fetch(context.Background(), CompanyEntry{Company: "x", Board: "go"})
+	if err == nil || !strings.Contains(err.Error(), "walled=true") {
+		t.Fatalf("err = %v, want the wall reported", err)
+	}
+	// One listing page, then at most the two in-flight workers' ladders (three requests each)
+	// before the breaker trips; never one ladder per listed hit.
+	if fake.calls > 1+2*3 {
+		t.Errorf("requests = %d, want at most 7", fake.calls)
+	}
+}
+
+// Only the first hiringcafeMaxNewPerRun new hits of a board are attempted per run; the rest
+// cost nothing and stay new.
+func TestHiringCafeBudgetBoundsDetailRequestsPerRun(t *testing.T) {
+	saved := hiringcafeMaxNewPerRun
+	hiringcafeMaxNewPerRun = 1
+	defer func() { hiringcafeMaxNewPerRun = saved }()
+
+	// Both new hits have a readable page; the two-worker pool decides which one wins the
+	// single slot, so the assertion is on the count, not the identity.
+	fake := hiringcafeFake().route("/job/req-seen", hiringcafePageHTML("Acme", `{"job": {"id": "src___seen",
+	  "job_information": {"description": "<p>Also live.</p>"}}}`))
+	jobs, err := NewHiringCafe(fake).Fetch(context.Background(), CompanyEntry{Company: "x", Board: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Errorf("jobs = %+v, want exactly one hydrated posting", jobs)
+	}
+	if fake.calls != 2 {
+		t.Errorf("requests = %d, want the listing plus one detail", fake.calls)
+	}
+}
+
 func TestHiringCafeMarkers(t *testing.T) {
 	src := NewHiringCafe(nil)
 	if src.Provider() != "hiringcafe" {

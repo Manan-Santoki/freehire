@@ -23,6 +23,16 @@ to `firecrawlProviders` today: the hosted tier is billed per page and a first ke
 hydrates ~500 of them, while nothing measured says the fingerprint path is refused. The
 prod datacenter IP is the unmeasured variable; the fallback is one line.
 
+### The production address is served on a small budget, so a run is bounded three ways
+
+The first production run (2026-09-15) was served ~65 requests in 50 s at 1.25 req/s and
+then refused every request for as long as it kept asking. So: 2 s spacing on one limiter
+shared by listing and detail; `hiringcafeMaxNewPerRun` new detail pages per board per run
+(newest first — the rest stay new for a later run); and a breaker that stops all detail
+requests for the run once a refusal has survived the retry ladder, because a retried
+refusal is what keeps the block alive. A board keeps what it read; a run that read nothing
+reports the wall.
+
 ### The keyword slice is newest-first and capped, and that is why the sweep waits 14 days
 
 `sortBy: "date"` orders the index newest-first (the default order surfaced 2015 postings on

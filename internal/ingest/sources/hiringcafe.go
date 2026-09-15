@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -91,19 +92,38 @@ const (
 	// not narrow the total when measured, so nothing here relies on it.
 	hiringcafeRecentDays = 30
 	hiringcafeSweepGrace = 14 * 24 * time.Hour
-	// hiringcafeRequestInterval paces every request on one shared limiter. Job-Ops measured
-	// the edge answering 429 and then a managed challenge after roughly four rapid hits and
-	// settled on 800 ms spacing; this crawl was served clean at that pace.
-	hiringcafeRequestInterval = 800 * time.Millisecond
+	// hiringcafeRequestInterval paces every request on one shared limiter. From residential
+	// egress 800 ms spacing (~1.25 req/s) was served clean over 15 listing pages and detail
+	// pages alike; from the production datacenter address the same pace was served for about
+	// 65 requests in the first 50 s and then answered 429 on every request for as long as the
+	// crawl kept asking (measured 2026-09-15 06:29 UTC). Two seconds is half that rate; the
+	// budget and the breaker below bound what one run can spend if it is still too fast.
+	hiringcafeRequestInterval = 2 * time.Second
 	hiringcafeRequestBurst    = 1
+	// hiringcafeDetailWorkers bounds the detail pool. The limiter sets the pace, not the pool;
+	// a narrow pool only keeps the number of retry ladders in flight small when the edge
+	// starts refusing, so the breaker trips after a handful of requests rather than dozens.
+	hiringcafeDetailWorkers = 2
 	// hiringcafeExpiredTitle is the fragment of the page title an expired posting renders.
 	hiringcafeExpiredTitle = "Expired Job"
 )
+
+// errHiringcafeGone is a posting page that answered but carries no live posting: expired by
+// the site's own flag or title, gone (404/410), or without a body. It is not a transport
+// failure and never trips the breaker.
+var errHiringcafeGone = errors.New("hiringcafe: posting gone or empty")
 
 // hiringcafeRetryDelays is the back-off ladder for a request the edge refused as a burst
 // (429, or the 403 a challenge arrives under): one retry after each delay, then give up. It is
 // a var so a test can shorten it.
 var hiringcafeRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second}
+
+// hiringcafeMaxNewPerRun caps how many NEW hits one board hydrates per run. The listing is
+// newest-first, so the budget always buys the freshest postings; what it leaves stays new and
+// is bought on a later run. Four boards × (5 listing pages + 100 detail pages) at 2 s is ~14
+// minutes, well inside the scheduler's 50-minute run, and steady state (only what an hour
+// adds) is a fraction of that. A var so a test can narrow it.
+var hiringcafeMaxNewPerRun int64 = 100
 
 // hiringcafeCountryNames maps an entry's region (alpha-2) onto the display name the search's
 // location filter carries. Onboarding a market is one row here plus its boards.
@@ -368,20 +388,28 @@ func (s hiringcafe) FetchNew(ctx context.Context, e CompanyEntry, seen func(exte
 	return s.crawl(ctx, e, seen)
 }
 
-// crawl lists the slice and hydrates through the shared bounded pool (the limiter, not the
-// pool, sets the pace). A hit whose body could not be read is DROPPED rather than stored
-// list-only: a stored row is re-offered for hydration only inside pipeline.HydrationRetryWindow,
-// after which it is `seen` forever with no body, while a dropped one stays new and costs one
-// request on the next crawl — the seek asymmetry, and the same cause (refusals arrive in
-// bursts). A crawl that listed new postings and read none of them is a failure, not an empty
-// source: that is what a wall looks like from the outside.
+// crawl lists the slice and hydrates through a narrow pool (the limiter, not the pool, sets
+// the pace). A hit whose body could not be read is DROPPED rather than stored list-only: a
+// stored row is re-offered for hydration only inside pipeline.HydrationRetryWindow, after which
+// it is `seen` forever with no body, while a dropped one stays new and costs one request on
+// the next crawl — the seek asymmetry, and the same cause (refusals arrive in bursts).
+//
+// Two things bound what a run spends. The budget: only the first hiringcafeMaxNewPerRun new
+// hits of a board are attempted, newest first. The breaker: once a refusal has survived the
+// retry ladder, no further detail request is made this run — every remaining new hit is
+// dropped without a request, since retrying a refused request is exactly what holds the
+// wall up (the production run of 2026-09-15 kept re-earning its 429 for six minutes that way).
+// A board that read at least one body still succeeds with what it read; a crawl that listed
+// new postings and read none of them is a failure, not an empty source — that is what a wall
+// looks like from the outside.
 func (s hiringcafe) crawl(ctx context.Context, e CompanyEntry, seen func(externalID string) bool) ([]Job, error) {
 	hits, err := s.list(ctx, e)
 	if err != nil {
 		return nil, err
 	}
-	var candidates, read atomic.Int64
-	jobs := fetchDetails(hits, defaultDetailWorkers, func(h hiringcafeHit) (Job, bool) {
+	var attempted, read atomic.Int64
+	var walled atomic.Bool
+	jobs := fetchDetails(hits, hiringcafeDetailWorkers, func(h hiringcafeHit) (Job, bool) {
 		base, ok := h.toJob()
 		if !ok {
 			return Job{}, false
@@ -390,48 +418,60 @@ func (s hiringcafe) crawl(ctx context.Context, e CompanyEntry, seen func(externa
 			base.SeenRefresh = true
 			return base, true
 		}
-		candidates.Add(1)
-		body, ok := s.detail(ctx, h)
-		if !ok {
+		if walled.Load() || attempted.Add(1) > hiringcafeMaxNewPerRun {
+			return Job{}, false // stays new; a later run buys it
+		}
+		body, err := s.detail(ctx, h)
+		if err != nil {
+			if isRateLimited(err) && walled.CompareAndSwap(false, true) {
+				log.Printf("hiringcafe: keyword %q: the edge refused a detail page past the retry ladder; "+
+					"no further detail requests this run: %v", e.Board, err)
+			} else if !errors.Is(err, errHiringcafeGone) && !isRateLimited(err) {
+				log.Printf("hiringcafe: detail %s failed; deferring to the next crawl: %v", h.ID, err)
+			}
 			return Job{}, false
 		}
 		read.Add(1)
 		base.Description = body
 		return base, true
 	})
-	if candidates.Load() > 0 && read.Load() == 0 {
-		return nil, fmt.Errorf("hiringcafe: keyword %q listed %d new postings and read none of their bodies",
-			e.Board, candidates.Load())
+	if n := min(attempted.Load(), hiringcafeMaxNewPerRun); n > 0 && read.Load() == 0 {
+		return nil, fmt.Errorf("hiringcafe: keyword %q attempted %d new postings and read none of their bodies (walled=%v)",
+			e.Board, n, walled.Load())
 	}
 	return jobs, nil
 }
 
-// detail reads one posting's page and returns its sanitized HTML body. ok is false when the
-// page cannot be fetched or parsed, when the site states the posting has expired, or when it
-// carries no body — every one of those drops the hit for this crawl (see crawl).
-func (s hiringcafe) detail(ctx context.Context, h hiringcafeHit) (string, bool) {
+// detail reads one posting's page and returns its sanitized HTML body. It returns
+// errHiringcafeGone for a page that answered without a live posting — expired by flag or title,
+// 404/410, no body — and the transport's own error otherwise, so the caller can tell a refusal
+// (which trips the breaker) from a posting that is simply not there.
+func (s hiringcafe) detail(ctx context.Context, h hiringcafeHit) (string, error) {
 	if h.RequisitionID == "" {
-		return "", false
+		return "", errHiringcafeGone
 	}
 	root, err := s.get(ctx, fmt.Sprintf(hiringcafeJobURL, url.PathEscape(h.RequisitionID)))
 	if err != nil {
-		if detailUnreadable(err) {
-			log.Printf("hiringcafe: detail %s failed; deferring to the next crawl: %v", h.ID, err)
+		if !detailUnreadable(err) {
+			return "", errHiringcafeGone // 404/410: the platform's own answer
 		}
-		return "", false
+		return "", err
 	}
 	if strings.Contains(titleText(root), hiringcafeExpiredTitle) {
-		return "", false
+		return "", errHiringcafeGone
 	}
 	pp, err := hiringcafeParse(root)
-	if err != nil || pp.Job == nil || pp.Job.IsExpired {
-		return "", false
+	if err != nil {
+		return "", err
+	}
+	if pp.Job == nil || pp.Job.IsExpired {
+		return "", errHiringcafeGone
 	}
 	body := sanitizeHTML(pp.Job.JobInformation.Description)
 	if strings.TrimSpace(body) == "" {
-		return "", false
+		return "", errHiringcafeGone
 	}
-	return body, true
+	return body, nil
 }
 
 // toJob maps a hit's listing fields to a Job without its body. ok is false for an expired hit
