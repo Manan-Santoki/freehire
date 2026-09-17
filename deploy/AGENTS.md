@@ -1,8 +1,27 @@
 # deploy
 
 The production host's systemd units and operator scripts, as they run on host-2. Not Go,
-not built, not imported by anything — this directory is a **record**, and the only reason
-it exists is that the machine was the sole copy.
+not built, not imported by anything — this directory is a **record**.
+
+**It is a record of something that now has an owner elsewhere, and that changes what an edit
+here means.** The reason this directory was created — the machine being the sole copy — stopped
+being true: the deployed scripts live in the private `freehire-ops` repository, under
+`scripts/host2/` and `provision/host2/`, and that is where a change to them has to be made.
+Editing a copy here ships nothing.
+
+That is not a style point. `deploy/bin/release.sh` in this directory gained a Sentry
+credential gate in freehire#2899 and was still carrying it, alone, three weeks later: the
+host's copy had never heard of it, so the gate had never once run, and the credential it was
+written to catch went bad on 2026-09-14 with every deploy green. Meanwhile the host's copy had
+gained things this one does not have — support for a second app (`recruit`) and three workers
+added during the 2026-09-15 outage — so the two had drifted in BOTH directions and neither
+could simply be copied over the other. `./deploy/check-drift.sh` is what reports this; it said
+`bin: DRIFTED` for weeks and nothing read it.
+
+**Before editing anything under `bin/`, check whether `freehire-ops` owns it.** Deleting this
+directory's duplicate scripts outright is the real fix and is deliberately not done here —
+prose across the repository still points at these paths, including a change that has not been
+archived — but it is the direction, not a hypothetical.
 
 Snapshot taken 2026-09-05 from `/etc/systemd/system/freehire-*`, `/opt/freehire/bin/*.sh` and
 `/etc/nginx/snippets/freehire-app.conf`.
@@ -41,10 +60,19 @@ nothing, so a new provider was scheduled only when somebody remembered to run it
 Every one of them had been added after the generator's last manual run, six days earlier.
 
 It is on `freehire-gen-ingest-timers.timer` now, daily at 04:40 UTC, which bounds that gap
-at a day. The run is safe unattended because of a property of the script rather than of the
-timer: it only ever creates and enables, and every `systemctl disable` in it names one unit
-literally — so a firing against a catalog that has shrunk generates fewer timers and retires
-nothing. The closing `systemctl daemon-reload` is what the unattended run added: the script
+at a day.
+
+**What makes the unattended run safe is the floor, and it was not always.** This paragraph
+used to say the script "only ever creates and enables, and every `systemctl disable` in it
+names one unit literally — so a firing against a catalog that has shrunk generates fewer
+timers and retires nothing." That was true, and it stopped being true the same day, when
+the script gained a sweep that retires by pattern: an enabled timer whose provider this run
+generated nothing for. A run CAN now retire, so the argument had to be replaced rather than
+kept. It is the 80% floor beside the sweep — a run that generated fewer than four fifths of
+the timers currently enabled refuses to sweep at all — and the catalogue query returning
+nothing still exits non-zero before reaching any of it.
+
+The closing `systemctl daemon-reload` is what the unattended run added: the script
 REWRITES every timer file, and `systemctl enable` on an already-enabled unit links nothing,
 so before that an edited `OnCalendar` reached the fleet only via the reload an operator
 happened to do by hand.
@@ -174,11 +202,23 @@ a scheduled Dependabot run made every deploy stop, silently, at exit 0.
   `/opt/freehire/.env`; the mail credentials (`NOTIFY_EMAIL_FROM` plus the SES keys) live
   ONLY in `/opt/freehire/.env.notify`. A worker that sends mail and reads just the first
   loses its email channel — and does not fail, because "channel not configured" is a
-  deliberate soft-skip. **The six workers that send mail are `notify`, `nudge`, `remind`,
-  `broadcast`, `onboarding` and `mentorship-remind`**, and each must read both files.
-  `remind` and `nudge` did not, from the day they shipped until 2026-09-01: 244 email
-  reminders piled up unsent across 43 people while every run exited 0 with `failed=0`.
+  deliberate soft-skip. **The seven workers that send mail are `notify`, `nudge`, `remind`,
+  `broadcast`, `onboarding`, `mentorship-remind` and `pro-welcome-mail`**, and each must
+  read both files. `remind` and `nudge` did not, from the day they shipped until
+  2026-09-01: 244 email reminders piled up unsent across 43 people while every run exited
+  0 with `failed=0`.
   Neither env file is in git and neither should be.
+- **A third env file exists, and no unit reads it.** `/opt/freehire/env/sentry-build.env`
+  (0600 root) holds `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` and optionally
+  `SENTRY_URL`. It is sourced by `release.sh` at BUILD time and passed to the build with
+  `--preserve-env`, deliberately never exported into a running unit, so the token cannot
+  reach the app. It is listed here because it is now a **gate**: a rejected or
+  half-configured credential refuses the release (see
+  `web/scripts/sentry-credential-check.mjs`), and the way out is to remove the WHOLE file —
+  clearing only the token leaves the other two set, which is the half-configured case and
+  fails. Its own comment's promise that `--preserve-env` "keeps it out of `ps(1)`" is true
+  and insufficient: sudo logs the preserved environment, token value included, to the
+  journal.
 - **A `.d/` drop-in beside a unit is how the host adds to it**, and both spellings are in
   use here: `mail.conf` adds the env file above, `10-timeout.conf` and
   `10-skip-if-reindexing.conf` adjust one setting. A drop-in's directives apply after the

@@ -56,10 +56,40 @@ describe('applyParams', () => {
     expect(got.q).toBeUndefined();
   });
 
-  it('applies a title as free text, since no facet names it', () => {
+  // A title names no facet, so it becomes a query — quoted and restricted to the
+  // title field, so the count the suggestion showed (an exact-title-match count)
+  // approximates what the click actually returns, instead of an unscoped multi-field
+  // match against title, company, description, and location.
+  it('applies a title as a quoted, title-scoped query', () => {
     const got = applyParams([{ kind: 'title', text: 'Product Owner' }]);
-    expect(got.q).toBe('Product Owner');
+    expect(got.q).toBe('"Product Owner"');
+    expect(got.qFields).toEqual(['title']);
     expect(got.facets).toEqual([]);
+  });
+
+  // Meilisearch's quoting syntax uses `"` as its own delimiter, so an embedded one
+  // would split the query into more than one quoted segment instead of one.
+  it('strips an embedded quote from a title before wrapping it', () => {
+    const got = applyParams([{ kind: 'title', text: 'He said "wow" Engineer' }]);
+    expect(got.q).toBe('"He said wow Engineer"');
+  });
+
+  it('quotes and scopes the title part of a composed suggestion, alongside the facet', () => {
+    const got = applyParams([
+      { kind: 'title', text: 'Founding Engineer' },
+      { kind: 'company', slug: 'acme', text: 'Acme' },
+    ]);
+    expect(got.q).toBe('"Founding Engineer"');
+    expect(got.qFields).toEqual(['title']);
+    expect(got.facets).toEqual([['company_slug', 'acme']]);
+  });
+
+  // A suggestion with no title part never touches search text at all, so it must not
+  // carry a stray field restriction that would silently narrow an unrelated `q` a
+  // caller might already have typed.
+  it('carries no field restriction when there is no title part', () => {
+    const got = applyParams([{ kind: 'company', slug: 'acme', text: 'Acme' }]);
+    expect(got.qFields).toBeUndefined();
   });
 
   it('maps each kind to its own facet', () => {

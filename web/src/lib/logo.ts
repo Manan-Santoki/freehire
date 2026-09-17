@@ -12,3 +12,21 @@ export function companyLogoUrl(name: string): string | null {
   if (!name) return null;
   return `${COMPANY_LOGO_BASE}/${encodeURIComponent(name)}`;
 }
+
+/** The proxy logo URL for a SOURCE, resolved from its DISPLAY NAME — "Greenhouse",
+ *  "BambooHR", "Telegram" — exactly as `companyLogoUrl` resolves a company.
+ *
+ *  Not from a host, which is what the first version of this did. The proxy resolves a
+ *  brand from a name; a host is either a 404 (a per-tenant subdomain such as
+ *  `jobs.smartrecruiters.com` or `2020companies.wd1.myworkdayjobs.com`) or, worse, the
+ *  right image for the WRONG company, because an ATS posting's URL is often on the
+ *  employer's own domain — production served Bankrate's mark for Greenhouse and ZEREN
+ *  GROUP's for SuccessFactors. Measured against the live proxy on 2026-09-16: 14 of 15
+ *  source names resolve; hosts were about half 404 and half wrong brand.
+ *
+ *  A miss still 404s, so every caller needs its own fallback — the proxy cannot tell the
+ *  difference between "no such brand" and "not today". */
+export function sourceLogoUrl(displayName: string): string | null {
+  if (!displayName) return null;
+  return `${COMPANY_LOGO_BASE}/${encodeURIComponent(displayName)}`;
+}

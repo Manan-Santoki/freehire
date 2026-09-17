@@ -3,6 +3,7 @@
   import { companyLogoUrl } from '$lib/logo';
   import { EntityLogo } from '$lib/ui';
   import { groupedStages } from '$lib/stages';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import type { BoardItem } from '$lib/board';
   import type { MyJob } from '$lib/types';
@@ -65,7 +66,7 @@
             </span>
           {/if}
           {#if item.last_activity_at}
-            <span class="hidden text-xs text-muted-foreground sm:inline">{timeAgo(item.last_activity_at)}</span>
+            <span class="hidden text-xs text-muted-foreground sm:inline">{timeAgo(item.last_activity_at, locale())}</span>
           {/if}
           <select
             value={item.stage ?? ''}

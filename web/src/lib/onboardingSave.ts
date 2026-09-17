@@ -24,6 +24,8 @@ export interface WizardAnswers {
   skills: string[];
   seniorities: string[];
   excludedSkills: string[];
+  excludedSources: string[];
+  excludedCompanies: string[];
   location: LocationPreferences | null;
   links: ProfileLinks;
   /** The account's owned résumé overlay as it currently stands. Spread into every contacts
@@ -51,6 +53,8 @@ export interface SaveDeps {
     skills: string[],
     seniorities: string[],
     excludedSkills: string[],
+    excludedSources: string[],
+    excludedCompanies: string[],
     location: LocationPreferences | null,
   ) => Promise<unknown>;
   putResumeContacts: (contacts: CandidateContacts) => Promise<CandidateContacts>;
@@ -153,5 +157,13 @@ export async function persistStep(
  *  wizard on it would make an optional step mandatory. */
 async function saveProfileIfSavable(a: WizardAnswers, deps: SaveDeps): Promise<void> {
   if (a.specializations.length === 0 || a.skills.length === 0) return;
-  await deps.saveProfile(a.specializations, a.skills, a.seniorities, a.excludedSkills, a.location);
+  await deps.saveProfile(
+    a.specializations,
+    a.skills,
+    a.seniorities,
+    a.excludedSkills,
+    a.excludedSources,
+    a.excludedCompanies,
+    a.location,
+  );
 }

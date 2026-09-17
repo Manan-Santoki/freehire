@@ -33,6 +33,24 @@ const group = (agent: string, disallowed: readonly string[]) =>
 // Googlebot group listing only /api/ would silently re-open /my/ and the new-thread
 // form to Google — which is why the two lists are composed here rather than written
 // out twice.
+// A mirror of this deployment must not compete with the canonical site in search:
+// two indexable copies of one catalogue is duplicate content, which helps neither.
+// ROBOTS_DISALLOW_ALL=true turns the whole host away from every crawler, and is
+// read per request rather than baked at build time so a deployment can flip it
+// without a rebuild. Fork-only: the canonical deployment leaves it unset and keeps
+// the rules below untouched, which is also what makes this survive an upstream merge.
+export function disallowAllBody(origin: string): string {
+  return `User-agent: *
+Disallow: /
+
+# This host is a private mirror of an open-source job aggregator and is
+# deliberately excluded from search. The canonical, indexable site is
+# https://freehire.me — please crawl that instead.
+#
+# Sitemap intentionally omitted: ${origin}/sitemap.xml exists but must not be indexed.
+`;
+}
+
 export function robotsBody(origin: string): string {
   const groups = [
     group('*', DISALLOWED),

@@ -1,4 +1,5 @@
 import { render } from '@testing-library/svelte';
+import { flushSync } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { House } from '@lucide/svelte';
 import TabStrip, { tabStripId } from './tab-strip.svelte';
@@ -18,14 +19,14 @@ const LINK_TABS = [
 
 function setup(active = 'one') {
   const onSelect = vi.fn();
-  const { getAllByRole, rerender } = render(TabStrip, {
+  const { getAllByRole, getByRole, rerender } = render(TabStrip, {
     tabs: TABS,
     active,
     onSelect,
     label: 'Demo sections',
     panelId: 'demo-panel',
   });
-  return { tabs: getAllByRole('tab') as HTMLButtonElement[], onSelect, rerender };
+  return { tabs: getAllByRole('tab') as HTMLButtonElement[], getByRole, onSelect, rerender };
 }
 
 describe('TabStrip', () => {
@@ -215,6 +216,59 @@ describe('TabStrip', () => {
       expect(observed).toContain(newTab);
     } finally {
       globalThis.ResizeObserver = originalRO;
+    }
+  });
+
+  // The strip is not sticky, so a page scroll carries a tab's boundary past a pointer
+  // that never moved — a real hover enter/leave the reader did nothing to cause. Without
+  // this guard `transition-colors` turns every one of those into a visible fade, and a
+  // scroll gesture fires a rapid string of them. The guard doesn't touch the hover
+  // affordance itself, only whether the color change animates while a scroll is in flight.
+  it('drops the hover color transition while the page is scrolling, and restores it once it settles', () => {
+    vi.useFakeTimers();
+    try {
+      const { tabs } = setup('one');
+
+      expect(tabs[1]?.className).toContain('transition-colors');
+      expect(tabs[1]?.className).not.toContain('transition-none');
+
+      window.dispatchEvent(new Event('scroll'));
+      flushSync();
+
+      expect(tabs[1]?.className).toContain('transition-none');
+      expect(tabs[1]?.className).not.toContain('transition-colors');
+
+      vi.advanceTimersByTime(150);
+      flushSync();
+
+      expect(tabs[1]?.className).toContain('transition-colors');
+      expect(tabs[1]?.className).not.toContain('transition-none');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The strip has a SECOND scroll of its own — its own row scrolls horizontally once the
+  // tabs outgrow it (`overflow-x-auto`), which is exactly what this component exists to
+  // handle on a narrow viewport. A DOM `scroll` event doesn't bubble, so that scroll never
+  // reaches the `window` listener above; it needs the same guard applied independently, or
+  // dragging the row under a stationary pointer flickers exactly like the vertical case.
+  it('also drops the transition while the strip scrolls itself, not just the page', () => {
+    vi.useFakeTimers();
+    try {
+      const { tabs, getByRole } = setup('one');
+
+      getByRole('tablist').dispatchEvent(new Event('scroll'));
+      flushSync();
+
+      expect(tabs[1]?.className).toContain('transition-none');
+
+      vi.advanceTimersByTime(150);
+      flushSync();
+
+      expect(tabs[1]?.className).toContain('transition-colors');
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

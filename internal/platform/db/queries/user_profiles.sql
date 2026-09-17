@@ -7,16 +7,19 @@ WHERE user_id = $1;
 -- name: UpsertUserProfile :one
 -- Create-or-replace the user's one profile. The PRIMARY KEY (user_id) makes this an
 -- idempotent upsert: first save inserts, later saves overwrite specializations/skills/
--- seniorities/excluded_skills/location_preferences and bump updated_at. All fields are
--- already normalized by the service; seniorities and excluded_skills may be empty;
+-- seniorities/excluded_skills/excluded_sources/excluded_companies/location_preferences and
+-- bump updated_at. All fields are already normalized by the service; seniorities,
+-- excluded_skills, excluded_sources and excluded_companies may be empty;
 -- location_preferences is a validated JSONB block or NULL (no preferences).
-INSERT INTO user_profiles (user_id, specializations, skills, seniorities, excluded_skills, location_preferences)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO user_profiles (user_id, specializations, skills, seniorities, excluded_skills, excluded_sources, excluded_companies, location_preferences)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (user_id) DO UPDATE
 SET specializations      = EXCLUDED.specializations,
     skills               = EXCLUDED.skills,
     seniorities          = EXCLUDED.seniorities,
     excluded_skills      = EXCLUDED.excluded_skills,
+    excluded_sources     = EXCLUDED.excluded_sources,
+    excluded_companies   = EXCLUDED.excluded_companies,
     location_preferences = EXCLUDED.location_preferences,
     updated_at           = now()
 RETURNING *;
@@ -33,9 +36,11 @@ SET specializations      = $2,
     skills               = $3,
     seniorities          = $4,
     excluded_skills      = $5,
-    location_preferences = $6,
+    excluded_sources     = $6,
+    excluded_companies   = $7,
+    location_preferences = $8,
     updated_at           = now()
-WHERE user_id = $1 AND updated_at = $7
+WHERE user_id = $1 AND updated_at = $9
 RETURNING *;
 
 -- name: DeleteUserProfile :execrows

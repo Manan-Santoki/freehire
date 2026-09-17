@@ -12,6 +12,7 @@
     type RecentFeedEvent,
   } from '$lib/recentFeed';
   import { EntityLogo, SectionLabel } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
 
   // The homepage's live "recently added jobs" feed (see
@@ -39,7 +40,7 @@
     // Clamp a produced_at that reads as being in the client's future (clock
     // skew between this browser and the server) to `now`, so the newest card
     // never renders as "in 2 seconds" instead of "just now".
-    return timeAgo(new Date(Math.min(producedMs, now)).toISOString());
+    return timeAgo(new Date(Math.min(producedMs, now)).toISOString(), locale());
   }
 
   function headline(entry: RecentFeedEntry): string {

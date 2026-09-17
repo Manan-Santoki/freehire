@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack, type Snippet } from 'svelte';
   import {
+    Ban,
     Briefcase,
     ClipboardList,
     Contact,
@@ -46,6 +47,7 @@
     { id: 'contacts', href: '/my/profile/contacts', icon: Contact },
     { id: 'location', href: '/my/profile/location', icon: MapPin },
     { id: 'skills', href: '/my/profile/skills', icon: Tags },
+    { id: 'avoid', href: '/my/profile/avoid', icon: Ban },
     { id: 'experience', href: '/my/profile/experience', icon: Briefcase },
     { id: 'education', href: '/my/profile/education', icon: GraduationCap },
     { id: 'screening', href: '/my/profile/screening', icon: ClipboardList },
@@ -137,9 +139,11 @@
     <AccountPreferences class="mt-6" />
   </div>
 {:else}
-  <!-- Above the tab strip: what is left to set up belongs to the account, not to
-       whichever section happens to be open, and a card inside a section would be
-       re-announced on every tab switch. -->
+  <!-- Above the tab strip: what is left to set up belongs to the account rather than to
+       whichever section happens to be open — a card inside a section would be
+       re-announced on every tab switch. The Talent Network invitation used to sit beside
+       it and has moved further out still, to the account shell (`my/+layout`), which puts
+       it above every section rather than only above Profile's. -->
   <div class="mb-6">
     <AccountSetupCard />
   </div>

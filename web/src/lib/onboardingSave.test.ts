@@ -31,6 +31,8 @@ function answers(over: Partial<WizardAnswers> = {}): WizardAnswers {
     skills: [],
     seniorities: [],
     excludedSkills: [],
+    excludedSources: [],
+    excludedCompanies: [],
     location: null,
     links: { linkedin: '', github: '', other: [] },
     contacts: {},

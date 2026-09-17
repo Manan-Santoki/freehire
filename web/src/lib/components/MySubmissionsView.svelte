@@ -62,7 +62,7 @@
               </a>
               <span class="truncate text-xs text-muted-foreground">
                 {sub.company}{sub.location ? ` · ${sub.location}` : ''} · {s.submittedPrefix}
-                {timeAgo(sub.created_at)}
+                {timeAgo(sub.created_at, locale())}
               </span>
               {#if sub.status === 'rejected' && sub.review_reason}
                 <span class="text-xs text-destructive">{s.rejectionReasonPrefix} {sub.review_reason}</span>

@@ -2,6 +2,11 @@
   import { api } from '$lib/api';
   import type { CandidateContacts } from '$lib/types';
   import { Button, Input } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './CandidateContactsEditor.messages';
+
+  const s = $derived(t(messages, locale()));
 
   let { contacts = {}, onSaved }: { contacts?: CandidateContacts | null; onSaved?: () => void } =
     $props();
@@ -12,8 +17,15 @@
   let location = $state(contacts?.location ?? '');
   let linksText = $state((contacts?.links ?? []).join('\n'));
   let busy = $state(false);
-  let error = $state<string | null>(null);
-  let note = $state<string | null>(null);
+  // What the last save produced, not the display strings themselves — the text is
+  // derived from `s` below so it follows a later locale change instead of freezing
+  // in whatever locale was resolved when the save settled.
+  let saveOutcome = $state<'saved' | 'error' | null>(null);
+  // The server's own message when the failure was an Error; `null` means the
+  // generic fallback.
+  let errorMessage = $state<string | null>(null);
+  const note = $derived(saveOutcome === 'saved' ? s.saved : null);
+  const error = $derived(saveOutcome === 'error' ? (errorMessage ?? s.saveFailed) : null);
   // Set by any keystroke, cleared right before a save request is sent. Reloading the
   // `contacts` prop (e.g. after this component's own save round trip) must not overwrite
   // an edit the owner has not saved yet — that would silently discard what they just
@@ -35,8 +47,8 @@
 
   async function save() {
     busy = true;
-    error = null;
-    note = null;
+    saveOutcome = null;
+    errorMessage = null;
     // Matches the values about to be sent, as of now — a keystroke during the request
     // (e.g. into another field) re-dirties via markDirty and stays protected.
     dirty = false;
@@ -56,10 +68,11 @@
         location: location.trim(),
         links,
       });
-      note = 'Contacts saved.';
+      saveOutcome = 'saved';
       onSaved?.();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not save contacts.';
+      errorMessage = e instanceof Error ? e.message : null;
+      saveOutcome = 'error';
       // The save never landed — these values are still unsaved and must stay protected.
       dirty = true;
     } finally {
@@ -71,32 +84,31 @@
 
 <section class="flex flex-col gap-4">
   <div class="flex flex-col gap-1">
-    <h3 class="text-sm font-semibold">Your contacts</h3>
+    <h3 class="text-sm font-semibold">{s.heading}</h3>
     <p class="text-xs text-muted-foreground">
-      Edit without re-uploading. A new CV parse only fills empty fields — it will not overwrite
-      what you typed.
+      {s.description}
     </p>
   </div>
 
   <div class="grid gap-3 sm:grid-cols-2">
-    <Input bind:value={fullName} oninput={markDirty} placeholder="Full name" class="w-full" />
-    <Input bind:value={email} oninput={markDirty} placeholder="Email" class="w-full" />
-    <Input bind:value={phone} oninput={markDirty} placeholder="Phone" class="w-full" />
-    <Input bind:value={location} oninput={markDirty} placeholder="Location" class="w-full" />
+    <Input bind:value={fullName} oninput={markDirty} placeholder={s.fullNamePlaceholder} class="w-full" />
+    <Input bind:value={email} oninput={markDirty} placeholder={s.emailPlaceholder} class="w-full" />
+    <Input bind:value={phone} oninput={markDirty} placeholder={s.phonePlaceholder} class="w-full" />
+    <Input bind:value={location} oninput={markDirty} placeholder={s.locationPlaceholder} class="w-full" />
   </div>
   <label class="flex flex-col gap-1 text-sm">
-    <span class="text-muted-foreground">Links (one per line)</span>
+    <span class="text-muted-foreground">{s.linksLabel}</span>
     <textarea
       bind:value={linksText}
       oninput={markDirty}
       rows="3"
       class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-      placeholder="https://…"
+      placeholder={s.linksPlaceholder}
     ></textarea>
   </label>
 
   <div class="flex flex-wrap items-center gap-2">
-    <Button size="sm" variant="primary" disabled={busy} onclick={save}>Save contacts</Button>
+    <Button size="sm" variant="primary" disabled={busy} onclick={save}>{s.save}</Button>
   </div>
   {#if error}
     <p class="text-sm text-destructive">{error}</p>

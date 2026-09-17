@@ -6,6 +6,7 @@
   import type { ReferralOffer } from '$lib/types';
   import { companyLogoUrl } from '$lib/logo';
   import { Button, EntityLogo } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import States from './States.svelte';
 
@@ -49,7 +50,7 @@
           <div class="flex min-w-0 flex-col gap-0.5">
             <span class="truncate text-sm font-medium">{o.company_name || o.company_slug}</span>
             <span class="truncate text-xs text-muted-foreground">
-              Submitted {o.created_at ? timeAgo(o.created_at) : ''}
+              Submitted {o.created_at ? timeAgo(o.created_at, locale()) : ''}
             </span>
           </div>
         </div>

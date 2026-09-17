@@ -55,6 +55,24 @@ var fillProviders = map[string]bool{
 	"greenhouse": true,
 }
 
+// SubmittableProviders is fillProviders as a value other packages may read: the providers
+// an application can be COMPLETED on without a person.
+//
+// It is exported because the OJCP surface publishes exactly this fact as
+// `supports_agent_submission`, the flag an external agent plans around, and a hand-written
+// copy over there would be a fourth list in a repo that already has three easy to confuse:
+// jobview.AutoApplyProviders (four ATSs a fill may be ATTEMPTED on), handler's enqueue set
+// (five that may be QUEUED), and this one. Only this one means submitted.
+//
+// A copy is returned so a caller cannot mutate the map this package routes on.
+func SubmittableProviders() map[string]bool {
+	out := make(map[string]bool, len(fillProviders))
+	for provider, ok := range fillProviders {
+		out[provider] = ok
+	}
+	return out
+}
+
 // reasonSubmissionNotImplemented is the one park reason for two distinct gaps that both
 // mean "nothing here can ever act on this attempt, regardless of how well the form
 // resolves": fillProviders excluding a provider whose schema DID fetch (Ashby, Workable),
@@ -266,7 +284,7 @@ func (c *Client) Submit(ctx context.Context, claimed autoapply.Claimed, answers 
 		defer cleanup()
 	}
 
-	confirmed, err := fillAndSubmit(browserCtx, plan, layout)
+	confirmed, err := fillAndSubmit(browserCtx, claimed.JobID, plan, layout)
 	if err != nil {
 		if errors.Is(err, errCaptchaRefused) {
 			// The board said it could not VERIFY the submission, which is it telling us
@@ -276,10 +294,12 @@ func (c *Client) Submit(ctx context.Context, claimed autoapply.Claimed, answers 
 			// each further ask is free of consequence to the employer.
 			return autoapply.SidecarResult{Status: autoapply.StatusCaptchaRefused, Reason: err.Error()}, nil
 		}
-		// A fill action failing, or the board EXPLICITLY refusing the submit click
-		// (SUBMIT_REFUSED_MARKERS in fill.go), both mean no submission happened — safe
-		// to retry normally. This is deliberately distinct from the timeout-with-no-
-		// marker case below, which is NOT known to be safe to retry.
+		// A fill action failing, or the board EXPLICITLY refusing the submission
+		// (SUBMIT_REFUSED_MARKERS in fill.go — matched whether the refused attempt was
+		// the sidecar's own deliberate submit click or one triggered early by a field's
+		// own interaction), both mean no submission happened — safe to retry normally.
+		// This is deliberately distinct from the timeout-with-no-marker case below,
+		// which is NOT known to be safe to retry.
 		return autoapply.SidecarResult{}, fmt.Errorf("fill and submit: %w", err)
 	}
 	if !confirmed {

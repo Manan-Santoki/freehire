@@ -35,6 +35,21 @@ describe('browseQuery', () => {
     expect(browseQuery({ facets: [] })).toBe('');
     expect(browseQuery({ facets: [], q: '   ' })).toBe('');
   });
+
+  // A title suggestion's plan carries a field restriction so its quoted query only
+  // matches the title field — see the search-suggestions spec.
+  it('carries the field restriction alongside a title query', () => {
+    const got = new URLSearchParams(
+      browseQuery({ facets: [], q: '"Founding Engineer"', qFields: ['title'] }),
+    );
+    expect(got.get('q')).toBe('"Founding Engineer"');
+    expect(got.get('q_fields')).toBe('title');
+  });
+
+  it('carries no q_fields param when the plan names no field restriction', () => {
+    const got = new URLSearchParams(browseQuery({ facets: [], q: 'remote' }));
+    expect(got.has('q_fields')).toBe(false);
+  });
 });
 
 describe('planForSuggestion', () => {

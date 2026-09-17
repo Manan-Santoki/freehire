@@ -1,4 +1,5 @@
-import { robotsBody } from '$lib/robots';
+import { env } from '$env/dynamic/private';
+import { disallowAllBody, robotsBody } from '$lib/robots';
 import type { RequestHandler } from './$types';
 
 // A real robots file (not the SPA shell): allow crawling the public pages, keep
@@ -20,7 +21,12 @@ import type { RequestHandler } from './$types';
 // Comments, not directives: robots.txt has no field for "prefer this instead",
 // and inventing one would only be ignored by parsers that validate strictly.
 export const GET: RequestHandler = ({ url }) => {
-  return new Response(robotsBody(url.origin), {
+  // A mirror deployment excludes itself from search entirely (see disallowAllBody).
+  // Read from dynamic env so the host can be flipped without a rebuild.
+  const body =
+    env.ROBOTS_DISALLOW_ALL === 'true' ? disallowAllBody(url.origin) : robotsBody(url.origin);
+
+  return new Response(body, {
     headers: {
       'content-type': 'text/plain; charset=utf-8',
       'cache-control': 'public, max-age=86400',

@@ -182,6 +182,8 @@
     skills,
     seniorities,
     excludedSkills: profileStore.profile?.excluded_skills ?? [],
+    excludedSources: profileStore.profile?.excluded_sources ?? [],
+    excludedCompanies: profileStore.profile?.excluded_companies ?? [],
     location,
     links,
     contacts,
@@ -197,8 +199,8 @@
   });
 
   const saveDeps: SaveDeps = {
-    saveProfile: async (spec, sk, sen, excl, loc) => {
-      const result = await profileStore.save(spec, sk, sen, excl, loc);
+    saveProfile: async (spec, sk, sen, excl, exclSources, exclCompanies, loc) => {
+      const result = await profileStore.save(spec, sk, sen, excl, exclSources, exclCompanies, loc);
       void syncProfileAlert();
       return result;
     },

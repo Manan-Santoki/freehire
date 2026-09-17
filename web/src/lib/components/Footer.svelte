@@ -15,6 +15,7 @@
         { label: 'Jobs', href: resolve('/jobs') },
         { label: 'Companies', href: resolve('/companies') },
         { label: 'Collections', href: resolve('/collections') },
+        { label: 'Talent Network', href: resolve('/talent') },
         { label: 'Jobs by role', href: resolve('/roles') },
         // The glossary's only link from the app — the chip's reveal opens on
         // interaction and the sitemap is for crawlers, so this is the one path a
@@ -62,6 +63,9 @@
         // here is how to help, and here is everyone who did.
         { label: 'Contributors', href: resolve('/contributors') },
         { label: 'Submit a job', href: resolve('/submit') },
+        // Next to Status rather than under Resources: the two answer neighbouring
+        // questions — where the jobs come from, and whether we are still reading them.
+        { label: 'Sources', href: resolve('/sources') },
         { label: 'Status', href: resolve('/status') },
         { label: 'Support', href: resolve('/support') },
         { label: 'Privacy', href: resolve('/privacy') },
@@ -94,78 +98,89 @@
       'https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1196233&theme=light&t=1785605037608',
     dark: 'https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1196233&theme=dark&t=1785605357228',
   };
+
+  // Compact: the account shell (/my/*) is an app-like surface with its own sidebar
+  // nav, so the four link columns, the popular-collections strip and the Product
+  // Hunt badge below are marketing chrome that doesn't belong there — only the
+  // bottom bar (copyright, cookie settings, social links, open-source note) still
+  // applies. Full-bleed account routes (/my/assistant/*, /tailor/*) render no
+  // footer at all, compact or otherwise — see routes/+layout.svelte's hideFooter.
+  let { compact = false }: { compact?: boolean } = $props();
 </script>
 
 <footer class="border-t border-border">
-  <div class="mx-auto max-w-6xl px-4 py-8 sm:py-12">
-    <div class="grid grid-cols-2 gap-x-6 gap-y-7 sm:grid-cols-4 sm:gap-6">
-      <!-- Navigation groups. Each is a named landmark (aria-label) so screen readers
-           get a title without adding headings to the page outline. -->
-      {#each groups as group (group.title)}
-        <nav class="flex flex-col gap-3" aria-label={group.title}>
-          <p class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {group.title}
-          </p>
-          <ul class="flex flex-col gap-2">
-            {#each group.links as link (link.href)}
-              <li>
-                <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- internal route already passed through resolve() when building `groups`; the linter can't trace it via the variable -->
-                <a href={link.href}
-                  class="text-sm text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {link.label}
-                </a>
-              </li>
-            {/each}
-          </ul>
-        </nav>
-      {/each}
-    </div>
-
-    <!-- Popular collections. Real <a href> in the server-rendered HTML: crawlers
-         discover links by parsing markup, and these landing pages had none from the
-         homepage at all. -->
-    <nav class="mt-8 border-t border-border pt-6" aria-label="Popular collections">
-      <p class="text-xs font-medium uppercase tracking-wider text-muted-foreground">Popular</p>
-      <ul class="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-        {#each popular as collection (collection.slug)}
-          <li>
-            <a href={resolve('/collections/[slug]', { slug: collection.slug })}
-              class="text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {collection.title}
-            </a>
-          </li>
+  {#if !compact}
+    <div class="mx-auto max-w-6xl px-4 py-8 sm:py-12">
+      <div class="grid grid-cols-2 gap-x-6 gap-y-7 sm:grid-cols-4 sm:gap-6">
+        <!-- Navigation groups. Each is a named landmark (aria-label) so screen readers
+             get a title without adding headings to the page outline. -->
+        {#each groups as group (group.title)}
+          <nav class="flex flex-col gap-3" aria-label={group.title}>
+            <p class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {group.title}
+            </p>
+            <ul class="flex flex-col gap-2">
+              {#each group.links as link (link.href)}
+                <li>
+                  <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- internal route already passed through resolve() when building `groups`; the linter can't trace it via the variable -->
+                  <a href={link.href}
+                    class="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          </nav>
         {/each}
-      </ul>
-    </nav>
+      </div>
 
-    <div class="mt-8">
-      <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- external Product Hunt page opened in a new tab; not an internal route -->
-      <a href={productHunt.href} target="_blank" rel="noopener noreferrer" class="inline-block">
-        <img
-          src={productHunt.light}
-          alt={productHunt.alt}
-          width="250"
-          height="54"
-          loading="lazy"
-          class="dark:hidden"
-        />
-        <img
-          src={productHunt.dark}
-          alt={productHunt.alt}
-          width="250"
-          height="54"
-          loading="lazy"
-          class="hidden dark:block"
-        />
-      </a>
+      <!-- Popular collections. Real <a href> in the server-rendered HTML: crawlers
+           discover links by parsing markup, and these landing pages had none from the
+           homepage at all. -->
+      <nav class="mt-8 border-t border-border pt-6" aria-label="Popular collections">
+        <p class="text-xs font-medium uppercase tracking-wider text-muted-foreground">Popular</p>
+        <ul class="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+          {#each popular as collection (collection.slug)}
+            <li>
+              <a href={resolve('/collections/[slug]', { slug: collection.slug })}
+                class="text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {collection.title}
+              </a>
+            </li>
+          {/each}
+        </ul>
+      </nav>
+
+      <div class="mt-8">
+        <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- external Product Hunt page opened in a new tab; not an internal route -->
+        <a href={productHunt.href} target="_blank" rel="noopener noreferrer" class="inline-block">
+          <img
+            src={productHunt.light}
+            alt={productHunt.alt}
+            width="250"
+            height="54"
+            loading="lazy"
+            class="dark:hidden"
+          />
+          <img
+            src={productHunt.dark}
+            alt={productHunt.alt}
+            width="250"
+            height="54"
+            loading="lazy"
+            class="hidden dark:block"
+          />
+        </a>
+      </div>
     </div>
-  </div>
+  {/if}
 
   <!-- Bottom bar: copyright + social links on the left, open-source note on the
-       right, split off by a thin border. -->
-  <div class="border-t border-border">
+       right. Split off by its own top border only when it follows the link
+       groups above — compact, the footer's own top border already does that job. -->
+  <div class={compact ? undefined : 'border-t border-border'}>
     <div
       class="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-1"
     >

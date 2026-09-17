@@ -2,7 +2,9 @@ package atsapply
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/strelov1/freehire/internal/application/autoapply"
 	"github.com/strelov1/freehire/internal/dict/answertopic"
@@ -146,6 +148,17 @@ var labelAnswerKeyFor = []struct {
 	{"desired_salary", []string{"desired", "compensation"}},
 	{"desired_salary", []string{"salary", "expect"}},
 	{"desired_salary", []string{"compensation", "expect"}},
+	// Being of age: ~150 of the 12 352 question labels measured across 4 000 live forms on
+	// 2026-09-16, in four phrasings, and screening_answers.age_18_or_older holds the answer
+	// already. Forms give it an opaque id, so only a label rule can reach it.
+	//
+	// Each rule carries the number 18 with it, which is what keeps an age RANGE ("What is
+	// your age range?") out: that is a demographic question the candidate answers for
+	// themselves, and a yes/no fact is not an answer to it.
+	{"age_18_or_older", []string{"at least 18"}},
+	{"age_18_or_older", []string{"over the age of 18"}},
+	{"age_18_or_older", []string{"18 years of age or older"}},
+	{"age_18_or_older", []string{"18 or older"}},
 }
 
 // matchLabelAnswerKey returns the answer key a field's label matches, if any.
@@ -297,12 +310,34 @@ func firstStated(answers map[string]string, keys []string) (string, bool) {
 // "resume" is Greenhouse's own field id for it (internal/ingest/applyform/display.go's
 // vocabulary agrees: "resume"/"resume_text" vs. "cover_letter"/"cover_letter_text"); the
 // label fallback covers a custom-labeled field the id alone would miss.
+// resumeLabelWords are what a résumé upload is CALLED, across the languages employers
+// actually label their own forms in. English-only matching is what parked a live Ashby
+// application whose field was labelled "Резюме" (Leaply, 2026-09-16): everything else about
+// it resolved, and it could not attach a CV.
+var resumeLabelWords = []string{"resume", "résumé", "резюме", "cv", "lebenslauf", "currículum", "curriculum"}
+
+// isResumeField reports whether a file upload is the résumé — the one file this package can
+// produce. Deliberately not a catch-all: a cover letter or a portfolio is a file it genuinely
+// cannot write, and treating one as the résumé would upload the CV into it.
 func isResumeField(f MergedField) bool {
-	if strings.EqualFold(strings.TrimSpace(f.ID), "resume") {
+	// Ashby keys its own built-in fields as "_systemfield_<name>" (see
+	// internal/ingest/applyform/ashby.go), so the bare-id check alone misses every Ashby
+	// résumé upload there is.
+	id := strings.ToLower(strings.TrimSpace(f.ID))
+	id = strings.TrimPrefix(id, "_systemfield_")
+	if id == "resume" || id == "cv" {
 		return true
 	}
-	lower := strings.ToLower(f.Label)
-	return strings.Contains(lower, "resume") || strings.Contains(lower, "résumé")
+	// Word-bounded, because "cv" is two letters that turn up inside ordinary words — the
+	// label is the employer's own free text, not a controlled vocabulary.
+	for _, w := range strings.FieldsFunc(strings.ToLower(f.Label), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if slices.Contains(resumeLabelWords, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // isCoverLetterTextField reports whether a free-text field is asking for a cover letter —

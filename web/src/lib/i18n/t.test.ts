@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defineMessages, plural, plurals, t } from './t';
+import { defineMessages, format, plural, plurals, t } from './t';
 
 describe('defineMessages / t', () => {
   const messages = defineMessages(
@@ -108,6 +108,30 @@ describe('plural', () => {
     // 2 would read "2 model calls" in an otherwise Russian sentence.
     const catalog = defineMessages({ calls: en }, { ru: { calls: ru } });
     expect(plural('ru', 2, t(catalog, 'ru').calls)).not.toBe('model calls');
+  });
+});
+
+describe('format', () => {
+  it('substitutes a placeholder in the middle of a sentence', () => {
+    expect(format('Could not update {skill} in your profile.', { skill: 'go' })).toBe(
+      'Could not update go in your profile.',
+    );
+  });
+
+  it('substitutes the same placeholder wherever a translation moved it', () => {
+    // The whole reason this exists rather than a prefix/suffix catalog pair: a
+    // translation is free to place the value anywhere its own grammar wants.
+    expect(format('{skill}'.concat(' обновить не удалось'), { skill: 'go' })).toBe(
+      'go обновить не удалось',
+    );
+  });
+
+  it('substitutes more than one distinct placeholder', () => {
+    expect(format('{a} and {b}', { a: 'one', b: 'two' })).toBe('one and two');
+  });
+
+  it('leaves an unmatched placeholder as-is rather than dropping it silently', () => {
+    expect(format('Hello {name}', {})).toBe('Hello {name}');
   });
 });
 

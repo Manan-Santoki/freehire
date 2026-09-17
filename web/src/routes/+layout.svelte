@@ -6,6 +6,7 @@
   import { initTheme } from '$lib/theme.svelte';
   import { currentUser, isAuthenticated } from '$lib/auth.svelte';
   import { onboardingGate, onboardingUrl } from '$lib/onboardingGate.svelte';
+  import { isFullBleedRoute } from '$lib/shellLayout';
   import { safeRedirect } from '$lib/safeRedirect';
   import { resetUserStores } from '$lib/userResource.svelte';
   import {
@@ -31,17 +32,22 @@
 
   let { children } = $props();
 
-  // The account area (/my/*) is an app-like surface with its own sidebar nav —
-  // the marketing footer with its link columns doesn't belong there. /onboarding and
-  // /signin are both their own full-screen pages (a fixed inset-0 overlay covers
-  // TopBar too) — no footer either.
+  // The account area (/my/*) is an app-like surface with its own sidebar nav — the
+  // marketing footer's link columns don't belong there, but a compact one (just
+  // copyright/cookie settings/social/open-source note) still anchors the page.
+  // The full-bleed account routes (the assistant chat, CV tailoring — see
+  // isFullBleedRoute) size themselves to the exact viewport height and get no
+  // footer at all, same as /onboarding and /signin, both their own full-screen
+  // pages (a fixed inset-0 overlay covers TopBar too).
+  const isAccountRoute = $derived(
+    page.url.pathname === '/my' || page.url.pathname.startsWith('/my/'),
+  );
   const hideFooter = $derived(
-    page.url.pathname === '/my' ||
-      page.url.pathname.startsWith('/my/') ||
-      page.url.pathname.startsWith('/tailor/') ||
+    isFullBleedRoute(page.url.pathname) ||
       page.url.pathname === '/onboarding' ||
       page.url.pathname === '/signin',
   );
+  const compactFooter = $derived(isAccountRoute && !hideFooter);
 
   // The onboarding gate: auto-redirect a signed-in visitor who has never been through the
   // wizard to /onboarding (which bounces an anonymous visitor straight on to /signin — see
@@ -220,7 +226,7 @@
   </main>
 
   {#if !hideFooter}
-    <Footer />
+    <Footer compact={compactFooter} />
   {/if}
 </div>
 

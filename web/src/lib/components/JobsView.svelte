@@ -27,6 +27,7 @@
     sortOptionsFor,
     type JobSort,
     activeFilterCount,
+    displayQuery,
   } from '$lib/filters';
   import { freshnessOptions } from '$lib/filterControls';
   import { geoScopeOffered, loadJobFilters, markGeoScopeOffered } from '$lib/filterStorage';
@@ -359,10 +360,10 @@
         },
         applyParts: (plan) => {
           track('role_suggestion', {
-            role: plan.facets.map(([, v]) => v).join('+') || plan.q,
+            role: plan.facets.map(([, v]) => v).join('+') || (plan.q && displayQuery(plan.q)),
             kind: 'completion',
           });
-          filters.applyParts(plan.facets, plan.q ?? '');
+          filters.applyParts(plan.facets, plan.q ?? '', plan.qFields ?? null);
         },
       },
       openFilters: () => (modalOpen = true),
@@ -502,7 +503,7 @@
       const searchKey = filtersToParams(filters.applied).toString();
       if (!firstRun && searchKey !== lastSearchKey) {
         track('search', {
-          q: filters.applied.q.trim(),
+          q: displayQuery(filters.applied.q.trim()),
           facets: activeFilterCount(filters.applied),
         });
       }

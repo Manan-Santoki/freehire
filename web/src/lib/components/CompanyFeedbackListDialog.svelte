@@ -6,6 +6,7 @@
   import { Paginator } from '$lib/paginated.svelte';
   import type { CompanyFeedback } from '$lib/types';
   import { Button, Dialog } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { formatDate } from '$lib/utils';
   import { LoadMore } from '$lib/ui';
 
@@ -109,7 +110,7 @@
             {/if}
           </div>
           <p class="mt-2 whitespace-pre-wrap text-sm">{item.body}</p>
-          <p class="mt-1.5 text-xs text-muted-foreground">{item.author} · {formatDate(item.created_at)}</p>
+          <p class="mt-1.5 text-xs text-muted-foreground">{item.author} · {formatDate(item.created_at, locale())}</p>
           {#if reportingId === item.id}
             <div class="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/40 p-2">
               <select

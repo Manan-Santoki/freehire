@@ -236,6 +236,14 @@ services:
     environment:
       ORIGIN: "${WEB_ORIGIN:-http://localhost:8090}"
       API_INTERNAL_URL: "http://app:8080"
+      # This deployment is a private mirror of freehire.me, so it must not be
+      # indexed alongside it: two crawlable copies of one catalogue is duplicate
+      # content that helps neither. "true" makes /robots.txt a blanket Disallow
+      # for every agent (web/src/lib/robots.ts). Defaulted HERE rather than left
+      # to the Dokploy env because it is a property of this deployment, not a
+      # per-run setting, and this compose file is already fork-only. Set
+      # ROBOTS_DISALLOW_ALL=false in the env to override.
+      ROBOTS_DISALLOW_ALL: "${ROBOTS_DISALLOW_ALL:-true}"
     depends_on:
       - app
 

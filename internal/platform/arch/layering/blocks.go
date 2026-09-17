@@ -159,6 +159,12 @@ var blocks = map[string][]string{
 		"dictgap",
 		"ghost", "ghostreport", "job", "jobdedup",
 		"jobderive", "jobfacts", "jobhash", "jobreality", "jobview", "liveness",
+		// logodomain builds the company-name-to-domain map the logo proxy consults. It
+		// is here and not in dict because it is not a dictionary: it reads the stored
+		// company website and whatever spellings the catalogue happens to hold, which
+		// are facts about companies and postings — the same footing as wikicompany
+		// below.
+		"logodomain",
 		"outboundurl", "privatejob",
 		// recentfeed polls recent_feed_outbox and groups the batch by
 		// jobhash.NormalizedRoleTitle for the homepage's live "recently added"
@@ -203,7 +209,8 @@ var blocks = map[string][]string{
 	"ingest": {
 		"adzunadesc", "applyform", "atsboard", "atsdetect", "boardcatalog", "boardresolve",
 		"catalogstats", "contribution", "ingestsched", "jdresolve", "linkimport", "linksource",
-		"moderation", "pipeline", "screeninganswers", "sources", "submission", "telegram",
+		"moderation", "pipeline", "screeninganswers", "sources", "sourcestats", "submission",
+		"telegram",
 	},
 	// socialdigest is here and not in ingest because it is outbound engagement — the
 	// same shape as broadcast and notify, differing only in that its audience is the
@@ -227,6 +234,12 @@ var blocks = map[string][]string{
 		// in job, because what it stores is what a PERSON reported, not a property the
 		// catalogue derived — the same reason report and vote are here.
 		"processreport", "pushnotify",
+		// prowelcome is here rather than beside billing for the same reason discordlink
+		// is: it is outbound engagement (a one-time email), not subscription logic. It
+		// reads a tier resolved elsewhere (plan.TierOf, same as discordlink) and never
+		// imports identity/billing at all — the reconciling worker that calls it reads
+		// the entitlement columns directly.
+		"prowelcome",
 		"referral", "reminder", "report", "socialdigest", "subscription",
 		"telegramnotify", "vote", "webhooknotify",
 	},
@@ -237,7 +250,11 @@ var blocks = map[string][]string{
 	// assembler), so it keeps handler's own reach; atsapply is cmd/auto-apply's
 	// counterpart to handler — the orchestration layer a cron entrypoint composes
 	// ingest+candidate+ai through, the same role handler plays for an HTTP request.
-	"api": {"atsapply", "candidateprofile", "handler", "ogimage", "ratelimit", "realtime"},
+	// ojcp is the projection into the Open Job Context Protocol's wire shapes. It sits in
+	// api rather than in job beside jobview because it is a foreign schema's rendering of
+	// our catalogue, not a shape the catalogue itself owns — and because it reads job,
+	// ingest (the captured apply form) and search together, which only api may do.
+	"api": {"atsapply", "candidateprofile", "handler", "ogimage", "ojcp", "ojcpmcp", "ratelimit", "realtime"},
 }
 
 // Assignment is the flattened package → block view the move script drives from.

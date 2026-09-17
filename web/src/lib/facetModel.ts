@@ -93,6 +93,28 @@ export interface JobFilters {
    *  into a text search and date-order it — the exact outcome design.md rejects. Read
    *  this through effectiveSort, never directly. */
   sort: JobSort | null;
+  /** Restricts `q` to a named subset of the search's usual fields (title, company,
+   *  description, location) — set only by a title suggestion's `applyParts` call
+   *  (see `filtersWithParts`), so the count it displayed (an exact-title-match count)
+   *  approximates what searching actually returns instead of a much wider match
+   *  across all four fields. `null`, not an empty array, spells "no restriction" —
+   *  the same convention `salaryMin`/`postedWithinDays` use — and it is cleared
+   *  whenever `q` is set independently (typing, the header's Enter, its clear
+   *  button; see `FilterStore.setQuery`/`commitQuery`), so the restriction never
+   *  outlives the search it was scoped to. Mirrors `q_fields` in
+   *  internal/search/search/query_params.go. */
+  qFields: string[] | null;
+}
+
+/** Strips a title suggestion's Meilisearch quoting wrapper (see `apiSuggestions.ts`'s
+ *  `quoteForTitleSearch`) from a query before showing it to a person: a filter chip,
+ *  the header search box, an analytics event. The wrapper is a query-construction
+ *  detail — it decides how Meilisearch matches `q`, not what the visitor typed or
+ *  should read back. Mirrors `demandKey` in internal/api/handler/search.go, which
+ *  strips the same wrapper for a different reason (demand-tracking key
+ *  normalisation). */
+export function displayQuery(q: string): string {
+  return q.length >= 2 && q.startsWith('"') && q.endsWith('"') ? q.slice(1, -1) : q;
 }
 
 /** The feed's ordering vocabulary. Deliberately short: this is not a general sort
@@ -228,6 +250,7 @@ export function emptyFilters(): JobFilters {
     openWithinDays: null,
     experienceYearsMax: null,
     sort: null,
+    qFields: null,
   };
 }
 
@@ -237,6 +260,7 @@ export function emptyFilters(): JobFilters {
 export function filtersToParams(f: JobFilters): URLSearchParams {
   const p = new URLSearchParams();
   if (f.q) p.set('q', f.q);
+  if (f.qFields?.length) p.set('q_fields', f.qFields.join(','));
   for (const def of FACETS) {
     const st = f.facets[def.param];
     if (!st) continue;
@@ -299,6 +323,8 @@ function positiveDays(raw: string | null): number | null {
 export function filtersFromParams(p: URLSearchParams): JobFilters {
   const f = emptyFilters();
   f.q = p.get('q') ?? '';
+  const qFields = splitParamValues(p.getAll('q_fields'));
+  f.qFields = qFields.length > 0 ? qFields : null;
   for (const def of FACETS) {
     // URL params aren't guaranteed unique (shared/edited links, crawlers), but a
     // facet's values are a set — the store's transitions enforce that on user
@@ -440,17 +466,62 @@ export function facetRemove(st: FacetState, v: string): FacetState {
  *  and the intermediate URL would be a search nobody asked for.
  *
  *  The typed text is replaced rather than kept: the parts ARE what was typed, resolved.
- *  A `title` part carries it back as `q`, since no facet spells "Product Owner". */
+ *  A `title` part carries it back as `q`, since no facet spells "Product Owner".
+ *
+ *  `qFields` is replaced too, not merged: a previous suggestion's title-field
+ *  restriction (see `JobFilters.qFields`) must not silently carry over onto a new
+ *  suggestion that names no title of its own, so a missing/empty argument here
+ *  clears it rather than leaving the prior value in place. */
 export function filtersWithParts(
   f: JobFilters,
   parts: readonly (readonly [param: string, value: string])[],
   q: string,
+  qFields: readonly string[] | null = null,
 ): JobFilters {
   const facets = { ...f.facets };
   for (const [param, value] of parts) {
     facets[param] = facetSetSign(facets[param] ?? emptyFacet(), value, 'include');
   }
-  return { ...f, q, facets };
+  return { ...f, q, qFields: qFields?.length ? [...qFields] : null, facets };
+}
+
+// How many characters each profile list may contribute to a profile-derived query.
+//
+// Skills are the reason this exists: a profile may hold up to 200 skills and,
+// independently, up to 200 excluded skills (userprofile.go's own `maxSkills`), each up to
+// 64 characters — free text, with no dictionary check behind it. Fed straight through,
+// that pair could add close to 25,000 characters, blowing well past the saved-search
+// service's own length bound (internal/search/savedsearch's `maxQueryLen`, 4000) before
+// the rest of the filter got a chance to matter — the toggle this seeds
+// (ProfileAlertToggle) would then fail outright with a raw "query is too long" error.
+//
+// Excluded sources carry the SAME cap (maxExcludedCount == maxSkills), so they need a
+// budget for the same reason — but a much smaller one. A source key is a crawl adapter's
+// name, ~12 characters, and a person avoids a handful rather than a career's worth; 200
+// characters covers a dozen and keeps the total comfortably clear of maxQueryLen now that
+// three lists share it rather than two.
+const SKILL_CHAR_BUDGET = 800;
+const SOURCE_CHAR_BUDGET = 200;
+
+/** Values from `values`, in the profile's own order, until `maxChars` is spent.
+ *
+ *  Bounded by total character count rather than item count: a real pick from the skill
+ *  autocomplete runs ~8 characters, so the budget comfortably covers a rich real-world
+ *  profile while still capping the free-text worst case. Stops at a whole value rather
+ *  than truncating one mid-string — half a source key filters on a source that does not
+ *  exist. */
+function charBudget(values: string[], maxChars: number): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const raw of values) {
+    const v = raw.trim();
+    if (!v) continue;
+    const cost = v.length + (out.length > 0 ? 1 : 0); // +1 for the joining comma
+    if (used + cost > maxChars) break;
+    out.push(v);
+    used += cost;
+  }
+  return out;
 }
 
 /** Build a fresh filter set seeded from a user profile — the reset-and-seed behind
@@ -463,19 +534,34 @@ export function filtersWithParts(
  *  base ∪ relocation targets; cities from the base ∪ relocation targets; and `relocation`
  *  staged as supported+required when the user is open to relocating. The flatten is lossy
  *  (base vs relocation merge) — the filter is a convenience narrowing of "places relevant to
- *  me". Trimming/dedup come free from facetAdd, so unions of overlapping lists are safe. */
+ *  me". Trimming/dedup come free from facetAdd, so unions of overlapping lists are safe.
+ *  Avoided SOURCES become excluded `source` values; unlike skills they have no wanted
+ *  counterpart, so there is no overlap rule to apply. Both lists are bounded by
+ *  `charBudget` before seeding — see its own comment. */
 export function filtersFromProfile(profile: UserProfile): JobFilters {
   const seed = (values: string[]) => values.reduce(facetAdd, emptyFacet());
   const f = emptyFilters();
   f.facets.category = seed(profile.specializations);
   // Skills: wanted → include, avoided → exclude. Only stage an exclude for a token not
   // already wanted (signOf === 'off'), so a stray overlap keeps the wanted value.
-  f.facets.skills = (profile.excluded_skills ?? []).reduce(
+  f.facets.skills = charBudget(profile.excluded_skills ?? [], SKILL_CHAR_BUDGET).reduce(
     (st, raw) => {
       const v = raw.trim();
       return v && signOf(st, v) === 'off' ? facetSetSign(st, v, 'exclude') : st;
     },
-    seed(profile.skills),
+    seed(charBudget(profile.skills, SKILL_CHAR_BUDGET)),
+  );
+
+  // Sources: avoided → excluded. No wanted counterpart exists, so nothing to reconcile —
+  // every value goes in as an exclude. Until this line the profile's excluded_sources were
+  // stored and read by nobody, which made the profile's own "Sources to avoid" card a
+  // control that changed no result anywhere.
+  f.facets.source = charBudget(profile.excluded_sources ?? [], SOURCE_CHAR_BUDGET).reduce(
+    (st, raw) => {
+      const v = raw.trim();
+      return v ? facetSetSign(st, v, 'exclude') : st;
+    },
+    emptyFacet(),
   );
 
   const loc = profile.location_preferences;

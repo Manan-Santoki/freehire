@@ -5,6 +5,7 @@
   import { communityFormError } from '$lib/community';
   import type { CommunityReply } from '$lib/types';
   import { Button } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import Self from './ReplyNode.svelte';
 
@@ -71,7 +72,7 @@
 </script>
 
 <div class="node" style={`margin-left:${indent}px`}>
-  <p class="node__meta">{reply.author} · {timeAgo(reply.created_at)}</p>
+  <p class="node__meta">{reply.author} · {timeAgo(reply.created_at, locale())}</p>
   <p class="node__body">{reply.body}</p>
 
   {#if !closed}

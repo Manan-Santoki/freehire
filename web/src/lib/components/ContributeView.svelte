@@ -130,10 +130,10 @@
                 <span class="truncate text-xs text-muted-foreground">
                   {#if c.status === 'review'}
                     <span class="font-medium text-foreground">{s.underReview}</span>
-                    · {s.notCreditedYet} · {timeAgo(c.created_at)}{surfaceLabel(c.surface)}
+                    · {s.notCreditedYet} · {timeAgo(c.created_at, locale())}{surfaceLabel(c.surface)}
                   {:else}
                     {c.source} · {s.contributedPrefix}
-                    {timeAgo(c.created_at)}{surfaceLabel(c.surface)}
+                    {timeAgo(c.created_at, locale())}{surfaceLabel(c.surface)}
                   {/if}
                 </span>
               </div>

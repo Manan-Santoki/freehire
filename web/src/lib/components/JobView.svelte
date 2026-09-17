@@ -19,7 +19,7 @@
   import { autoApplyButtonState, jobCtaPlan, type JobCtaPlan } from '$lib/autoApplyButton';
   import { onboardingUrl } from '$lib/onboardingGate.svelte';
   import { promptSignIn } from '$lib/signin';
-  import { filterHref, formatSalary, summaryFacets } from '$lib/enrichment';
+  import { formatSalary, summaryFacets } from '$lib/enrichment';
   import { freshnessBadges } from '$lib/freshness';
   import { markViewed } from '$lib/viewedJobs.svelte';
   import { markSaved, markUnsaved } from '$lib/savedJobs.svelte';
@@ -28,14 +28,16 @@
   import type { Display } from '$lib/generated/contracts';
   import type { Job, PlanState, UserJob } from '$lib/types';
   import { companyLogoUrl } from '$lib/logo';
-  import { Badge, Button, Chip, EntityLogo, TabStrip, tabStripId } from '$lib/ui';
+  import { profileStore } from '$lib/profile.svelte';
+  import { Button, Chip, EntityLogo, TabStrip, tabStripId } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { formatDate, formatDateOrAgo, formatDateTime } from '$lib/utils';
   import AddToListButton from './AddToListButton.svelte';
-  import AdzunaAttribution from './AdzunaAttribution.svelte';
   import BackerBadge from './BackerBadge.svelte';
   import CountryFlagStack from './CountryFlagStack.svelte';
   import JobApplyForm, { applyFormWorthShowing } from './JobApplyForm.svelte';
   import JobCompanyPanel from './JobCompanyPanel.svelte';
+  import JobSourceRow from './JobSourceRow.svelte';
   import JobDescription from './JobDescription.svelte';
   import JobMatch from './JobMatch.svelte';
   import { supersedesReality } from '$lib/ghost';
@@ -96,12 +98,12 @@
   // Both read as an age for their first day ("20 minutes ago") and as a date after it —
   // the same label the feed's card already gives a posting, so a reader arriving from
   // the list meets the answer in the form they just left.
-  const posted = $derived(formatDateOrAgo(job.posted_at, 'short'));
+  const posted = $derived(formatDateOrAgo(job.posted_at, locale(), 'short'));
   // When the posting's own content last changed. `jobs.updated_at` is deliberately left
   // unstamped by the liveness refresh (internal/platform/db/queries/jobs.sql), so the column
   // means "the words moved", not "the crawler came back" — which is the only reading that
   // earns a line beside the posting date.
-  const updated = $derived(formatDateOrAgo(job.updated_at, 'short'));
+  const updated = $derived(formatDateOrAgo(job.updated_at, locale(), 'short'));
   const e = $derived(job.enrichment ?? {});
   const salary = $derived(formatSalary(e));
   const facets = $derived(summaryFacets(job));
@@ -216,6 +218,9 @@
     justApplied = false;
     showSignInPrompt = false;
     if (!isAuthenticated()) return; // effects run client-only, so no browser guard needed
+    // The Avoid control below reads the profile's excluded_sources; without this its mark
+    // would be wrong on a first load until something else happened to fetch the profile.
+    profileStore.ensureLoaded();
     api.recordJobView(slug)
       .then((rec) => {
         // Mark it locally so its card dims on back-navigation without a reload.
@@ -479,7 +484,7 @@
       {#if posted}
         <span
           class="inline-flex items-center gap-1 whitespace-nowrap"
-          title={`Posted ${formatDateTime(job.posted_at)}`}
+          title={`Posted ${formatDateTime(job.posted_at, locale())}`}
         >
           <Clock class="size-3.5 shrink-0" aria-hidden="true" />
           <span class="sr-only">Posted</span>
@@ -488,7 +493,7 @@
         {#if updated && updated !== posted}
           <span
             class="inline-flex items-center gap-1 whitespace-nowrap"
-            title={`Updated ${formatDateTime(job.updated_at)}`}
+            title={`Updated ${formatDateTime(job.updated_at, locale())}`}
           >
             <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
             <span class="sr-only">Updated</span>
@@ -668,7 +673,7 @@
            and a chip on its own row read as a headline. The ghost checklist stays below
            the title — it is a disclosure with a criteria list inside, not a chip, and it
            supersedes this badge rather than joining it. -->
-      {#if !supersedesReality(job.ghost)}
+      {#if !supersedesReality(job.ghost, locale())}
         <RealityBadge reality={job.reality} detailed />
       {/if}
 
@@ -744,7 +749,7 @@
          meets the hedge before the pitch rather than after they have already invested
          the reading. The caveat itself now lives on /features/ghost-jobs — the row
          carries the ceiling on the claim ("possibly", two of four), not the essay. -->
-    {#if supersedesReality(job.ghost)}
+    {#if supersedesReality(job.ghost, locale())}
       <GhostChecklist ghost={job.ghost} />
     {/if}
 
@@ -809,28 +814,9 @@
         </dl>
       {/if}
 
-      <!-- Where the posting came from. One row since the engagement counters left it for
-           the provenance line up beside the title; the `flex-col` wrapper that held the two
-           apart went with them. -->
-      <div
-        class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 border-t border-border pt-4 text-xs text-muted-foreground first:border-t-0 first:pt-0"
-      >
-<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- internal /jobs filter link from filterHref; query-only, no route to resolve -->
-        <a href={filterHref('source', job.source)} class="inline-flex">
-          <Badge variant="outline" class="transition-colors hover:bg-accent hover:text-foreground">
-            {job.source}
-          </Badge>
-        </a>
-        {#if job.source === 'adzuna'}
-          <!-- Required by Adzuna's API terms, not a courtesy credit — see the component. It
-               sits in the provenance row beside the source chip, which is where a reader
-               already looks to find out where a posting came from. -->
-          <AdzunaAttribution jobUrl={job.url} />
-        {/if}
-        {#if job.manually_added}
-          <Badge variant="secondary">Manually added</Badge>
-        {/if}
-      </div>
+      <!-- Where the posting came from, and the control to stop seeing that source. One row
+           since the engagement counters left it for the provenance line up beside the title. -->
+      <JobSourceRow source={job.source} jobUrl={job.url} manuallyAdded={job.manually_added} />
 
       <div class="border-t border-border pt-4 first:border-t-0 first:pt-0">
         <div class="flex justify-center">
@@ -915,7 +901,7 @@
     </div>
 
     {#if job.closed_at}
-      {@const closed = formatDate(job.closed_at)}
+      {@const closed = formatDate(job.closed_at, locale())}
       <div class="rounded-md border border-border bg-secondary px-4 py-3 text-sm">
         This position is no longer accepting applications{#if closed}
           (closed {closed}){/if}.

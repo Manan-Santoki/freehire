@@ -4,21 +4,29 @@
   // the Roles card and the Skills view do.
   import { profileStore } from '$lib/profile.svelte';
   import type { UserProfile } from '$lib/types';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './LocationCard.messages';
   import LocationPreferencesFields from './LocationPreferencesFields.svelte';
 
   let { profile, onProfileChanged }: { profile: UserProfile; onProfileChanged?: () => void } = $props();
 
+  const s = $derived(t(messages, locale()));
+
   let busy = $state(false);
-  let error = $state<string | null>(null);
+  // A flag, not the message itself — the message must stay derived from `s` so it
+  // follows a later locale change (e.g. the account-language card next to this one)
+  // instead of freezing in whatever locale was resolved when the save failed.
+  let hasError = $state(false);
 
   async function save(next: Parameters<typeof profileStore.updateLocation>[0]) {
     busy = true;
-    error = null;
+    hasError = false;
     try {
       await profileStore.updateLocation(next);
       onProfileChanged?.();
     } catch {
-      error = 'Could not update your location. Try again.';
+      hasError = true;
     } finally {
       busy = false;
     }
@@ -31,7 +39,7 @@
     derivedLocation={profile.derived_location}
     onChange={save}
   />
-  {#if error}
-    <p class="text-sm text-destructive">{error}</p>
+  {#if hasError}
+    <p class="text-sm text-destructive">{s.saveError}</p>
   {/if}
 </div>

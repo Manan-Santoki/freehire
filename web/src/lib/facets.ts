@@ -29,6 +29,7 @@ import { COLLECTIONS } from './collections';
 import { TIMEZONE_REGIONS } from './talentFacetModel';
 import { backerBadges } from './backers';
 import { api } from './api';
+import { sourceLogoUrl } from './logo';
 
 export interface FacetOption {
   value: string;
@@ -122,6 +123,12 @@ export interface FacetDef {
    * coincidentally collide with a tech mark's key (a company named "Docker").
    */
   techIcons?: boolean;
+  /**
+   * Show the option's brand mark (via EntityLogo, resolved from its display label
+   * through the logo proxy) beside its label — set only by the source facet, whose
+   * values are ATS/aggregator names the proxy actually resolves.
+   */
+  entityLogos?: boolean;
 }
 
 // Resolve an ISO 3166-1 alpha-2 code to an English country name via platform Intl
@@ -177,7 +184,7 @@ function companyLabel(slug: string): string {
 // distribution (which Meili caps at 300 values and returns alphabetically — so
 // popular employers never surface). An empty query returns the most active
 // companies (the endpoint's first page).
-async function companySearch(query: string): Promise<FacetOption[]> {
+export async function companySearch(query: string): Promise<FacetOption[]> {
   const { items } = await api.listCompanies(query, 20, 0);
   return items.map((c) => ({ value: c.slug, label: c.name, count: c.job_count }));
 }
@@ -277,6 +284,15 @@ export function reportedCount(n: number): number | undefined {
   return n < 0 ? undefined : n;
 }
 
+/** Brand-mark URL for a dynamic facet value, where the facet's values are entity
+ *  names the logo proxy can resolve — today only `source` (see EntityLogo /
+ *  sourceLogoUrl, the same pair /sources and JobSourceRow render their marks with).
+ *  Other dynamic facets (skills, countries, cities) have no logo proxy to ask. */
+function dynamicIcon(param: string, value: string): string | undefined {
+  if (param === 'source') return sourceLogoUrl(sourceLabel(sourceLogoBrand(value))) ?? undefined;
+  return undefined;
+}
+
 /** Build select options for a dynamic facet from its live distribution (value →
  *  count) plus any already-selected values (so a selection absent from the current
  *  distribution stays listed and removable), labelled via dynamicLabel and sorted
@@ -285,8 +301,29 @@ export function reportedCount(n: number): number | undefined {
 export function dynamicOptions(param: string, dist: Record<string, number>, selected: string[]): FacetOption[] {
   const keys = new Set<string>([...Object.keys(dist), ...selected]);
   return [...keys]
-    .map((value) => ({ value, label: dynamicLabel(param, value), count: reportedCount(dist[value] ?? 0) }))
+    .map((value) => ({
+      value,
+      label: dynamicLabel(param, value),
+      count: reportedCount(dist[value] ?? 0),
+      icon: dynamicIcon(param, value),
+    }))
     .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.label.localeCompare(b.label));
+}
+
+/** Fetch one dynamic facet's live distribution and shape it into sorted typeahead
+ *  options — the shared body behind skillDictionary.ts and sourceDictionary.ts (each
+ *  a thin, differently-named wrapper so callers import "the skills dictionary" /
+ *  "the source dictionary" rather than a bare param string). `opts.facets` narrows the
+ *  request to just this facet, when the caller has no other use for the rest. Best-effort:
+ *  any failure (network, decode) resolves to an empty list rather than throwing, so a
+ *  caller can render "nothing to suggest yet" instead of an error. */
+export async function loadFacetDistribution(param: string, opts?: { facets?: string[] }): Promise<FacetOption[]> {
+  try {
+    const counts = await api.facetCounts(new URLSearchParams(), opts);
+    return dynamicOptions(param, counts.facets?.[param] ?? {}, []);
+  } catch {
+    return [];
+  }
 }
 
 // Role slugs carry an optional seniority grade prefix (senior_backend); the
@@ -316,22 +353,38 @@ function options(values: readonly string[], labels: Record<string, string> = {})
 
 // Label overrides for the source facet, where the display name differs from the
 // title-cased fallback (e.g. "smartrecruiters" → "SmartRecruiters"). A new ATS
-// adapter needs no entry unless its casing is special. Used by sourceLabel for the
-// dynamic (distribution-driven) source select, so a source with a real job count
-// renders with its proper name.
+// adapter needs no entry unless its casing is special — EXCEPT a slug that
+// concatenates several English words with no separator (weworkremotely,
+// nofluffjobs), which the fallback cannot split correctly at all and so always
+// needs one. Used by sourceLabel for the dynamic (distribution-driven) source
+// select, so a source with a real job count renders with its proper name.
 const SOURCE_LABELS: Record<string, string> = {
   telegram: 'Telegram', greenhouse: 'Greenhouse', smartrecruiters: 'SmartRecruiters',
   bamboohr: 'BambooHR', successfactors: 'SuccessFactors',
   workatastartup: 'Work at a Startup', remoteok: 'RemoteOK', arc: 'Arc',
   jobstash: 'JobStash', globalpayments: 'Global Payments',
   usajobs: 'USAJobs', whatjobs: 'WhatJobs', ukgready: 'UKG Ready',
-  edjoin: 'EDJOIN',
+  edjoin: 'EDJOIN', weworkremotely: 'We Work Remotely', hackernews: 'Hacker News',
+  cryptocurrencyjobs: 'Cryptocurrency Jobs', landingjobs: 'Landing.Jobs',
+  getonbrd: 'Get on Board', mycareersfuture: 'My Careers Future',
+  nofluffjobs: 'No Fluff Jobs', powertofly: 'PowerToFly',
 };
 
 /** Display label for a source slug (e.g. smartrecruiters → "SmartRecruiters"),
- *  used by the dynamic source select; falls back to the title-cased slug. */
+ *  used by the dynamic source select; falls back to the title-cased slug, with
+ *  hyphens normalised to word breaks first (the same convention companyLabel and
+ *  skillLabel use) so a regional variant like "whatjobs-ae" reads as "Whatjobs Ae"
+ *  rather than one unbroken word. */
 export function sourceLabel(value: string): string {
-  return SOURCE_LABELS[value] ?? titleCase(value);
+  return SOURCE_LABELS[value] ?? titleCase(value.replace(/-/g, '_'));
+}
+
+// The whatjobs-<country> boards (~40 of them) are one crawl adapter's regional
+// splits of a single brand, not distinct companies — WhatJobs itself is the only
+// one with a mark the logo proxy can resolve. Used only for the LOGO lookup, never
+// the label: a picker listing every region needs each one to stay distinguishable.
+function sourceLogoBrand(value: string): string {
+  return value.startsWith('whatjobs-') ? 'whatjobs' : value;
 }
 
 // The backend's `regions` reach vocabulary (vocab.RegionValues): one consistent
@@ -665,5 +718,5 @@ export const FACETS: FacetDef[] = [
   { param: 'reality', label: 'Posting reality', control: 'pills', options: REALITY, excludable: true },
   { param: 'salary_currency', label: 'Currency', control: 'pills', options: CURRENCY, excludable: true },
   { param: 'company_slug', label: 'Company', control: 'remote', excludable: true, placeholder: 'Search companies', remote: companySearch },
-  { param: 'source', label: 'Source', control: 'select', dynamic: true, excludable: true, placeholder: 'Search sources' },
+  { param: 'source', label: 'Source', control: 'select', dynamic: true, excludable: true, placeholder: 'Search sources', entityLogos: true },
 ];

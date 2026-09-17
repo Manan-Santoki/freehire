@@ -81,6 +81,13 @@ func (h *statsHandlers) register(api fiber.Router) {
 	// A per-provider health rollup over board_health, sanitized (no error text or
 	// board identifiers); the /status page renders it as a status board.
 	api.Get("/status", h.IngestStatus)
+
+	// Public source catalogue, unauthenticated like the other public reads. The same
+	// board_health rollup /status reads, joined with the per-source snapshot
+	// (cmd/rollup-stats) and classified through the adapter registry; the /sources page
+	// renders it as a searchable catalogue. Sanitized the same way /status is — no board
+	// identifier, no error text, no posting URL.
+	api.Get("/sources", h.Sources)
 }
 
 // dateLayout is the wire format for every date the activity endpoint reads and
@@ -233,11 +240,23 @@ func (h *statsHandlers) EngagementStats(c *fiber.Ctx) error {
 		return err
 	}
 
+	// `viewed` covers only the days the rollup actually recorded page views for, which
+	// is not the life of the site — migration 0138 added the column without a backfill
+	// and the nginx history it would need is past logrotate's window. Publishing the
+	// window beside the number is what keeps the figure from reading as all-time; null
+	// means nothing has been rolled up yet, and a caller that ignores the field is no
+	// worse off than before it existed.
+	var viewedSince any
+	if s.ViewedSince.Valid {
+		viewedSince = s.ViewedSince.Time.Format(dateLayout)
+	}
+
 	return c.JSON(fiber.Map{
 		"data": fiber.Map{
 			"saved":             s.Saved,
 			"applied":           s.Applied,
 			"viewed":            s.Viewed,
+			"viewed_since":      viewedSince,
 			"cvs_uploaded":      s.CvsUploaded,
 			"cvs_tailored":      s.CvsTailored,
 			"match_analyses":    s.MatchAnalyses,

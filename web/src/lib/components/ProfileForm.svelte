@@ -58,11 +58,6 @@
   let specializations = $state.raw<string[]>(profile ? [...profile.specializations] : []);
   // svelte-ignore state_referenced_locally
   let skills = $state.raw<string[]>(profile ? [...profile.skills] : []);
-  // Skills to avoid — seeded into the jobs filter's skills EXCLUDE set by "Apply my
-  // profile". Optional (an empty set is valid), kept disjoint from `skills` (a skill can't
-  // be both wanted and avoided — the server enforces this too, dropping any overlap).
-  // svelte-ignore state_referenced_locally
-  let excludedSkills = $state.raw<string[]>(profile ? [...(profile.excluded_skills ?? [])] : []);
   let formError = $state<string | null>(null);
   let busy = $state(false);
 
@@ -212,19 +207,15 @@
     skills = skills.includes(value) ? skills.filter((s) => s !== value) : [...skills, value];
   }
 
-  function toggleExcludedSkill(value: string) {
-    excludedSkills = excludedSkills.includes(value)
-      ? excludedSkills.filter((s) => s !== value)
-      : [...excludedSkills, value];
-  }
-
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     if (!canSubmit || busy) return;
     busy = true;
     formError = null;
     try {
-      await profileStore.save(specializations, skills, profile?.seniorities ?? [], excludedSkills, location);
+      // Skills/sources/companies to avoid are not offered during this pre-profile
+      // set-up — they're edited on the dedicated Avoid tab once the profile exists.
+      await profileStore.save(specializations, skills, profile?.seniorities ?? [], [], [], [], location);
       onSaved?.();
     } catch (err) {
       formError =
@@ -339,7 +330,7 @@
          exists Roles/Skills/Location move to their own views, autosaving there instead of
          behind a Save button. -->
     <form onsubmit={submit} class="flex flex-col gap-6 border-t border-border pt-6">
-      <SkillsPicker {skills} {excludedSkills} onToggleSkill={toggleSkill} onToggleExcluded={toggleExcludedSkill} />
+      <SkillsPicker {skills} onToggleSkill={toggleSkill} />
 
       <div class="flex flex-col gap-2">
         <div class="flex items-baseline justify-between">

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,8 @@ type profileUpsert struct {
 	Skills              []string
 	Seniorities         []string
 	ExcludedSkills      []string
+	ExcludedSources     []string
+	ExcludedCompanies   []string
 	LocationPreferences json.RawMessage
 }
 
@@ -40,15 +43,15 @@ type fakeProfileRepo struct {
 func (f *fakeProfileRepo) Get(context.Context, int64) (userprofile.Profile, error) {
 	return f.getRet, f.getErr
 }
-func (f *fakeProfileRepo) Upsert(_ context.Context, userID int64, specializations, skills, seniorities, excludedSkills []string, locationPreferences json.RawMessage) (userprofile.Profile, error) {
-	f.upserted = profileUpsert{UserID: userID, Specializations: specializations, Skills: skills, Seniorities: seniorities, ExcludedSkills: excludedSkills, LocationPreferences: locationPreferences}
+func (f *fakeProfileRepo) Upsert(_ context.Context, userID int64, specializations, skills, seniorities, excludedSkills, excludedSources, excludedCompanies []string, locationPreferences json.RawMessage) (userprofile.Profile, error) {
+	f.upserted = profileUpsert{UserID: userID, Specializations: specializations, Skills: skills, Seniorities: seniorities, ExcludedSkills: excludedSkills, ExcludedSources: excludedSources, ExcludedCompanies: excludedCompanies, LocationPreferences: locationPreferences}
 	return f.upsertRet, nil
 }
 
 // UpsertIfUnchanged is exercised by userprofile's own tests (MergeSkills' retry loop);
 // no handler here calls MergeSkills, so this fake just satisfies the interface.
-func (f *fakeProfileRepo) UpsertIfUnchanged(_ context.Context, userID int64, specializations, skills, seniorities, excludedSkills []string, locationPreferences json.RawMessage, _ time.Time) (userprofile.Profile, error) {
-	f.upserted = profileUpsert{UserID: userID, Specializations: specializations, Skills: skills, Seniorities: seniorities, ExcludedSkills: excludedSkills, LocationPreferences: locationPreferences}
+func (f *fakeProfileRepo) UpsertIfUnchanged(_ context.Context, userID int64, specializations, skills, seniorities, excludedSkills, excludedSources, excludedCompanies []string, locationPreferences json.RawMessage, _ time.Time) (userprofile.Profile, error) {
+	f.upserted = profileUpsert{UserID: userID, Specializations: specializations, Skills: skills, Seniorities: seniorities, ExcludedSkills: excludedSkills, ExcludedSources: excludedSources, ExcludedCompanies: excludedCompanies, LocationPreferences: locationPreferences}
 	return f.upsertRet, nil
 }
 func (f *fakeProfileRepo) Delete(context.Context, int64) error { return f.delErr }
@@ -205,6 +208,78 @@ func TestPutProfile_EchoesExcludedSkills(t *testing.T) {
 	}
 	if strings.Join(got.Data.ExcludedSkills, ",") != "wordpress" {
 		t.Errorf("excluded_skills = %v, want [wordpress]", got.Data.ExcludedSkills)
+	}
+}
+
+func TestPutProfile_SavesAndEchoesExcludedSourcesAndCompanies(t *testing.T) {
+	ret := userprofile.Profile{UserID: 1, Specializations: []string{"backend"}, Skills: []string{"go"}, ExcludedSources: []string{"greenhouse"}, ExcludedCompanies: []string{"acme"}}
+	repo := &fakeProfileRepo{upsertRet: ret}
+	app, token := profileApp(t, repo)
+	resp := doProfile(t, app, fiber.MethodPut,
+		`{"specializations":["backend"],"skills":["go"],"excluded_sources":["Greenhouse"],"excluded_companies":["Acme"]}`, token)
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if strings.Join(repo.upserted.ExcludedSources, ",") != "greenhouse" {
+		t.Errorf("excluded_sources upserted = %v, want [greenhouse] (normalized)", repo.upserted.ExcludedSources)
+	}
+	if strings.Join(repo.upserted.ExcludedCompanies, ",") != "acme" {
+		t.Errorf("excluded_companies upserted = %v, want [acme] (normalized)", repo.upserted.ExcludedCompanies)
+	}
+	var got struct {
+		Data profileResponse `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if strings.Join(got.Data.ExcludedSources, ",") != "greenhouse" {
+		t.Errorf("excluded_sources in response = %v, want [greenhouse]", got.Data.ExcludedSources)
+	}
+	if strings.Join(got.Data.ExcludedCompanies, ",") != "acme" {
+		t.Errorf("excluded_companies in response = %v, want [acme]", got.Data.ExcludedCompanies)
+	}
+}
+
+func TestPutProfile_RejectsTooManyExcludedSources(t *testing.T) {
+	repo := &fakeProfileRepo{}
+	app, token := profileApp(t, repo)
+	sources := make([]string, 201)
+	for i := range sources {
+		sources[i] = "source" + strconv.Itoa(i)
+	}
+	body, err := json.Marshal(map[string]any{"specializations": []string{"backend"}, "skills": []string{"go"}, "excluded_sources": sources})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp := doProfile(t, app, fiber.MethodPut, string(body), token)
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+	if repo.upserted.UserID != 0 {
+		t.Error("repo.Upsert should not be called past the excluded-sources cap")
+	}
+}
+
+func TestPutProfile_RejectsTooManyExcludedCompanies(t *testing.T) {
+	repo := &fakeProfileRepo{}
+	app, token := profileApp(t, repo)
+	companies := make([]string, 201)
+	for i := range companies {
+		companies[i] = "company" + strconv.Itoa(i)
+	}
+	body, err := json.Marshal(map[string]any{"specializations": []string{"backend"}, "skills": []string{"go"}, "excluded_companies": companies})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp := doProfile(t, app, fiber.MethodPut, string(body), token)
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+	if repo.upserted.UserID != 0 {
+		t.Error("repo.Upsert should not be called past the excluded-companies cap")
 	}
 }
 

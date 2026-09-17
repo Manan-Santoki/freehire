@@ -1,5 +1,6 @@
 <script lang="ts">
   import { timeAgo, must } from '$lib/utils';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   // A provider key is a source facet code, so it renders through the one label map every
   // other surface uses: a provider must not be "WhatJobs" on the filter panel and
   // "Whatjobs" here.
@@ -296,7 +297,7 @@
                   </span>
                   {#if p.last_run}
                     <span class="text-xs text-muted-foreground" title={p.last_run}>
-                      ran {timeAgo(p.last_run)}
+                      ran {timeAgo(p.last_run, locale())}
                     </span>
                   {/if}
                 </div>

@@ -3,21 +3,16 @@
   import CvSummaryCard from '$lib/components/profile/CvSummaryCard.svelte';
   import ProfileForm from '$lib/components/ProfileForm.svelte';
   import RoleCard from '$lib/components/profile/RoleCard.svelte';
-  import TalentNetworkInvite from '$lib/components/profile/TalentNetworkInvite.svelte';
   import { profileStore } from '$lib/profile.svelte';
   import { handleCvDeleted, handleCvUploaded, handleSaved } from './actions';
 
-  // The default profile section: CV upload/photo, the read-only CV summary, Role, and
-  // the Talent Network invitation.
+  // The default profile section: CV upload/photo, the read-only CV summary, and Role.
+  // The Talent Network invitation moved to the layout, alongside AccountSetupCard.
   const profile = $derived(profileStore.profile);
   const resumeMeta = $derived(resumeStore.meta);
 </script>
 
 {#if profile}
-  <div class="mb-4">
-    <TalentNetworkInvite />
-  </div>
-
   {#key profile.updated_at}
     <ProfileForm
       {profile}

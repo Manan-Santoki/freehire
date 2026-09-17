@@ -15,6 +15,7 @@
   import { foreignContentLang, metaDescription } from '$lib/seo';
   import type { Job, JobCard } from '$lib/types';
   import { Badge, Button, EntityLogo } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { supersedesReality } from '$lib/ghost';
   import CredentialBadge from './CredentialBadge.svelte';
   import BackerBadge from './BackerBadge.svelte';
@@ -109,7 +110,7 @@
   const reality = $derived('reality' in job ? job.reality : undefined);
   const ghost = $derived('ghost' in job ? job.ghost : undefined);
   // How recently it was posted is a key signal, so it leads the header.
-  const posted = $derived(timeAgo(job.posted_at));
+  const posted = $derived(timeAgo(job.posted_at, locale()));
   // How many people have opened the posting — the materialized counter, maintained
   // offline from the access logs (never counted on this read). A card projection does
   // not carry it, so the `in` narrowing is what lets those rows simply omit it, the
@@ -344,7 +345,7 @@
       <!-- evergreen_posting IS the reality verdict, so showing both chips states one
            fact twice, the second time louder. The ghost chip carries it inside its
            checklist; where ghost is silent, reality renders exactly as before. -->
-      {#if supersedesReality(ghost)}
+      {#if supersedesReality(ghost, locale())}
         <GhostBadge {ghost} />
       {:else}
         <RealityBadge {reality} />

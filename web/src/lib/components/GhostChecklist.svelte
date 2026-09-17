@@ -4,6 +4,7 @@
   import { ghostBadge, ghostChecklist, ghostGauge, ghostUnobserved } from '$lib/ghost';
   import type { GhostGaugeTone } from '$lib/ghost';
   import type { Ghost } from '$lib/generated/contracts';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { cn } from '$lib/ui';
 
   // One row for the whole signal: a gauge, the hedged wording, the fired/total scale,
@@ -18,11 +19,11 @@
   // be inactive, and the scale says how much of the evidence is missing.
   let { ghost }: { ghost?: Ghost | null } = $props();
 
-  const badge = $derived(ghostBadge(ghost));
-  const gauge = $derived(ghostGauge(ghost));
-  const rows = $derived(ghost && badge ? ghostChecklist(ghost) : []);
+  const badge = $derived(ghostBadge(ghost, locale()));
+  const gauge = $derived(ghostGauge(ghost, locale()));
+  const rows = $derived(ghost && badge ? ghostChecklist(ghost, locale()) : []);
   const fired = $derived(rows.filter((r) => r.fired));
-  const unobserved = $derived(ghost && badge ? ghostUnobserved(ghost) : '');
+  const unobserved = $derived(ghost && badge ? ghostUnobserved(ghost, locale()) : '');
 
   // Deliberately not reset between jobs. SvelteKit reuses this component across two
   // /jobs/<slug> pages, so a reader who expanded the criteria on one job meets the next

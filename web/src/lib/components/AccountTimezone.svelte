@@ -2,6 +2,11 @@
   import { Check } from '@lucide/svelte';
   import { currentUser, updateTimezone } from '$lib/auth.svelte';
   import { ApiError } from '$lib/api';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './AccountTimezone.messages';
+
+  const s = $derived(t(messages, locale()));
 
   // The account's IANA timezone: read from the resolved session (no extra fetch —
   // it rides GET /me already). Used to interpret a daily search-alert digest time
@@ -34,7 +39,10 @@
 
   let value = $state(currentUser()?.timezone ?? detected);
   let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  let saveError = $state<string | null>(null);
+  // The server's own message when it gave one; `null` means the generic fallback,
+  // resolved from `s` at render time so it follows a later locale change instead
+  // of freezing in whatever locale was resolved when the save failed.
+  let saveErrorMessage = $state<string | null>(null);
   let savedTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Re-seed from the session on a real identity change (sign-in/out, or this
@@ -58,7 +66,7 @@
   async function save() {
     if (!value) return;
     saveState = 'saving';
-    saveError = null;
+    saveErrorMessage = null;
     try {
       await updateTimezone(value);
       saveState = 'saved';
@@ -68,7 +76,7 @@
       }, 1500);
     } catch (e) {
       saveState = 'error';
-      saveError = e instanceof ApiError ? e.message : 'Could not save.';
+      saveErrorMessage = e instanceof ApiError ? e.message : null;
     }
   }
 </script>
@@ -79,18 +87,18 @@
 <div class="flex flex-col gap-3">
   <div class="flex items-center gap-3">
     <div class="min-w-0 flex-1">
-      <h2 class="text-sm font-semibold leading-tight">Timezone</h2>
+      <h2 class="text-sm font-semibold leading-tight">{s.heading}</h2>
       <p class="text-xs text-muted-foreground">
-        Used to schedule a daily search-alert digest and quiet hours at your own local time.
+        {s.description}
       </p>
     </div>
 
     {#if saveState === 'saving'}
-      <span class="text-xs text-muted-foreground">Saving…</span>
+      <span class="text-xs text-muted-foreground">{s.saving}</span>
     {:else if saveState === 'saved'}
-      <span class="flex items-center gap-1 text-xs text-brand-strong"><Check class="size-3.5" aria-hidden="true" /> Saved</span>
+      <span class="flex items-center gap-1 text-xs text-brand-strong"><Check class="size-3.5" aria-hidden="true" /> {s.saved}</span>
     {:else if saveState === 'error'}
-      <span class="text-xs text-destructive">{saveError}</span>
+      <span class="text-xs text-destructive">{saveErrorMessage ?? s.saveFailed}</span>
     {/if}
   </div>
 
@@ -100,7 +108,7 @@
     class="w-full max-w-sm rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     {#if !value}
-      <option value="" disabled selected>Select a timezone</option>
+      <option value="" disabled selected>{s.selectPlaceholder}</option>
     {/if}
     {#each ZONES as zone (zone)}
       <option value={zone}>{zone}</option>

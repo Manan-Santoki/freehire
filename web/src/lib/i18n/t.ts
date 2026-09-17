@@ -116,6 +116,22 @@ export function tokenLabel<T extends Record<string, string>>(section: T, id: str
   return section[id] ?? id;
 }
 
+/** Substitutes `{name}` placeholders in a template string with `params[name]`, so a
+ *  value can sit in the middle of a translated sentence instead of being spliced in
+ *  by concatenating a prefix and a suffix catalog key around it. A placeholder with
+ *  no matching param is left as-is rather than silently dropped, which is easier to
+ *  notice than a blank.
+ *
+ *  Word order and inflection are a property of the LANGUAGE, not of the call site —
+ *  a translation is free to move `{name}` anywhere in its own sentence, or drop it
+ *  if its grammar has no use for the value, without touching the caller. */
+export function format(template: string, params: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => {
+    const value = params[name];
+    return value === undefined ? match : value;
+  });
+}
+
 /** Picks the plural form for `count` in `locale`.
  *
  *  English gets away with `n === 1 ? x : xs`; Russian does not — 1 обращение,

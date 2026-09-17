@@ -74,17 +74,21 @@ export class FilterStore {
     return this.#url.value.facets[param] ?? emptyFacet();
   }
 
-  // Continuous inputs (typed/dragged): debounce the reload via setSoon.
+  // Continuous inputs (typed/dragged): debounce the reload via setSoon. Clears
+  // qFields: a title suggestion's field restriction (see JobFilters.qFields) is
+  // scoped to the search it came from, and must not silently keep narrowing
+  // whatever the visitor types next.
   setQuery(q: string) {
-    this.#url.setSoon({ ...this.#url.value, q });
+    this.#url.setSoon({ ...this.#url.value, q, qFields: null });
   }
 
   /** The header's Enter, its clear button, its free-text row: a discrete act, not a
    *  keystroke. setNow, so the reload does not wait out a debounce window that exists
    *  for typing — and so any timer a previous continuous write left pending is
-   *  cleared rather than landing after this. */
+   *  cleared rather than landing after this. Clears qFields for the same reason
+   *  setQuery does. */
   commitQuery(q: string) {
-    this.#url.setNow({ ...this.#url.value, q });
+    this.#url.setNow({ ...this.#url.value, q, qFields: null });
   }
 
   setSalaryMin(n: number | null) {
@@ -177,9 +181,14 @@ export class FilterStore {
   /** Header completion picked: apply every facet value it names AND its free text in
    *  one discrete write. setNow rather than the debounced write — one filter change,
    *  one reload, and
-   *  no intermediate state where the list is filtered by half a phrase. */
-  applyParts(parts: readonly (readonly [string, string])[], q: string) {
-    this.#url.setNow(filtersWithParts(this.#url.value, parts, q));
+   *  no intermediate state where the list is filtered by half a phrase.
+   *
+   *  `qFields` carries a title suggestion's field restriction (see
+   *  `JobFilters.qFields`) through to the reload, pagination, and facet-count
+   *  requests this store drives — all of which read filter state through
+   *  `filtersToParams`, not the URL a launcher-driven navigation happened to build. */
+  applyParts(parts: readonly (readonly [string, string])[], q: string, qFields: readonly string[] | null = null) {
+    this.#url.setNow(filtersWithParts(this.#url.value, parts, q, qFields));
   }
 
   /** Remove a value from a facet entirely (both sets). */

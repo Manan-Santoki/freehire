@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UserProfile } from '$lib/types';
 import ProfileForm from './ProfileForm.svelte';
 
+// Today's fixture always passes a non-null `profile`, so the `{#if !editing}` branch
+// (SkillsPicker + LocationPreferencesFields, both now locale()-aware) never mounts —
+// but it exists in this file, and without this mock the shared `$app/state` stub
+// (only `{ url }`, no `data`) would throw the moment a future test exercises it.
+vi.mock('$app/state', () => ({ page: { data: {}, url: new URL('http://localhost/') } }));
+
 const { extractResumeProfile, getPhoto, mergeResumeExtraction, profile } = vi.hoisted(() => ({
   extractResumeProfile: vi.fn(),
   getPhoto: vi.fn(),
@@ -12,6 +18,8 @@ const { extractResumeProfile, getPhoto, mergeResumeExtraction, profile } = vi.ho
     skills: ['go'],
     seniorities: [],
     excluded_skills: [],
+    excluded_sources: [],
+    excluded_companies: [],
     location_preferences: null,
     derived_location: null,
     cv: null,

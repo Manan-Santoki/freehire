@@ -8,6 +8,7 @@
   import { currentUser } from '$lib/auth.svelte';
   import type { Submission } from '$lib/types';
   import { Button, cn } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import ReportQueue from './ReportQueue.svelte';
   import ReportedFeedbackQueue from './ReportedFeedbackQueue.svelte';
@@ -196,7 +197,7 @@
                     {s.company}{s.location ? ` · ${s.location}` : ''}{s.remote ? ' · remote' : ''}
                   </span>
                   <span class="truncate text-xs text-muted-foreground">
-                    by {s.submitter_email ?? 'unknown'} · {timeAgo(s.created_at)}
+                    by {s.submitter_email ?? 'unknown'} · {timeAgo(s.created_at, locale())}
                   </span>
                 </div>
                 <div class="flex shrink-0 gap-2">

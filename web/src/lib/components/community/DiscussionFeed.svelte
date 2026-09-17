@@ -6,6 +6,7 @@
   import { companyLogoUrl } from '$lib/logo';
   import type { CommunityFeedThread } from '$lib/types';
   import { Badge, EntityLogo, LoadMore } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
 
   let {
@@ -117,7 +118,7 @@
                 {/if}
               </span>
               <span class="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
-                {timeAgo(t.created_at)}
+                {timeAgo(t.created_at, locale())}
               </span>
             </div>
 

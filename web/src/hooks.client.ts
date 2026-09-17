@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/public';
 import * as Sentry from '@sentry/sveltekit';
+import { isTransientNoise } from '$lib/sentryNoise';
 import { startTrackersIfAllowed } from '$lib/trackers';
 
 // Error tracking is opt-in and env-gated: without PUBLIC_SENTRY_DSN Sentry stays
@@ -19,6 +20,10 @@ if (env.PUBLIC_SENTRY_DSN) {
     // key alone identifies the injected script. Errors-only on a 5k/month quota
     // means noise like this is paid for in dropped real errors.
     ignoreErrors: [/\[['"]@context['"]\]\.toLowerCase/],
+    // A condition is not a defect — see $lib/sentryNoise for the rule and what ignoring it
+    // cost. `ignoreErrors` above cannot serve: it matches the message only, and two of the
+    // conditions (an ApiError's status, an AbortError's name) are not in one.
+    beforeSend: (event, hint) => (isTransientNoise(hint?.originalException) ? null : event),
   });
 }
 

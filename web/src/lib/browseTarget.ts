@@ -25,6 +25,7 @@ import type { Suggestion } from './suggestions';
 export function browseQuery(plan: ApplyPlan): string {
   const f = emptyFilters();
   f.q = plan.q?.trim() ?? '';
+  f.qFields = plan.qFields?.length ? [...plan.qFields] : null;
   for (const [param, value] of plan.facets) {
     f.facets[param] = facetSetSign(f.facets[param] ?? emptyFacet(), value, 'include');
   }

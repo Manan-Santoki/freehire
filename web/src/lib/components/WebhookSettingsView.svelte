@@ -4,6 +4,7 @@
   import { isAuthenticated } from '$lib/auth.svelte';
   import type { WebhookConfig } from '$lib/types';
   import { Button, ConfirmDialog, Input } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import States from './States.svelte';
 
@@ -108,11 +109,11 @@
             <span class="truncate font-mono text-sm">{webhook.url}</span>
             <span class="text-xs text-muted-foreground">
               {#if webhook.enabled}
-                Enabled · created {timeAgo(webhook.created_at)}
-                {#if webhook.last_success_at}· last delivered {timeAgo(webhook.last_success_at)}{/if}
+                Enabled · created {timeAgo(webhook.created_at, locale())}
+                {#if webhook.last_success_at}· last delivered {timeAgo(webhook.last_success_at, locale())}{/if}
               {:else}
                 Disabled
-                {#if webhook.disabled_at}· since {timeAgo(webhook.disabled_at)}{/if}
+                {#if webhook.disabled_at}· since {timeAgo(webhook.disabled_at, locale())}{/if}
               {/if}
             </span>
           </div>

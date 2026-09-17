@@ -1,0 +1,23 @@
+---
+title: Avoid whole sources and companies, not just skills
+date: 2026-09-16
+summary: A new Avoid tab on your profile lets you exclude job sources and companies, alongside skills — one place for everything you don't want to see.
+type: changelog
+tags:
+  - profile
+  - job-seekers
+  - filters
+draft: false
+---
+
+Skills to avoid have lived on the Skills tab for a while — a way to tell your
+profile "don't count this against me" without cluttering the skills you actually
+have. It made sense there when it was the only thing to avoid, but it wasn't
+built to grow.
+
+Now it has: open [your profile](/my/profile) and there's a new **Avoid** tab.
+Skills to avoid moved there, and it's joined by two new lists — sources to avoid
+and companies to avoid. Had a bad experience with a recruiter who always posts
+through the same ATS? Exclude that source. Burned by one employer specifically?
+Exclude the company. Each list is independent, optional, and saved the moment you
+add or remove something.

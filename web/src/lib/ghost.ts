@@ -1,5 +1,6 @@
 import { GHOST_CRITERION_VALUES } from './generated/contracts';
 import type { Ghost, GhostCriterion } from './generated/contracts';
+import type { Locale } from './locale';
 import { timeAgo } from './utils';
 
 /** A rendered ghost badge: a tone, a hedged chip label, the `fired/total` scale, and
@@ -160,13 +161,16 @@ const LABELS: Record<string, { tone: 'warn' | 'muted'; label: string }> = {
 /** ghostBadge maps the served signal to a chip, or null when there is nothing to
  *  show. An unrecognised level yields null rather than an empty chip: a badge beside
  *  a job that says nothing is worse than no badge. */
-export function ghostBadge(ghost?: Ghost | null): GhostBadge | null {
+export function ghostBadge(ghost: Ghost | null | undefined, locale: Locale): GhostBadge | null {
   if (!ghost) return null;
   const shape = LABELS[ghost.level];
   if (!shape) return null;
 
   const fired = ghost.criteria.length;
-  const tooltip = ghostChecklist(ghost)
+  // The tooltip joins only `.label`, never `.detail` — `locale` reaches here purely
+  // because it builds off ghostChecklist's rows, not because this tooltip itself
+  // renders anything locale-sensitive.
+  const tooltip = ghostChecklist(ghost, locale)
     .filter((r) => r.fired)
     .map((r) => r.label)
     .join(' · ');
@@ -188,8 +192,8 @@ export function ghostBadge(ghost?: Ghost | null): GhostBadge | null {
  *  counts would read three-of-five as loudly as three-of-four. `level` keeps driving
  *  the wording, which stays the authoritative claim — a strongly toned gauge under
  *  "Possibly inactive" is three criteria firing, not a stronger accusation. */
-export function ghostGauge(ghost?: Ghost | null): GhostGauge | null {
-  if (!ghost || !ghostBadge(ghost)) return null;
+export function ghostGauge(ghost: Ghost | null | undefined, locale: Locale): GhostGauge | null {
+  if (!ghost || !ghostBadge(ghost, locale)) return null;
 
   const segments = ghost.criteria_total;
   // A payload claiming more fired criteria than the scale's denominator must not
@@ -212,8 +216,8 @@ function toneFor(share: number): GhostGaugeTone {
  *  `evergreen_posting` IS the reality verdict, so rendering both shows one fact
  *  twice, the second time louder. Where ghost is silent the reality badge renders
  *  unchanged. */
-export function supersedesReality(ghost?: Ghost | null): boolean {
-  return ghostBadge(ghost) !== null;
+export function supersedesReality(ghost: Ghost | null | undefined, locale: Locale): boolean {
+  return ghostBadge(ghost, locale) !== null;
 }
 
 /** ghostChecklist projects every criterion the classifier considers — including the
@@ -223,14 +227,14 @@ export function supersedesReality(ghost?: Ghost | null): boolean {
  *  reader WHY the level is not higher, instead of leaving them to guess how serious
  *  this is. The interface renders the fired ones as rows and hands the rest to
  *  ghostUnobserved, which names them in a single line. */
-export function ghostChecklist(ghost: Ghost): GhostChecklistRow[] {
+export function ghostChecklist(ghost: Ghost, locale: Locale): GhostChecklistRow[] {
   const fired = new Set(ghost.criteria);
   return CRITERIA.map(({ code, label, short }) => ({
     code,
     label,
     short,
     fired: fired.has(code),
-    detail: detailFor(code, ghost, fired.has(code)),
+    detail: detailFor(code, ghost, fired.has(code), locale),
   }));
 }
 
@@ -243,8 +247,8 @@ export function ghostChecklist(ghost: Ghost): GhostChecklistRow[] {
  *  employer's board — both are criteria checked and found clear, and calling them "no
  *  data" would be simply false. The gauge takes the same care with its unfilled
  *  segments; a line of prose beside it must not give away what the colour withholds. */
-export function ghostUnobserved(ghost: Ghost): string {
-  const missing = ghostChecklist(ghost).filter((r) => !r.fired);
+export function ghostUnobserved(ghost: Ghost, locale: Locale): string {
+  const missing = ghostChecklist(ghost, locale).filter((r) => !r.fired);
   if (!missing.length) return '';
   return `Not observed: ${missing.map((r) => r.short).join(', ')}.`;
 }
@@ -254,11 +258,11 @@ export function ghostUnobserved(ghost: Ghost): string {
 // fact gets none: the tick beside it already said "yes", and a second line reading
 // "Yes" was type carrying nothing. An unfired criterion gets none either — the row is
 // never rendered, and ghostUnobserved names it instead.
-function detailFor(code: string, ghost: Ghost, fired: boolean): string {
+function detailFor(code: string, ghost: Ghost, fired: boolean, locale: Locale): string {
   if (!fired) return '';
   switch (code) {
     case 'ats_absent': {
-      const ago = ghost.ats_checked_at ? timeAgo(ghost.ats_checked_at) : '';
+      const ago = ghost.ats_checked_at ? timeAgo(ghost.ats_checked_at, locale) : '';
       return ago ? `checked ${ago}` : 'checked against the company board';
     }
     case 'silent_applications':

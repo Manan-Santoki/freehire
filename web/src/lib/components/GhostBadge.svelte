@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ghostBadge } from '$lib/ghost';
   import type { Ghost } from '$lib/generated/contracts';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { cn } from '$lib/ui';
 
   // Surfaces the ghost signal as a hedged chip plus the fired/total scale. It states
@@ -10,7 +11,7 @@
   // scale so a card reader can tell "2 of 4" from "4 of 4" at a glance.
   let { ghost }: { ghost?: Ghost | null } = $props();
 
-  const badge = $derived(ghostBadge(ghost));
+  const badge = $derived(ghostBadge(ghost, locale()));
 
   const toneClass: Record<'warn' | 'muted', string> = {
     warn: 'border-warning/40 bg-warning/10 text-warning-strong',

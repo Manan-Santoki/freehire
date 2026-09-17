@@ -4,6 +4,12 @@
   import { currentUser, updateLanguage } from '$lib/auth.svelte';
   import { ApiError } from '$lib/api';
   import { must } from '$lib/utils';
+  import { SUPPORTED_LOCALES } from '$lib/locale';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t, tokenLabel } from '$lib/i18n/t';
+  import { messages } from './AccountLanguage.messages';
+
+  const s = $derived(t(messages, locale()));
 
   // The account's preferred interface language: read from the resolved session
   // (no extra fetch — it rides GET /me already). Drives both LLM output
@@ -13,14 +19,29 @@
   // the backend's CHECK constraint), so a select2-style type-to-filter combobox
   // reads better here than a plain <select> with six options — flags make each
   // entry recognizable at a glance.
-  const LANGUAGES = [
-    { code: 'en', label: 'English', flag: 'gb' },
-    { code: 'ru', label: 'Russian', flag: 'ru' },
-    { code: 'es', label: 'Spanish', flag: 'es' },
-    { code: 'pt', label: 'Portuguese', flag: 'pt' },
-    { code: 'de', label: 'German', flag: 'de' },
-    { code: 'fr', label: 'French', flag: 'fr' },
-  ] as const;
+  //
+  // The code list itself comes from `SUPPORTED_LOCALES` — the same list
+  // `$lib/locale.ts` mirrors from the backend's CHECK constraint — rather than a
+  // second hand-written array, so a language added or removed there needs no
+  // matching edit here. Only the flag (cosmetic, has no other source of truth)
+  // and the display NAME (which follows the resolved locale — see
+  // AccountLanguage.messages.ts) are looked up per code.
+  const FLAGS: Record<(typeof SUPPORTED_LOCALES)[number], string> = {
+    en: 'gb',
+    ru: 'ru',
+    es: 'es',
+    pt: 'pt',
+    de: 'de',
+    fr: 'fr',
+  };
+
+  const LANGUAGES = $derived(
+    SUPPORTED_LOCALES.map((code) => ({
+      code,
+      flag: FLAGS[code],
+      label: tokenLabel(s.languageNames, code),
+    })),
+  );
 
   type LanguageOption = (typeof LANGUAGES)[number];
 
@@ -34,12 +55,16 @@
     return lang.label.toLowerCase().includes(needle) || lang.code.includes(needle);
   }
 
-  let selected = $state(byCode(currentUser()?.language ?? 'en'));
+  let selectedCode = $state(currentUser()?.language ?? 'en');
+  const selected = $derived(byCode(selectedCode));
   let query = $state('');
   let open = $state(false);
   let activeIndex = $state(0);
   let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  let saveError = $state<string | null>(null);
+  // The server's own message when it gave one; `null` means the generic fallback,
+  // resolved from `s` at render time so it follows a later locale change instead
+  // of freezing in whatever locale was resolved when the save failed.
+  let saveErrorMessage = $state<string | null>(null);
   let savedTimer: ReturnType<typeof setTimeout> | undefined;
   let inputEl = $state<HTMLInputElement | null>(null);
 
@@ -54,7 +79,7 @@
     const user = currentUser();
     if (!user || user.email === seededFor) return;
     seededFor = user.email;
-    selected = byCode(user.language);
+    selectedCode = user.language;
   });
 
   const shown = $derived(LANGUAGES.filter((l) => matches(l, query)));
@@ -73,10 +98,10 @@
   async function pick(lang: LanguageOption) {
     closeList();
     if (lang.code === selected.code || saveState === 'saving') return;
-    const previous = selected;
-    selected = lang;
+    const previous = selectedCode;
+    selectedCode = lang.code;
     saveState = 'saving';
-    saveError = null;
+    saveErrorMessage = null;
     try {
       await updateLanguage(lang.code);
       saveState = 'saved';
@@ -85,9 +110,9 @@
         if (saveState === 'saved') saveState = 'idle';
       }, 1500);
     } catch (e) {
-      selected = previous;
+      selectedCode = previous;
       saveState = 'error';
-      saveError = e instanceof ApiError ? e.message : 'Could not save.';
+      saveErrorMessage = e instanceof ApiError ? e.message : null;
     }
   }
 
@@ -122,19 +147,18 @@
 <div class="flex flex-col gap-3">
   <div class="flex items-center gap-3">
     <div class="min-w-0 flex-1">
-      <h2 class="text-sm font-semibold leading-tight">Language</h2>
+      <h2 class="text-sm font-semibold leading-tight">{s.heading}</h2>
       <p class="text-xs text-muted-foreground">
-        Your preferred language for the assistant and CV. The account interface is available in
-        English and Russian.
+        {s.description}
       </p>
     </div>
 
     {#if saveState === 'saving'}
-      <span class="text-xs text-muted-foreground">Saving…</span>
+      <span class="text-xs text-muted-foreground">{s.saving}</span>
     {:else if saveState === 'saved'}
-      <span class="flex items-center gap-1 text-xs text-brand-strong"><Check class="size-3.5" aria-hidden="true" /> Saved</span>
+      <span class="flex items-center gap-1 text-xs text-brand-strong"><Check class="size-3.5" aria-hidden="true" /> {s.saved}</span>
     {:else if saveState === 'error'}
-      <span class="text-xs text-destructive">{saveError}</span>
+      <span class="text-xs text-destructive">{saveErrorMessage ?? s.saveFailed}</span>
     {/if}
   </div>
 
@@ -155,7 +179,7 @@
         onfocus={openList}
         onblur={() => setTimeout(closeList, 120)}
         onkeydown={onKeydown}
-        placeholder="Search a language…"
+        placeholder={s.searchPlaceholder}
         autocomplete="off"
         disabled={saveState === 'saving'}
         role="combobox"
@@ -193,7 +217,7 @@
             </button>
           </li>
         {:else}
-          <li class="px-3 py-2 text-sm text-muted-foreground">No matches</li>
+          <li class="px-3 py-2 text-sm text-muted-foreground">{s.noMatches}</li>
         {/each}
       </ul>
     {/if}

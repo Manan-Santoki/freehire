@@ -1211,6 +1211,14 @@ type SocialToken struct {
 	RefreshedAt      pgtype.Timestamptz `json:"refreshed_at"`
 }
 
+type SourceStat struct {
+	Source         string             `json:"source"`
+	OpenJobs       int64              `json:"open_jobs"`
+	AtsMatchedJobs int64              `json:"ats_matched_jobs"`
+	BrowsableJobs  pgtype.Int8        `json:"browsable_jobs"`
+	MeasuredAt     pgtype.Timestamptz `json:"measured_at"`
+}
+
 // Hosts refused at the public submission form. Checked only in submission.Service.Submit; never applied to a moderator-authored vacancy create.
 type SubmissionDomainBlocklist struct {
 	ID int64 `json:"id"`
@@ -1363,6 +1371,8 @@ type User struct {
 	// How far the Ultra tier reaches, derived by the schema as the furthest of ultra_until_stripe, ultra_until_revenuecat and ultra_until_granted. Refuses assignment (428C9) — write the source column of the origin that decided it. A future value here outranks pro_until: the tier is the better of the two, so that buying the more expensive plan can never give somebody less.
 	UltraUntil   pgtype.Timestamptz `json:"ultra_until"`
 	TalentHandle pgtype.Text        `json:"talent_handle"`
+	// When the one-time welcome email for this account's first paying tier was sent. NULL until sent; never cleared once set, so a later renewal or resubscription is not re-welcomed.
+	ProWelcomeSentAt pgtype.Timestamptz `json:"pro_welcome_sent_at"`
 }
 
 type UserEmailCode struct {
@@ -1424,6 +1434,8 @@ type UserProfile struct {
 	LocationPreferences json.RawMessage    `json:"location_preferences"`
 	ExcludedSkills      []string           `json:"excluded_skills"`
 	Seniorities         []string           `json:"seniorities"`
+	ExcludedSources     []string           `json:"excluded_sources"`
+	ExcludedCompanies   []string           `json:"excluded_companies"`
 }
 
 type UserPushToken struct {

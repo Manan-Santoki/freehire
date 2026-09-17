@@ -40,6 +40,13 @@ export const STATIC_PATHS = [
   '/about',
   '/companies',
   '/collections',
+  // The public Talent Network catalogue. Indexable and linked from the header menu
+  // and the footer, but it was in neither the sitemap nor anything a crawler reads,
+  // so nothing told a search engine it exists. The per-candidate cards under it are
+  // NOT here: a card is anonymous by design and 404s until its owner's CV has been
+  // read, so offering crawlers a path to one is offering a path to a page we cannot
+  // promise resolves.
+  '/talent',
   '/for-companies',
   '/recruiters',
   '/features/extension',
@@ -60,6 +67,13 @@ export const STATIC_PATHS = [
   // reference — so they belong in the sitemap even though nothing links to some of
   // them from the feed.
   '/open',
+  // The market rollups. /analytics was reachable from the header menu and from
+  // nowhere a crawler reads, the same gap /talent had.
+  '/analytics',
+  // Where the catalogue comes from: every source, what each carries, when it was last
+  // read. Sits with /open rather than with /status because it is a citable statement
+  // about the catalogue, not an operational dashboard.
+  '/sources',
   '/trends',
   '/docs/api',
   '/agents',

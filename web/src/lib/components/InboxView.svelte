@@ -30,6 +30,7 @@
     Settings,
   } from '@lucide/svelte';
   import { TabStrip, tabStripId } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo, errorMessage, must } from '$lib/utils';
   import { avatarInitials, avatarColor } from '$lib/avatar';
 
@@ -620,7 +621,7 @@
                           <span class="min-w-0 flex-1 truncate text-sm {m.read ? 'font-medium text-foreground/90' : 'font-semibold text-foreground'}">
                             {m.from_name || m.from_addr}
                           </span>
-                          <span class="shrink-0 text-[11px] text-muted-foreground">{timeAgo(m.received_at)}</span>
+                          <span class="shrink-0 text-[11px] text-muted-foreground">{timeAgo(m.received_at, locale())}</span>
                         </div>
                         <div class="mt-0.5 truncate text-sm {m.read ? 'text-muted-foreground' : 'text-foreground'}">
                           {m.subject || '(no subject)'}
@@ -690,7 +691,7 @@
                         <span aria-hidden="true">·</span>
                         <span class="truncate">{s.from_addr}</span>
                       {/if}
-                      <span class="ml-auto shrink-0">{timeAgo(s.received_at)}</span>
+                      <span class="ml-auto shrink-0">{timeAgo(s.received_at, locale())}</span>
                     </div>
                   </div>
                   <button

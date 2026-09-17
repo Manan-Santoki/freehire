@@ -1,25 +1,29 @@
 <script lang="ts">
-  // Skills + Skills-to-avoid, the chip/search UI shared by first-time set-up (ProfileForm,
-  // local unsaved state until the form's own Save) and the steady-state Skills view
-  // (autosaving on every toggle, via profileStore). This component holds no opinion on
-  // persistence — it reports toggles through `onToggleSkill`/`onToggleExcluded` and shows
-  // whatever `skills`/`excludedSkills` the caller currently holds; only the skill dictionary
-  // (the typeahead's universe) is loaded here, since every caller needs the same one.
+  // The Skills chip/search UI shared by first-time set-up (ProfileForm, local unsaved state
+  // until the form's own Save) and the steady-state Skills view (autosaving on every toggle,
+  // via profileStore). This component holds no opinion on persistence — it reports toggles
+  // through `onToggleSkill` and shows whatever `skills` the caller currently holds; only the
+  // skill dictionary (the typeahead's universe) is loaded here.
+  //
+  // Skills to avoid live on the dedicated Avoid tab (AvoidCard.svelte), not here — they used
+  // to render as a second block in this component, but that coupled "what I have" and "what
+  // I avoid" into one control that only Skills needed to reach.
   import { loadSkillDistribution } from '$lib/skillDictionary';
   import type { FacetOption } from '$lib/facets';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './SkillsPicker.messages';
   import RemoteSearchSelect from '../facets/RemoteSearchSelect.svelte';
+
+  const s = $derived(t(messages, locale()));
 
   let {
     skills,
-    excludedSkills,
     onToggleSkill,
-    onToggleExcluded,
     busy = false,
   }: {
     skills: string[];
-    excludedSkills: string[];
     onToggleSkill: (skill: string) => void;
-    onToggleExcluded: (skill: string) => void;
     busy?: boolean;
   } = $props();
 
@@ -35,57 +39,26 @@
     });
   });
 
-  function searchSkillsExcept(query: string, avoid: string[]): Promise<FacetOption[]> {
+  function searchSkills(query: string): Promise<FacetOption[]> {
     const q = query.trim().toLowerCase();
-    const pool = skillDist.filter((o) => !avoid.includes(o.value));
-    const matches = q ? pool.filter((o) => o.label.toLowerCase().includes(q)) : pool;
+    const matches = q ? skillDist.filter((o) => o.label.toLowerCase().includes(q)) : skillDist;
     return Promise.resolve(matches.slice(0, q ? 50 : 8));
   }
-
-  const searchSkills = (query: string) => searchSkillsExcept(query, excludedSkills);
-  const searchExcludedSkills = (query: string) => searchSkillsExcept(query, skills);
 </script>
 
-<div class="flex flex-col gap-4 {busy ? 'pointer-events-none opacity-60' : ''}">
-  <div class="flex flex-col gap-2">
-    <div class="flex items-baseline justify-between">
-      <span class="text-sm font-medium">Skills</span>
-      <span class="text-xs tabular-nums text-muted-foreground">{skills.length}</span>
-    </div>
-    <RemoteSearchSelect
-      search={searchSkills}
-      include={skills}
-      placeholder="Search skills"
-      onToggle={onToggleSkill}
-      fallbackLabel={(v) => v}
-      clearOnSelect
-      ready={skillDistReady}
-      techIcons
-    />
+<div class="flex flex-col gap-2 {busy ? 'pointer-events-none opacity-60' : ''}">
+  <div class="flex items-baseline justify-between">
+    <span class="text-sm font-medium">{s.heading}</span>
+    <span class="text-xs tabular-nums text-muted-foreground">{skills.length}</span>
   </div>
-
-  <!-- Kept disjoint from Skills (a skill can't be both wanted and avoided — the server
-       enforces this too, dropping any overlap). Passed as the control's `exclude` set so the
-       chips render in the destructive (red, struck-through) style, matching how an excluded
-       facet value looks everywhere else. -->
-  <div class="flex flex-col gap-2">
-    <div class="flex items-baseline justify-between">
-      <span class="text-sm font-medium">Skills to avoid</span>
-      <span class="text-xs tabular-nums text-muted-foreground">{excludedSkills.length}</span>
-    </div>
-    <RemoteSearchSelect
-      search={searchExcludedSkills}
-      include={[]}
-      exclude={excludedSkills}
-      placeholder="Search skills to exclude"
-      onToggle={onToggleExcluded}
-      fallbackLabel={(v) => v}
-      clearOnSelect
-      ready={skillDistReady}
-      techIcons
-    />
-    <span class="text-xs text-muted-foreground">
-      Filtered out when you apply your profile to the job filters.
-    </span>
-  </div>
+  <RemoteSearchSelect
+    search={searchSkills}
+    include={skills}
+    placeholder={s.searchPlaceholder}
+    onToggle={onToggleSkill}
+    fallbackLabel={(v) => v}
+    clearOnSelect
+    ready={skillDistReady}
+    techIcons
+  />
 </div>

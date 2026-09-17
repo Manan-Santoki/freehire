@@ -212,7 +212,7 @@
               {tokenLabel(s.requests.status, r.status)}
             </span>
           </td>
-          <td class="py-3 text-muted-foreground">{r.created_at ? timeAgo(r.created_at) : ''}</td>
+          <td class="py-3 text-muted-foreground">{r.created_at ? timeAgo(r.created_at, locale()) : ''}</td>
         </tr>
       {/each}
     </Table>
@@ -327,7 +327,7 @@
                 {req.company_name || req.company_slug}
               </span>
             </b>
-            <span class="shrink-0 text-xs text-muted-foreground">{req.created_at ? timeAgo(req.created_at) : ''}</span>
+            <span class="shrink-0 text-xs text-muted-foreground">{req.created_at ? timeAgo(req.created_at, locale()) : ''}</span>
           </div>
           <div class="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
             <span>{s.incoming.contactLabel}</span>

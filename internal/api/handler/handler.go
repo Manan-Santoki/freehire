@@ -18,6 +18,7 @@ import (
 	"github.com/strelov1/freehire/internal/ai/llmkey"
 	"github.com/strelov1/freehire/internal/ai/plan"
 	"github.com/strelov1/freehire/internal/ai/speech"
+	"github.com/strelov1/freehire/internal/api/atsapply"
 	"github.com/strelov1/freehire/internal/api/ratelimit"
 	"github.com/strelov1/freehire/internal/api/realtime"
 	"github.com/strelov1/freehire/internal/application/gmailsync"
@@ -664,6 +665,10 @@ func Register(app *fiber.App, cfg Config) {
 	}
 	sitemapH := newSitemapHandlers(sitemapJobs, sitemapCompanies)
 	searchH := newSearchHandlers(jobSearch, facets, queries, cfg.Cache, profileSvc)
+	// The OJCP read surface. It shares the search backend and the store with the handlers
+	// above rather than holding its own: an agent's question and a browser's must reach the
+	// same catalogue, or the two answers drift.
+	ojcpH := newOJCPHandlers(jobSearch, queries, cfg.FrontendOrigin, atsapply.SubmittableProviders())
 	// The completion dictionary. Left nil when search is unconfigured — same reason as
 	// jobSearch above: a nil *suggest.Service wrapped in the interface would be a
 	// non-nil interface, and the handler's "not configured" check would pass straight
@@ -883,6 +888,9 @@ func Register(app *fiber.App, cfg Config) {
 	// index.
 	intentH.register(api, mw)
 	sitemapH.register(api, mw)
+	// Before jobsH for the same reason searchH is: /ojcp/v1/jobs/:slug is a literal path,
+	// not a slug.
+	ojcpH.register(api, mw)
 	jobsH.register(api, mw)
 	companiesH.register(api, mw)
 	geoH.register(api, mw)

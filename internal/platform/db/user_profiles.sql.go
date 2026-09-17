@@ -28,7 +28,7 @@ func (q *Queries) DeleteUserProfile(ctx context.Context, userID int64) (int64, e
 }
 
 const getUserProfile = `-- name: GetUserProfile :one
-SELECT user_id, skills, created_at, updated_at, specializations, location_preferences, excluded_skills, seniorities FROM user_profiles
+SELECT user_id, skills, created_at, updated_at, specializations, location_preferences, excluded_skills, seniorities, excluded_sources, excluded_companies FROM user_profiles
 WHERE user_id = $1
 `
 
@@ -46,6 +46,8 @@ func (q *Queries) GetUserProfile(ctx context.Context, userID int64) (UserProfile
 		&i.LocationPreferences,
 		&i.ExcludedSkills,
 		&i.Seniorities,
+		&i.ExcludedSources,
+		&i.ExcludedCompanies,
 	)
 	return i, err
 }
@@ -84,16 +86,18 @@ func (q *Queries) ListUserProfilesExcludedSkills(ctx context.Context, userIds []
 }
 
 const upsertUserProfile = `-- name: UpsertUserProfile :one
-INSERT INTO user_profiles (user_id, specializations, skills, seniorities, excluded_skills, location_preferences)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO user_profiles (user_id, specializations, skills, seniorities, excluded_skills, excluded_sources, excluded_companies, location_preferences)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (user_id) DO UPDATE
 SET specializations      = EXCLUDED.specializations,
     skills               = EXCLUDED.skills,
     seniorities          = EXCLUDED.seniorities,
     excluded_skills      = EXCLUDED.excluded_skills,
+    excluded_sources     = EXCLUDED.excluded_sources,
+    excluded_companies   = EXCLUDED.excluded_companies,
     location_preferences = EXCLUDED.location_preferences,
     updated_at           = now()
-RETURNING user_id, skills, created_at, updated_at, specializations, location_preferences, excluded_skills, seniorities
+RETURNING user_id, skills, created_at, updated_at, specializations, location_preferences, excluded_skills, seniorities, excluded_sources, excluded_companies
 `
 
 type UpsertUserProfileParams struct {
@@ -102,13 +106,16 @@ type UpsertUserProfileParams struct {
 	Skills              []string        `json:"skills"`
 	Seniorities         []string        `json:"seniorities"`
 	ExcludedSkills      []string        `json:"excluded_skills"`
+	ExcludedSources     []string        `json:"excluded_sources"`
+	ExcludedCompanies   []string        `json:"excluded_companies"`
 	LocationPreferences json.RawMessage `json:"location_preferences"`
 }
 
 // Create-or-replace the user's one profile. The PRIMARY KEY (user_id) makes this an
 // idempotent upsert: first save inserts, later saves overwrite specializations/skills/
-// seniorities/excluded_skills/location_preferences and bump updated_at. All fields are
-// already normalized by the service; seniorities and excluded_skills may be empty;
+// seniorities/excluded_skills/excluded_sources/excluded_companies/location_preferences and
+// bump updated_at. All fields are already normalized by the service; seniorities,
+// excluded_skills, excluded_sources and excluded_companies may be empty;
 // location_preferences is a validated JSONB block or NULL (no preferences).
 func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfileParams) (UserProfile, error) {
 	row := q.db.QueryRow(ctx, upsertUserProfile,
@@ -117,6 +124,8 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		arg.Skills,
 		arg.Seniorities,
 		arg.ExcludedSkills,
+		arg.ExcludedSources,
+		arg.ExcludedCompanies,
 		arg.LocationPreferences,
 	)
 	var i UserProfile
@@ -129,6 +138,8 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		&i.LocationPreferences,
 		&i.ExcludedSkills,
 		&i.Seniorities,
+		&i.ExcludedSources,
+		&i.ExcludedCompanies,
 	)
 	return i, err
 }
@@ -139,10 +150,12 @@ SET specializations      = $2,
     skills               = $3,
     seniorities          = $4,
     excluded_skills      = $5,
-    location_preferences = $6,
+    excluded_sources     = $6,
+    excluded_companies   = $7,
+    location_preferences = $8,
     updated_at           = now()
-WHERE user_id = $1 AND updated_at = $7
-RETURNING user_id, skills, created_at, updated_at, specializations, location_preferences, excluded_skills, seniorities
+WHERE user_id = $1 AND updated_at = $9
+RETURNING user_id, skills, created_at, updated_at, specializations, location_preferences, excluded_skills, seniorities, excluded_sources, excluded_companies
 `
 
 type UpsertUserProfileIfUnchangedParams struct {
@@ -151,6 +164,8 @@ type UpsertUserProfileIfUnchangedParams struct {
 	Skills              []string           `json:"skills"`
 	Seniorities         []string           `json:"seniorities"`
 	ExcludedSkills      []string           `json:"excluded_skills"`
+	ExcludedSources     []string           `json:"excluded_sources"`
+	ExcludedCompanies   []string           `json:"excluded_companies"`
 	LocationPreferences json.RawMessage    `json:"location_preferences"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
@@ -168,6 +183,8 @@ func (q *Queries) UpsertUserProfileIfUnchanged(ctx context.Context, arg UpsertUs
 		arg.Skills,
 		arg.Seniorities,
 		arg.ExcludedSkills,
+		arg.ExcludedSources,
+		arg.ExcludedCompanies,
 		arg.LocationPreferences,
 		arg.UpdatedAt,
 	)
@@ -181,6 +198,8 @@ func (q *Queries) UpsertUserProfileIfUnchanged(ctx context.Context, arg UpsertUs
 		&i.LocationPreferences,
 		&i.ExcludedSkills,
 		&i.Seniorities,
+		&i.ExcludedSources,
+		&i.ExcludedCompanies,
 	)
 	return i, err
 }

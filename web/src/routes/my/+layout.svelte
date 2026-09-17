@@ -12,6 +12,7 @@
   import { cn } from '$lib/ui';
   import { visibleAccountNav, isSectionActive } from '$lib/accountNav';
   import { accountNavIcons } from '$lib/accountNavIcons';
+  import TalentNetworkInvite from '$lib/components/TalentNetworkInvite.svelte';
   import { dockOffset } from '$lib/assistantDock.svelte';
 
   // The account shell: one source of truth for the `my/*` chrome — the width
@@ -152,6 +153,14 @@
       </aside>
 
       <div class="min-w-0 flex-1">
+        <!-- Above the section's own heading, and above every section rather than only
+             Profile's — the card itself argues why. All this layer decides is the one
+             page it must not appear on: a banner pointing at the page you are reading is
+             noise. Dismissal is the card's own business. -->
+        {#if !isSectionActive(path, '/my/talent-network')}
+          <TalentNetworkInvite />
+        {/if}
+
         {@render children()}
       </div>
     </div>

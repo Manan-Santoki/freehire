@@ -6,27 +6,31 @@
    * system that records claims about a person and gives them no way to see or remove those
    * claims is a trust problem before it is a compliance one — so provenance is shown on
    * every entry, and the assistant's own readings are surfaced first rather than buried.
+   *
+   * State and mutation logic live here; one employment's presentation is
+   * `ExperienceEmploymentCard`, one achievement's is `ExperienceAchievementRow`. Selection
+   * (`selected`) stays here rather than in a card, so it survives any card's expand/collapse
+   * and can span achievements from different employments (see specs/experience-bank).
    */
-  import { Trash2, Pencil, Check, X, Briefcase, FolderKanban, Plus, Sparkles } from '@lucide/svelte';
+  import { Briefcase, FolderKanban, Plus, Sparkles } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { api } from '$lib/api';
-  import { Button, ConfirmDialog, EntityLogo } from '$lib/ui';
+  import { Button, ConfirmDialog, FormField, Input } from '$lib/ui';
   import ExperienceAssistantPanel from '$lib/components/ExperienceAssistantPanel.svelte';
+  import ExperienceEmploymentCard from '$lib/components/ExperienceEmploymentCard.svelte';
+  import ExperienceAchievementRow from '$lib/components/ExperienceAchievementRow.svelte';
   import States from '$lib/components/States.svelte';
-  import { profileKickoff } from '$lib/assistant/presets';
-  import { companyLogoUrl } from '$lib/logo';
-  import SkillIcon from '$lib/components/SkillIcon.svelte';
   import PeriodDateInput from '$lib/components/PeriodDateInput.svelte';
+  import { profileKickoff } from '$lib/assistant/presets';
+  import { findFirstUnconfirmed, isUnconfirmed, sortNeedsAttentionFirst } from '$lib/experienceBank';
   import type {
     ExperienceAtom,
     ExperienceBank,
     ExperienceEmployment,
     ExperienceEmploymentWithAtoms,
-    ExperienceProvenance,
     PeriodDate,
   } from '$lib/types';
   import { must } from '$lib/utils';
-  import { formatPeriodRange } from '$lib/periodDate';
 
   /** Host-supplied: profile reseeds the base CV, tailor resets the open tailored copy.
    *  The bank itself never talks to the CV store. */
@@ -35,42 +39,33 @@
   let bank = $state<ExperienceBank | null>(null);
   let loading = $state(true);
   let error = $state('');
-  let editing = $state<string | null>(null);
-  let draftClaim = $state('');
-  let draftContext = $state('');
-  let draftMetrics = $state('');
   let busy = $state(false);
   /** Selected achievement ids for merge / tailor. Order is click order. */
   let selected = $state<string[]>([]);
-  let editingEmploymentId = $state<string | null>(null);
-  let empName = $state('');
-  let empRole = $state('');
-  let empLocation = $state('');
-  let empSummary = $state('');
-  let empStack = $state('');
-  let empLink = $state('');
-  let empStart = $state<PeriodDate | undefined>(undefined);
-  let empEnd = $state<PeriodDate | undefined>(undefined);
-  // Deliberately separate from empName/empLink/empStart/empEnd above: "Add project" and
-  // "Edit employment" are independently toggleable, and sharing state between them let
-  // opening one silently blank or overwrite the other's still-open, unsaved form.
+  // Deliberately separate from the job form below: "Add project" and "Add experience" are
+  // independently toggleable, and sharing state between them let opening one silently
+  // blank or overwrite the other's still-open, unsaved form.
   let addingProject = $state(false);
   let projName = $state('');
   let projLink = $state('');
   let projStart = $state<PeriodDate | undefined>(undefined);
   let projEnd = $state<PeriodDate | undefined>(undefined);
-  // Same reasoning as addingProject above, kept separate from it: the two forms open
-  // independently (one per section) and must not blank each other.
   let addingJob = $state(false);
   let jobCompany = $state('');
   let jobRole = $state('');
   let jobLocation = $state('');
   let jobStart = $state<PeriodDate | undefined>(undefined);
   let jobEnd = $state<PeriodDate | undefined>(undefined);
-  /** Unplaced achievement being promoted into a new project employment. */
-  let promotingAtomId = $state<string | null>(null);
-  let promoteName = $state('');
-  let promoteLink = $state('');
+
+  /** Where the unconfirmed-achievements banner last sent the candidate. Drives which
+   *  employment card force-expands and which row scrolls into view — see
+   *  `jumpToUnconfirmed` and specs/experience-bank's banner-link requirement. */
+  let bannerTarget = $state<{ employmentId: string | null; atomId: string } | null>(null);
+
+  function jumpToUnconfirmed() {
+    if (!bank) return;
+    bannerTarget = findFirstUnconfirmed(bank);
+  }
 
   // The interviewer, docked beside the bank. `launch.id` is a remount token, not a
   // session id: aiming the chat at a different set of achievements means a new
@@ -86,23 +81,6 @@
     launch = { id: launch.id + 1, kickoff: profileKickoff(ids) };
     panelOpen = true;
   }
-
-  /** How each provenance reads to the person it describes. The wording matters: the point
-   *  is not to expose an enum but to tell them who said it. */
-  const provenanceLabel: Record<ExperienceProvenance, string> = {
-    cv_import: 'From your CV',
-    stated_in_chat: 'You told the assistant',
-    manual: 'You wrote this',
-    agent_inferred: 'The assistant’s reading — not yet confirmed',
-  };
-
-  const unconfirmed = (a: ExperienceAtom) => a.provenance === 'agent_inferred';
-
-  /** Unconfirmed first. The banner tells the owner something needs a decision; leaving
-   *  those entries wherever the server happened to return them makes that a scavenger
-   *  hunt at eleven achievements and useless at two hundred. */
-  const needsAttentionFirst = (atoms: ExperienceAtom[]) =>
-    [...atoms].sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)));
 
   /** A read the candidate asked for. Clears the selection, which their action consumed. */
   async function load() {
@@ -151,7 +129,7 @@
   const atomById = $derived(new Map(allAtoms.map((a) => [a.id, a])));
 
   const totalAtoms = $derived(allAtoms.length);
-  const needsConfirming = $derived(allAtoms.filter(unconfirmed).length);
+  const needsConfirming = $derived(allAtoms.filter(isUnconfirmed).length);
 
   /** Bucket key for merge validity: same employment, or both unplaced. */
   function bucketKey(atom: ExperienceAtom): string {
@@ -173,61 +151,22 @@
     selected = [...selected, id];
   }
 
-  function startEdit(atom: ExperienceAtom) {
-    editing = atom.id;
-    draftClaim = atom.claim;
-    draftContext = atom.context ?? '';
-    draftMetrics = (atom.metrics ?? []).join('\n');
-  }
-
-  function startEditEmployment(employment: ExperienceEmployment) {
-    editingEmploymentId = employment.id;
-    empName =
-      employment.kind === 'project'
-        ? employment.name || ''
-        : employment.company || employment.role || '';
-    empRole = employment.role || '';
-    empLocation = employment.location || '';
-    empSummary = employment.summary || '';
-    empStack = (employment.stack ?? []).join(', ');
-    empLink = employment.link || '';
-    empStart = employment.start;
-    empEnd = employment.end;
-  }
-
-  function parseStack(raw: string): string[] | undefined {
-    const items = raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    return items.length ? items : undefined;
-  }
-
-  async function saveEmployment(employment: ExperienceEmployment) {
-    if (busy) return;
+  /** Saves an employment's edited fields. Returns whether it succeeded, so the card
+   *  editing it knows whether to leave edit mode. */
+  async function saveEmployment(
+    employment: ExperienceEmployment,
+    body: Partial<ExperienceEmployment>,
+  ): Promise<boolean> {
+    if (busy) return false;
     busy = true;
     try {
-      const body: Partial<ExperienceEmployment> = {
-        kind: employment.kind,
-        start: empStart,
-        end: empEnd,
-        link: empLink.trim() || undefined,
-        summary: empSummary.trim() || undefined,
-        stack: parseStack(empStack),
-      };
-      if (employment.kind === 'project') {
-        body.name = empName.trim();
-      } else {
-        body.company = empName.trim();
-        body.role = empRole.trim() || undefined;
-        body.location = empLocation.trim() || undefined;
-      }
       await api.updateExperienceEmployment(employment.id, body);
-      editingEmploymentId = null;
       await load();
       onBankMutated?.();
+      return true;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not update.';
+      return false;
     } finally {
       busy = false;
     }
@@ -309,42 +248,6 @@
     }
   }
 
-  function startPromoteToProject(atom: ExperienceAtom) {
-    promotingAtomId = atom.id;
-    // Prefer a short name from context when the chat mentioned a project; otherwise leave blank.
-    promoteName = (atom.context ?? '').trim().slice(0, 80);
-    promoteLink = '';
-  }
-
-  /** Create a project employment and attach this unplaced achievement to it. */
-  async function savePromoteToProject(atom: ExperienceAtom) {
-    if (busy || !promoteName.trim()) return;
-    busy = true;
-    try {
-      const created = await api.createExperienceEmployment({
-        kind: 'project',
-        name: promoteName.trim(),
-        link: promoteLink.trim() || undefined,
-      });
-      await api.updateExperienceAtom(atom.id, {
-        claim: atom.claim,
-        context: atom.context,
-        metrics: atom.metrics,
-        skills: atom.skills,
-        employment_id: created.id,
-      });
-      promotingAtomId = null;
-      promoteName = '';
-      promoteLink = '';
-      await load();
-      onBankMutated?.();
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not save as project.';
-    } finally {
-      busy = false;
-    }
-  }
-
   function parseMetrics(raw: string): string[] {
     return raw
       .split(/[\n,]+/)
@@ -353,25 +256,31 @@
   }
 
   /** Saving an edit re-stamps the achievement as the owner's own statement, which is how
-   *  something the assistant inferred becomes usable on a CV. The copy says so. */
-  async function saveEdit(atom: ExperienceAtom) {
-    const claim = draftClaim.trim();
-    if (!claim || busy) return;
+   *  something the assistant inferred becomes usable on a CV. Returns whether it
+   *  succeeded, so the row knows whether to leave edit mode. */
+  async function saveAtomEdit(
+    atom: ExperienceAtom,
+    claim: string,
+    context: string,
+    metricsRaw: string,
+  ): Promise<boolean> {
+    if (busy) return false;
     busy = true;
     try {
       // List-only flags must not round-trip; send only writable fields.
       await api.updateExperienceAtom(atom.id, {
         claim,
-        context: draftContext.trim() || undefined,
-        metrics: parseMetrics(draftMetrics),
+        context: context || undefined,
+        metrics: parseMetrics(metricsRaw),
         skills: atom.skills,
         employment_id: atom.employment_id,
       });
-      editing = null;
       await load();
       onBankMutated?.();
+      return true;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not save that change.';
+      return false;
     } finally {
       busy = false;
     }
@@ -422,6 +331,39 @@
       onBankMutated?.();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not confirm that achievement.';
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** Create a project employment and attach this unplaced achievement to it. Returns
+   *  whether it succeeded, so the row knows whether to leave the promote form. */
+  async function savePromoteToProject(
+    atom: ExperienceAtom,
+    name: string,
+    link: string,
+  ): Promise<boolean> {
+    if (busy || !name.trim()) return false;
+    busy = true;
+    try {
+      const created = await api.createExperienceEmployment({
+        kind: 'project',
+        name: name.trim(),
+        link: link.trim() || undefined,
+      });
+      await api.updateExperienceAtom(atom.id, {
+        claim: atom.claim,
+        context: atom.context,
+        metrics: atom.metrics,
+        skills: atom.skills,
+        employment_id: created.id,
+      });
+      await load();
+      onBankMutated?.();
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Could not save as project.';
+      return false;
     } finally {
       busy = false;
     }
@@ -529,12 +471,16 @@
         </div>
 
         {#if needsConfirming > 0}
-          <div class="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3 text-sm">
+          <button
+            type="button"
+            onclick={jumpToUnconfirmed}
+            class="rounded-lg bg-warning/5 px-4 py-3 text-left text-sm transition-colors hover:bg-warning/10"
+          >
             <strong class="font-medium">{needsConfirming} not confirmed.</strong>
             The assistant recorded these as its own reading of something you said. They will not
-            appear on any CV until you confirm them — click the check to confirm as-is, edit one to
-            change it first, or remove it.
-          </div>
+            appear on any CV until you confirm them — click to jump to one, then confirm it as-is,
+            edit it to change it first, or remove it.
+          </button>
         {/if}
 
         {#if selected.length > 0}
@@ -579,12 +525,24 @@
           })}
 
           {#if addingJob}
-            <div class="flex flex-col gap-2 rounded-lg border border-border p-3">
+            <div class="flex flex-col gap-2 rounded-lg bg-muted/40 p-3">
               <p class="text-sm font-medium">New experience</p>
-              <input class="rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={jobCompany} placeholder="Company" />
+              <FormField label="Company">
+                {#snippet children({ id, describedBy })}
+                  <Input {id} aria-describedby={describedBy} bind:value={jobCompany} />
+                {/snippet}
+              </FormField>
               <div class="flex gap-2">
-                <input class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={jobRole} placeholder="Role" />
-                <input class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={jobLocation} placeholder="Location" />
+                <FormField label="Role" class="flex-1">
+                  {#snippet children({ id, describedBy })}
+                    <Input {id} aria-describedby={describedBy} bind:value={jobRole} />
+                  {/snippet}
+                </FormField>
+                <FormField label="Location" class="flex-1">
+                  {#snippet children({ id, describedBy })}
+                    <Input {id} aria-describedby={describedBy} bind:value={jobLocation} />
+                  {/snippet}
+                </FormField>
               </div>
               <div class="flex gap-2">
                 <PeriodDateInput bind:value={jobStart} placeholder="Start" />
@@ -597,9 +555,11 @@
             </div>
           {/if}
 
-          {#each jobs as employment (employment.id)}
-            {@render employmentSection(employment)}
-          {/each}
+          <div class="flex flex-col gap-6">
+            {#each jobs as employment (employment.id)}
+              {@render employmentCard(employment)}
+            {/each}
+          </div>
           {#if jobs.length === 0 && !addingJob}
             <p class="text-sm text-muted-foreground">Nothing here yet.</p>
           {/if}
@@ -615,10 +575,18 @@
           })}
 
           {#if addingProject}
-            <div class="flex flex-col gap-2 rounded-lg border border-border p-3">
+            <div class="flex flex-col gap-2 rounded-lg bg-muted/40 p-3">
               <p class="text-sm font-medium">New project</p>
-              <input class="rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={projName} placeholder="Name" />
-              <input class="rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={projLink} placeholder="https://…" />
+              <FormField label="Name">
+                {#snippet children({ id, describedBy })}
+                  <Input {id} aria-describedby={describedBy} bind:value={projName} />
+                {/snippet}
+              </FormField>
+              <FormField label="Link" hint="Optional">
+                {#snippet children({ id, describedBy })}
+                  <Input {id} aria-describedby={describedBy} bind:value={projLink} placeholder="https://…" />
+                {/snippet}
+              </FormField>
               <div class="flex gap-2">
                 <PeriodDateInput bind:value={projStart} placeholder="Start" />
                 <PeriodDateInput bind:value={projEnd} placeholder="End" />
@@ -630,9 +598,11 @@
             </div>
           {/if}
 
-          {#each projects as employment (employment.id)}
-            {@render employmentSection(employment)}
-          {/each}
+          <div class="flex flex-col gap-6">
+            {#each projects as employment (employment.id)}
+              {@render employmentCard(employment)}
+            {/each}
+          </div>
           {#if projects.length === 0 && !addingProject}
             <p class="text-sm text-muted-foreground">Nothing here yet.</p>
           {/if}
@@ -647,8 +617,19 @@
               </p>
             </div>
             <ul class="flex flex-col gap-1.5">
-              {#each needsAttentionFirst(bank.unplaced) as atom (atom.id)}
-                {@render achievement(atom)}
+              {#each sortNeedsAttentionFirst(bank.unplaced) as atom (atom.id)}
+                <ExperienceAchievementRow
+                  {atom}
+                  selected={selected.includes(atom.id)}
+                  {busy}
+                  {turnActive}
+                  scrollToAtomId={bannerTarget?.employmentId === null ? bannerTarget.atomId : undefined}
+                  onToggleSelect={toggleSelect}
+                  onConfirm={confirmAtom}
+                  onSaveEdit={saveAtomEdit}
+                  onSavePromote={savePromoteToProject}
+                  onRemove={requestRemove}
+                />
               {/each}
             </ul>
           </section>
@@ -656,6 +637,25 @@
       </div>
     {/if}
 </div>
+
+{#snippet employmentCard(employment: ExperienceEmploymentWithAtoms)}
+  {@const isBannerTarget = bannerTarget?.employmentId === employment.id}
+  <ExperienceEmploymentCard
+    {employment}
+    selectedIds={selected}
+    {busy}
+    {turnActive}
+    forceExpanded={isBannerTarget}
+    scrollToAtomId={isBannerTarget ? bannerTarget?.atomId : undefined}
+    onToggleSelect={toggleSelect}
+    onConfirmAtom={confirmAtom}
+    onSaveAtomEdit={saveAtomEdit}
+    onSavePromote={savePromoteToProject}
+    onRemoveAtom={requestRemove}
+    onSaveEmployment={saveEmployment}
+    onRemoveEmployment={requestRemoveEmployment}
+  />
+{/snippet}
 
 {#snippet sectionHeader(icon: Component<{ class?: string }>, title: string, addLabel: string, onAdd: () => void)}
   {@const Icon = icon}
@@ -677,124 +677,6 @@
   </div>
 {/snippet}
 
-{#snippet employmentSection(employment: ExperienceEmploymentWithAtoms)}
-  {@const placeLabel =
-    employment.kind === 'project'
-      ? employment.name || employment.role
-      : employment.role || employment.company}
-  {@const placeSecondary =
-    employment.kind === 'project'
-      ? employment.link
-      : employment.role && employment.company
-        ? employment.company
-        : ''}
-  <div class="flex flex-col gap-2">
-  <section class="flex gap-3">
-    {#if employment.kind === 'job' && editingEmploymentId !== employment.id}
-      <EntityLogo
-        name={employment.company || placeLabel || 'Unknown company'}
-        src={companyLogoUrl(employment.company ?? '') ?? undefined}
-        shape="square"
-        size="md"
-        class="shrink-0"
-      />
-    {/if}
-    <div class="flex min-w-0 flex-1 flex-col gap-2">
-    <header class="flex flex-wrap items-baseline gap-x-2">
-      {#if editingEmploymentId === employment.id}
-        <div class="flex w-full flex-col gap-2">
-          <input class="rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={empName} placeholder={employment.kind === 'project' ? 'Project name' : 'Company'} />
-          {#if employment.kind === 'job'}
-            <div class="flex gap-2">
-              <input class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={empRole} placeholder="Role" />
-              <input class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={empLocation} placeholder="Location" />
-            </div>
-          {:else}
-            <input class="rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={empLink} placeholder="https://…" />
-          {/if}
-          <div class="flex gap-2">
-            <PeriodDateInput bind:value={empStart} placeholder="Start" />
-            <PeriodDateInput bind:value={empEnd} placeholder="End" />
-          </div>
-          <textarea
-            class="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm"
-            rows="2"
-            bind:value={empSummary}
-            placeholder="Summary (optional)"
-          ></textarea>
-          <input class="rounded-md border border-border bg-background px-3 py-2 text-sm" bind:value={empStack} placeholder="Stack, comma-separated (optional)" />
-          <div class="flex gap-2">
-            <Button size="sm" disabled={busy} onclick={() => saveEmployment(employment)}>Save</Button>
-            <Button size="sm" variant="ghost" onclick={() => (editingEmploymentId = null)}>Cancel</Button>
-          </div>
-        </div>
-      {:else}
-        <h3 class="text-sm font-semibold text-foreground">
-          {placeLabel}
-        </h3>
-        {#if placeSecondary}
-          <span class="text-sm text-muted-foreground">{placeSecondary}</span>
-        {/if}
-        {#if employment.location}
-          <span class="text-sm text-muted-foreground">· {employment.location}</span>
-        {/if}
-        {#if employment.start || employment.end || employment.current}
-          <span class="text-xs text-muted-foreground">
-            {formatPeriodRange(employment.start, employment.end, employment.current)}
-          </span>
-        {/if}
-        <div class="ml-auto flex gap-1">
-          <Button size="sm" variant="ghost" onclick={() => startEditEmployment(employment)}>
-            <Pencil class="size-3.5" />
-            Edit
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onclick={() => requestRemoveEmployment(employment)}
-            aria-label={`Remove ${placeLabel}`}
-            class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          >
-            <Trash2 class="size-3.5" />
-          </Button>
-        </div>
-      {/if}
-    </header>
-
-    {#if employment.summary}
-      <p class="text-sm text-foreground">{employment.summary}</p>
-    {/if}
-    {#if employment.stack?.length}
-      <div class="flex flex-wrap gap-1.5">
-        {#each employment.stack as tech (tech)}
-          <span class="inline-flex items-center gap-1 rounded-full bg-brand-muted px-1.5 py-0.5 text-xs font-medium text-brand-strong">
-            <SkillIcon slug={tech} />{tech}
-          </span>
-        {/each}
-      </div>
-    {/if}
-
-    </div>
-  </section>
-
-  {#if employment.atoms.length === 0}
-    <p class="text-sm text-muted-foreground">
-      {#if employment.kind === 'project'}
-        Nothing recorded for this project yet — the assistant can help you fill it in.
-      {:else}
-        Nothing recorded for this role yet — the assistant can help you fill it in.
-      {/if}
-    </p>
-  {:else}
-    <ul class="flex flex-col gap-1.5">
-      {#each needsAttentionFirst(employment.atoms) as atom (atom.id)}
-        {@render achievement(atom)}
-      {/each}
-    </ul>
-  {/if}
-  </div>
-{/snippet}
-
 <!-- The way into the interviewer. The label names what the owner gets, not the machine
      that produces it. The caller wraps this to set its alignment.
 
@@ -804,192 +686,4 @@
   <Button size="sm" variant="secondary" disabled={turnActive} onclick={() => launchInterview([])}>
     <Sparkles class="size-3.5" />Tailor your experience
   </Button>
-{/snippet}
-
-{#snippet achievement(atom: ExperienceAtom)}
-  <li
-    class="group rounded-md border py-1.5 pl-1 pr-2 {unconfirmed(atom)
-      ? 'border-warning/40 bg-warning/5'
-      : selected.includes(atom.id)
-        ? 'border-brand/50 bg-brand/5'
-        : 'border-border'}"
-  >
-    {#if editing === atom.id}
-      <div class="flex flex-col gap-2">
-        <label class="flex flex-col gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Achievement</span>
-          <textarea
-            bind:value={draftClaim}
-            rows="2"
-            class="w-full resize-y rounded border border-border bg-background px-2 py-1 text-sm"
-          ></textarea>
-        </label>
-        <label class="flex flex-col gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Context</span>
-          <textarea
-            bind:value={draftContext}
-            rows="2"
-            class="w-full resize-y rounded border border-border bg-background px-2 py-1 text-sm"
-            placeholder="Where this happened — team, product, constraint…"
-          ></textarea>
-        </label>
-        <label class="flex flex-col gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Metrics</span>
-          <textarea
-            bind:value={draftMetrics}
-            rows="2"
-            class="w-full resize-y rounded border border-border bg-background px-2 py-1 font-mono text-sm"
-            placeholder="One per line or comma-separated — e.g. 40%"
-          ></textarea>
-        </label>
-        <div class="flex items-center gap-2">
-          <Button size="sm" onclick={() => saveEdit(atom)} disabled={busy || !draftClaim.trim()}>
-            <Check class="size-4" />
-            Save — this makes it yours
-          </Button>
-          <Button size="sm" variant="ghost" onclick={() => (editing = null)}>
-            <X class="size-4" />
-            Cancel
-          </Button>
-        </div>
-      </div>
-    {:else if promotingAtomId === atom.id}
-      <div class="flex flex-col gap-2">
-        <p class="text-sm text-foreground">{atom.claim}</p>
-        <label class="flex flex-col gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Project name</span>
-          <input
-            class="rounded-md border border-border bg-background px-3 py-2 text-sm"
-            bind:value={promoteName}
-            placeholder="e.g. Sandrock, Git helpers"
-          />
-        </label>
-        <label class="flex flex-col gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Link (optional)</span>
-          <input
-            class="rounded-md border border-border bg-background px-3 py-2 text-sm"
-            bind:value={promoteLink}
-            placeholder="https://"
-          />
-        </label>
-        <div class="flex items-center gap-2">
-          <Button size="sm" onclick={() => savePromoteToProject(atom)} disabled={busy || !promoteName.trim()}>
-            <Check class="size-4" />
-            Save as project
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onclick={() => {
-              promotingAtomId = null;
-              promoteName = '';
-              promoteLink = '';
-            }}
-          >
-            <X class="size-4" />
-            Cancel
-          </Button>
-        </div>
-      </div>
-    {:else}
-      <div class="flex items-start gap-2">
-        <input
-          type="checkbox"
-          class="mt-1 size-4 shrink-0 accent-brand"
-          checked={selected.includes(atom.id)}
-          onchange={() => toggleSelect(atom.id)}
-          aria-label="Select achievement"
-        />
-        <div class="min-w-0 flex-1">
-          <p class="text-sm text-foreground">{atom.claim}</p>
-          {#if atom.context}
-            <p class="mt-1 text-xs text-muted-foreground">{atom.context}</p>
-          {/if}
-          {#if atom.metrics?.length}
-            <p class="mt-1 flex flex-wrap gap-1.5">
-              {#each atom.metrics as metric (metric)}
-                <span class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">{metric}</span>
-              {/each}
-            </p>
-          {/if}
-          <p class="mt-1 text-xs text-muted-foreground">{provenanceLabel[atom.provenance]}</p>
-          {#if atom.skills?.length}
-            <p class="mt-1 flex flex-wrap gap-1.5">
-              {#each atom.skills as skill (skill)}
-                <span class="inline-flex items-center gap-1 rounded-full bg-brand-muted px-1.5 py-0.5 text-xs font-medium text-brand-strong">
-                  <SkillIcon slug={skill} />{skill}
-                </span>
-              {/each}
-            </p>
-          {/if}
-          {#if atom.cluster_id || atom.needs_context || atom.needs_metrics}
-            <p class="mt-1 flex flex-wrap gap-1.5">
-              {#if atom.cluster_id}
-                <span class="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                  Looks similar to another
-                </span>
-              {/if}
-              {#if atom.needs_context}
-                <span class="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                  Thin on context
-                </span>
-              {/if}
-              {#if atom.needs_metrics}
-                <span class="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                  No number yet
-                </span>
-              {/if}
-            </p>
-          {/if}
-          {#if !atom.employment_id}
-            <div class="mt-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onclick={() => startPromoteToProject(atom)}
-                disabled={busy || turnActive}
-              >
-                Save as project
-              </Button>
-            </div>
-          {/if}
-        </div>
-        <!-- Deliberately NOT hover-gated. This page exists so its owner can correct what
-             was recorded about them; hiding the way to do that until the pointer lands on
-             the right row means most people never learn it is possible, and a touch device
-             never hovers at all. -->
-        <div class="flex shrink-0 gap-1">
-          {#if unconfirmed(atom)}
-            <Button
-              size="icon"
-              variant="ghost"
-              onclick={() => confirmAtom(atom)}
-              disabled={busy}
-              aria-label="Confirm achievement"
-              class="text-muted-foreground hover:bg-brand-muted hover:text-brand-strong"
-            >
-              <Check class="size-4" />
-            </Button>
-          {/if}
-          <Button
-            size="icon"
-            variant="ghost"
-            onclick={() => startEdit(atom)}
-            aria-label="Edit achievement"
-          >
-            <Pencil class="size-4" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onclick={() => requestRemove(atom)}
-            aria-label="Remove achievement"
-            class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          >
-            <Trash2 class="size-4" />
-          </Button>
-        </div>
-      </div>
-    {/if}
-  </li>
 {/snippet}

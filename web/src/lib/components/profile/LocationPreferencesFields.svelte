@@ -15,8 +15,13 @@
   import { buildLocationPreferences } from '$lib/profileLocation';
   import type { DerivedLocation, LocationPreferences } from '$lib/types';
   import { Input } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './LocationPreferencesFields.messages';
   import RemoteSearchSelect from '../facets/RemoteSearchSelect.svelte';
   import SearchSelect from '../facets/SearchSelect.svelte';
+
+  const s = $derived(t(messages, locale()));
 
   let {
     value,
@@ -171,7 +176,7 @@
   <SearchSelect
     options={COUNTRY_OPTIONS}
     include={countries}
-    placeholder="Add specific countries"
+    placeholder={s.addCountries}
     onToggle={onCountry}
     cap={8}
     clearOnSelect
@@ -179,11 +184,11 @@
 {/snippet}
 
 <div class="flex flex-col gap-4">
-  <span class="text-xs text-muted-foreground">All optional — used to tailor your job filters.</span>
+  <span class="text-xs text-muted-foreground">{s.hint}</span>
 
   <!-- Work format -->
   <div class="flex flex-col gap-1.5">
-    <span class="text-xs font-medium text-muted-foreground">Work format</span>
+    <span class="text-xs font-medium text-muted-foreground">{s.workFormat}</span>
     <div class="flex flex-wrap gap-1.5">
       {#each WORK_MODE_OPTIONS as opt (opt.value)}
         <button
@@ -205,14 +210,14 @@
        onsite-country checks compare a job against. One combined field — city and country
        in a single pick — instead of a country dropdown beside a separate city search. -->
   <div class="flex flex-col gap-1.5">
-    <span class="text-xs font-medium text-muted-foreground">Where you're based</span>
+    <span class="text-xs font-medium text-muted-foreground">{s.whereBased}</span>
     <div class="relative">
       <Input
         bind:value={baseQuery}
         oninput={onBaseInput}
         onfocus={() => baseQuery.trim().length >= 2 && (baseOpen = true)}
         onblur={() => setTimeout(() => (baseOpen = false), 120)}
-        placeholder="City or country"
+        placeholder={s.cityOrCountry}
         autocomplete="off"
         role="combobox"
         aria-expanded={baseOpen}
@@ -226,7 +231,7 @@
           class="absolute inset-x-0 top-full z-10 mt-1 max-h-60 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg"
         >
           {#if baseLoading && baseResults.length === 0}
-            <li class="px-2 py-1.5 text-sm text-muted-foreground">Searching…</li>
+            <li class="px-2 py-1.5 text-sm text-muted-foreground">{s.searching}</li>
           {/if}
           {#each baseResults as row (row.value + row.country)}
             <li>
@@ -250,13 +255,13 @@
   </div>
 
   {#if workModes.length === 0}
-    <span class="text-xs text-muted-foreground">Pick a work format above to set where you can work.</span>
+    <span class="text-xs text-muted-foreground">{s.pickFormatFirst}</span>
   {/if}
 
   <!-- Remote reach — only relevant once Remote is accepted. -->
   {#if wantsRemote}
     <div class="flex flex-col gap-1.5">
-      <span class="text-xs font-medium text-muted-foreground">Remote — regions you can work for (empty = worldwide)</span>
+      <span class="text-xs font-medium text-muted-foreground">{s.remoteReach}</span>
       {@render geoReach(
         remoteRegions,
         (v) => {
@@ -285,10 +290,10 @@
           }}
           class="size-4 rounded border-input"
         />
-        Open to relocation
+        {s.openToRelocation}
       </label>
       {#if relocOpen}
-        <span class="text-xs font-medium text-muted-foreground">Where you'd relocate (empty = anywhere)</span>
+        <span class="text-xs font-medium text-muted-foreground">{s.relocateWhere}</span>
         {@render geoReach(
           relocRegions,
           (v) => {
@@ -309,7 +314,7 @@
             emit();
           }}
           fallbackLabel={(v) => v}
-          placeholder="Add a city"
+          placeholder={s.addCity}
           clearOnSelect
         />
       {/if}

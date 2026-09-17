@@ -21,6 +21,20 @@ const facetFor: Partial<Record<ApiSuggestionPart['kind'], string>> = {
 export interface ApplyPlan {
   facets: [param: string, value: string][];
   q?: string;
+  /** Which fields `q` should match against. Set only when a title part is present —
+   *  a suggestion with no title never touches search text, so it must not narrow an
+   *  unrelated `q` a caller might already have typed. */
+  qFields?: string[];
+}
+
+/** Wraps a title suggestion's text for search: quoted, so Meilisearch requires every
+ *  word present and turns off typo tolerance for them (see the search-suggestions
+ *  spec — this deployment's index cannot verify word adjacency, so it is not a
+ *  literal phrase match). A `"` embedded in the text is stripped first: it is
+ *  Meilisearch's own quoting delimiter, and left in place it would split the query
+ *  into more than one quoted segment instead of one. */
+function quoteForTitleSearch(text: string): string {
+  return `"${text.replaceAll('"', '')}"`;
 }
 
 /** Everything a row names, applied together.
@@ -31,7 +45,8 @@ export function applyParams(parts: readonly ApiSuggestionPart[]): ApplyPlan {
   const plan: ApplyPlan = { facets: [] };
   for (const part of parts) {
     if (part.kind === 'title') {
-      plan.q = part.text;
+      plan.q = quoteForTitleSearch(part.text);
+      plan.qFields = ['title'];
       continue;
     }
     const param = facetFor[part.kind];

@@ -4,6 +4,8 @@ import {
   emptyFilters,
   filtersToParams,
   filtersFromParams,
+  filtersWithParts,
+  displayQuery,
   activeFilterCount,
   canonicalQuery,
   savedSearchQuery,
@@ -64,6 +66,19 @@ describe('filtersToParams', () => {
   it('omits a facet with no values', () => {
     expect(filtersToParams(emptyFilters()).toString()).toBe('');
   });
+
+  // q_fields is how a title suggestion's click restricts `q` to the title field (see
+  // apiSuggestions.ts) — it has to survive filtersToParams or it never reaches the
+  // list's own reload, pagination, or facet-count requests, all of which read the
+  // filter state through this function rather than the original navigation URL.
+  it('serializes qFields as a comma-joined q_fields param', () => {
+    const p = filtersToParams({ ...emptyFilters(), qFields: ['title'] });
+    expect(p.get('q_fields')).toBe('title');
+  });
+
+  it('omits q_fields when unset', () => {
+    expect(filtersToParams(emptyFilters()).has('q_fields')).toBe(false);
+  });
 });
 
 describe('filtersFromParams', () => {
@@ -113,6 +128,14 @@ describe('filtersFromParams', () => {
     const f = filtersFromParams(new URLSearchParams('skills=go,,react,'));
     expect(sk(f).include).toEqual(['go', 'react']);
   });
+
+  it('reads q_fields into qFields', () => {
+    expect(filtersFromParams(new URLSearchParams('q_fields=title')).qFields).toEqual(['title']);
+  });
+
+  it('reads a missing q_fields as null, not an empty array', () => {
+    expect(filtersFromParams(new URLSearchParams('')).qFields).toBeNull();
+  });
 });
 
 describe('filtersToParams / filtersFromParams round-trip', () => {
@@ -127,6 +150,34 @@ describe('filtersToParams / filtersFromParams round-trip', () => {
     const oldStyle = filtersFromParams(new URLSearchParams('skills=go&skills=react'));
     const newStyle = filtersFromParams(new URLSearchParams('skills=go,react'));
     expect(oldStyle).toEqual(newStyle);
+  });
+
+  it('round-trips qFields', () => {
+    const f = { ...emptyFilters(), qFields: ['title'] };
+    expect(filtersFromParams(filtersToParams(f)).qFields).toEqual(['title']);
+  });
+});
+
+// A completion from the suggestions endpoint composes a phrase — see the doc comment
+// on filtersWithParts. qFields travels with q as ONE discrete replacement: applying a
+// suggestion with no title part must clear whatever restriction a PREVIOUS suggestion
+// left behind, not merge with it.
+describe('filtersWithParts', () => {
+  it('sets q and every named facet in one write', () => {
+    const got = filtersWithParts(emptyFilters(), [['category', 'backend']], 'Backend Engineer');
+    expect(got.q).toBe('Backend Engineer');
+    expect(got.facets.category?.include).toEqual(['backend']);
+  });
+
+  it('sets qFields when given', () => {
+    const got = filtersWithParts(emptyFilters(), [], '"Founding Engineer"', ['title']);
+    expect(got.qFields).toEqual(['title']);
+  });
+
+  it('clears a previous qFields when applying a suggestion with none of its own', () => {
+    const withRestriction = { ...emptyFilters(), qFields: ['title'] };
+    const got = filtersWithParts(withRestriction, [['category', 'backend']], 'Backend Engineer');
+    expect(got.qFields).toBeNull();
   });
 });
 
@@ -587,5 +638,33 @@ describe('matchSortNeedsSkills', () => {
   // Nobody asked for match here, so there is nothing to explain.
   it('says nothing when no ordering was stated', () => {
     expect(matchSortNeedsSkills(emptyFilters(), false)).toBe(false);
+  });
+});
+
+// A title suggestion's click wraps `q` in Meilisearch's quoting syntax (see
+// apiSuggestions.ts's quoteForTitleSearch) so the search engine matches it
+// correctly — but that wrapper is a query-construction detail, not what the
+// visitor typed, and must never reach a filter chip, the search box, or an
+// analytics event as literal quote marks.
+describe('displayQuery', () => {
+  it('strips a matching pair of wrapping quotes', () => {
+    expect(displayQuery('"Founding Engineer"')).toBe('Founding Engineer');
+  });
+
+  it('leaves unquoted text untouched', () => {
+    expect(displayQuery('Founding Engineer')).toBe('Founding Engineer');
+  });
+
+  it('leaves a lone quote character untouched', () => {
+    expect(displayQuery('"')).toBe('"');
+  });
+
+  it('leaves a quote at only one end untouched', () => {
+    expect(displayQuery('"Founding Engineer')).toBe('"Founding Engineer');
+    expect(displayQuery('Founding Engineer"')).toBe('Founding Engineer"');
+  });
+
+  it('leaves the empty string untouched', () => {
+    expect(displayQuery('')).toBe('');
   });
 });

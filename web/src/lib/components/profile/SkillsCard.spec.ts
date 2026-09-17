@@ -1,13 +1,28 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UserProfile } from '$lib/types';
 import SkillsCard from './SkillsCard.svelte';
+
+// A mutable ref (the same shape ApiKeysView.spec.ts uses for its `user`) rather than a
+// fixed `{ locale: 'en' }`, so the i18n cases below can render under `'ru'` without a
+// second mock factory.
+const localeRef = vi.hoisted(() => ({ current: 'en' as 'en' | 'ru' }));
+vi.mock('$app/state', () => ({
+  page: {
+    get data() {
+      return { locale: localeRef.current };
+    },
+    url: new URL('http://localhost/'),
+  },
+}));
 
 const baseProfile: UserProfile = {
   specializations: ['backend'],
   skills: ['go', 'python'],
   seniorities: [],
-  excluded_skills: ['java'],
+  excluded_skills: [],
+  excluded_sources: [],
+  excluded_companies: [],
   location_preferences: null,
   derived_location: null,
   cv: null,
@@ -15,11 +30,9 @@ const baseProfile: UserProfile = {
   updated_at: null,
 };
 
-const { addSkill, removeSkill, avoidSkill, unavoidSkill } = vi.hoisted(() => ({
+const { addSkill, removeSkill } = vi.hoisted(() => ({
   addSkill: vi.fn(),
   removeSkill: vi.fn(),
-  avoidSkill: vi.fn(),
-  unavoidSkill: vi.fn(),
 }));
 
 vi.mock('$lib/profile.svelte', () => ({
@@ -29,8 +42,6 @@ vi.mock('$lib/profile.svelte', () => ({
     },
     addSkill,
     removeSkill,
-    avoidSkill,
-    unavoidSkill,
   },
 }));
 
@@ -43,8 +54,10 @@ vi.mock('$lib/skillDictionary', () => ({
 beforeEach(() => {
   addSkill.mockReset().mockResolvedValue(baseProfile);
   removeSkill.mockReset().mockResolvedValue(baseProfile);
-  avoidSkill.mockReset().mockResolvedValue(baseProfile);
-  unavoidSkill.mockReset().mockResolvedValue(baseProfile);
+});
+
+afterEach(() => {
+  localeRef.current = 'en';
 });
 
 describe('SkillsCard', () => {
@@ -57,16 +70,6 @@ describe('SkillsCard', () => {
     await fireEvent.click(screen.getByTitle('go'));
 
     expect(removeSkill).toHaveBeenCalledWith('go');
-    expect(onProfileChanged).toHaveBeenCalledTimes(1);
-  });
-
-  it('notifies onProfileChanged after un-avoiding a skill succeeds', async () => {
-    const onProfileChanged = vi.fn();
-    render(SkillsCard, { props: { onProfileChanged } });
-
-    await fireEvent.click(screen.getByTitle('java'));
-
-    expect(unavoidSkill).toHaveBeenCalledWith('java');
     expect(onProfileChanged).toHaveBeenCalledTimes(1);
   });
 
@@ -89,5 +92,25 @@ describe('SkillsCard', () => {
     await fireEvent.click(screen.getByTitle('go'));
 
     expect(removeSkill).toHaveBeenCalledWith('go');
+  });
+});
+
+describe('SkillsCard — Russian locale', () => {
+  it('renders SkillsPicker\'s heading and search placeholder in Russian', () => {
+    localeRef.current = 'ru';
+    render(SkillsCard, { props: {} });
+
+    expect(screen.getByText('Навыки')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Поиск навыков')).toBeTruthy();
+  });
+
+  it('renders the save-failure message in Russian', async () => {
+    localeRef.current = 'ru';
+    removeSkill.mockReset().mockRejectedValue(new Error('network error'));
+    render(SkillsCard, { props: {} });
+
+    await fireEvent.click(screen.getByTitle('go'));
+
+    expect(screen.getByText('Не удалось обновить go в вашем профиле. Попробуйте ещё раз.')).toBeTruthy();
   });
 });

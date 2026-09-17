@@ -14,6 +14,7 @@
   } from '@lucide/svelte';
   import { notificationCenter } from '$lib/notificationCenter.svelte';
   import { notificationTarget } from '$lib/notificationTarget';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import { cn } from '$lib/ui';
   import type { NotificationItem, NotificationKind } from '$lib/types';
@@ -82,7 +83,7 @@
       {item.title}
     </span>
     <span class="mt-0.5 block text-xs text-muted-foreground">{item.body}</span>
-    <span class="mt-1 block text-[11px] text-muted-foreground">{timeAgo(item.created_at)}</span>
+    <span class="mt-1 block text-[11px] text-muted-foreground">{timeAgo(item.created_at, locale())}</span>
   </span>
   {#if unread}
     <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" aria-label="unread"></span>

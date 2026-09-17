@@ -1,3 +1,5 @@
+import type { Locale } from './locale';
+
 /** User-facing message for a caught value: the Error's message, else the fallback. */
 export function errorMessage(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
@@ -32,18 +34,22 @@ function parseTs(ts: string | null | undefined): Date | null {
 // to disagree about how a month is spelled.
 const DATE_PARTS = { year: 'numeric', month: 'short', day: 'numeric' } as const;
 
-/** Format an RFC3339 timestamp as a short local date; '' for null/invalid. */
-export function formatDate(ts: string | null | undefined): string {
+/** Format an RFC3339 timestamp as a short local date; '' for null/invalid. `locale` is
+ *  required — always the page's own resolved locale (`locale()` from
+ *  `$lib/i18n/currentLocale.svelte`), never the visitor's browser default, so a date
+ *  never disagrees with the text around it. */
+export function formatDate(ts: string | null | undefined, locale: Locale): string {
   const d = parseTs(ts);
-  return d ? d.toLocaleDateString(undefined, DATE_PARTS) : '';
+  return d ? d.toLocaleDateString(locale, DATE_PARTS) : '';
 }
 
 /** The same instant with the clock time, for a `title` behind a formatDate or
  *  formatDateOrAgo label: the visible line stays short, and a reader who cares about
- *  the hour gets it on hover rather than in a second column. '' for null/invalid. */
-export function formatDateTime(ts: string | null | undefined): string {
+ *  the hour gets it on hover rather than in a second column. '' for null/invalid. See
+ *  `formatDate` for why `locale` is required. */
+export function formatDateTime(ts: string | null | undefined, locale: Locale): string {
   const d = parseTs(ts);
-  return d ? d.toLocaleString(undefined, { ...DATE_PARTS, hour: '2-digit', minute: '2-digit' }) : '';
+  return d ? d.toLocaleString(locale, { ...DATE_PARTS, hour: '2-digit', minute: '2-digit' }) : '';
 }
 
 /** Whether s is a LinkedIn personal-profile URL: an http(s) link on linkedin.com (or a
@@ -95,18 +101,27 @@ export type TimeAgoStyle = 'long' | 'short';
 
 // Built once each: constructing an Intl formatter resolves a locale and loads its
 // data, which dwarfs formatting with one — and the feed calls timeAgo per job
-// card. The locale is the runtime default, which cannot change within a process
-// or a browser session, so one instance per style is safe to share.
-const relativeTime: Partial<Record<TimeAgoStyle, Intl.RelativeTimeFormat>> = {};
+// card. Keyed on locale as well as style, because unlike the runtime default a
+// caller-supplied locale CAN change from one call to the next within the same
+// session (the header notification bell renders across both an /my/** page and a
+// public one) — a cache keyed on style alone would silently keep serving the
+// first-seen locale's formatter to every later locale.
+const relativeTime: Partial<Record<`${Locale}:${TimeAgoStyle}`, Intl.RelativeTimeFormat>> = {};
 
 /** Format an RFC3339 timestamp as a relative "N ago" label (e.g. "13 seconds
  *  ago", "2 days ago"); '' for null/invalid. How recently a job was posted is a
- *  key signal, so the list card shows it relative rather than as a bare date. */
-export function timeAgo(ts: string | null | undefined, style: TimeAgoStyle = 'long'): string {
+ *  key signal, so the list card shows it relative rather than as a bare date. See
+ *  `formatDate` for why `locale` is required. */
+export function timeAgo(
+  ts: string | null | undefined,
+  locale: Locale,
+  style: TimeAgoStyle = 'long'
+): string {
   const d = parseTs(ts);
   if (!d) return '';
   const seconds = Math.round((Date.now() - d.getTime()) / 1000);
-  const rtf = (relativeTime[style] ??= new Intl.RelativeTimeFormat(undefined, {
+  const cacheKey = `${locale}:${style}` as const;
+  const rtf = (relativeTime[cacheKey] ??= new Intl.RelativeTimeFormat(locale, {
     numeric: 'auto',
     style,
   }));
@@ -130,10 +145,14 @@ const RECENT_MS = 86400 * 1000;
  *
  *  `style` reaches only the relative branch. Past the day boundary there is nothing to
  *  abbreviate, and a date a reader is comparing against another posting's must not be
- *  shortened out from under them. */
-export function formatDateOrAgo(ts: string | null | undefined, style: TimeAgoStyle = 'long'): string {
+ *  shortened out from under them. See `formatDate` for why `locale` is required. */
+export function formatDateOrAgo(
+  ts: string | null | undefined,
+  locale: Locale,
+  style: TimeAgoStyle = 'long'
+): string {
   const d = parseTs(ts);
   if (!d) return '';
   const age = Date.now() - d.getTime();
-  return age >= 0 && age < RECENT_MS ? timeAgo(ts, style) : formatDate(ts);
+  return age >= 0 && age < RECENT_MS ? timeAgo(ts, locale, style) : formatDate(ts, locale);
 }

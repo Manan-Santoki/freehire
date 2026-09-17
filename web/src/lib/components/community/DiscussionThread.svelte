@@ -7,6 +7,7 @@
   import { communityFormError } from '$lib/community';
   import type { CommunityThread, CommunityReply } from '$lib/types';
   import { Button } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import ReplyNode from './ReplyNode.svelte';
 
@@ -82,7 +83,7 @@
 
   <header class="thread__head">
     <h1 class="thread__title">{thread.title}</h1>
-    <p class="thread__meta">{thread.author} · {timeAgo(thread.created_at)}</p>
+    <p class="thread__meta">{thread.author} · {timeAgo(thread.created_at, locale())}</p>
   </header>
   <p class="thread__body">{thread.body}</p>
 

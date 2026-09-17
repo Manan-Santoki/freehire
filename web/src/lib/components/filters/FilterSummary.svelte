@@ -1,6 +1,6 @@
 <script lang="ts">
   import { dynamicLabel, FACETS } from '$lib/facets';
-  import { type FilterStore, savedSearchQuery } from '$lib/filters';
+  import { type FilterStore, savedSearchQuery, displayQuery } from '$lib/filters';
   import { experienceLabel, freshnessLabel } from '$lib/filterControls';
   import FilterSummaryShell, { type SummaryChip, type SummaryGroup } from './FilterSummaryShell.svelte';
   import SaveSearchAlert from './SaveSearchAlert.svelte';
@@ -47,7 +47,7 @@
 
     // The text query (from the header search on the standalone list) as a removable
     // chip, so the sidebar shows what you searched, not just the facet filters.
-    push('Search', f.q.trim() ? [{ key: 'q', text: f.q, exclude: false, remove: () => store.setQuery('') }] : []);
+    push('Search', f.q.trim() ? [{ key: 'q', text: displayQuery(f.q), exclude: false, remove: () => store.setQuery('') }] : []);
 
     facetGroup('category', 'Specialization');
     facetGroup('ai_archetype', 'AI Specialization');

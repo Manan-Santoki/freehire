@@ -5,6 +5,7 @@
   import { companyFeedbackTypeLabel } from '$lib/companyFeedback';
   import type { ReportedCompanyFeedback } from '$lib/types';
   import { Badge, Button } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import States from './States.svelte';
 
@@ -79,7 +80,7 @@
             </div>
             <p class="whitespace-pre-wrap text-sm text-muted-foreground">{r.body}</p>
             <span class="text-xs text-muted-foreground">
-              {r.rating}★ by {r.author}, posted {timeAgo(r.created_at)} · reported for {r.report_reasons.join(', ')}
+              {r.rating}★ by {r.author}, posted {timeAgo(r.created_at, locale())} · reported for {r.report_reasons.join(', ')}
             </span>
           </div>
           <div class="flex shrink-0 gap-2">

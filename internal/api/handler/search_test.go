@@ -9,6 +9,7 @@ import (
 
 	"github.com/strelov1/freehire/internal/job/jobview"
 	"github.com/strelov1/freehire/internal/search/search"
+	"github.com/strelov1/freehire/internal/search/suggest"
 )
 
 type fakeSearcher struct {
@@ -324,5 +325,34 @@ func TestSearchJobs_ViewCountSortDefaultsToDescending(t *testing.T) {
 	}
 	if len(fake.got.Sort) != 1 || fake.got.Sort[0] != "view_count:desc" {
 		t.Errorf("Sort = %v, want [view_count:desc] under query text", fake.got.Sort)
+	}
+}
+
+// A title suggestion's click sends its query quoted (see the search-suggestions
+// spec). recordQuery must land it on the same demand key an unquoted, typed search
+// for the same words would use — otherwise every suggestion click starts a second,
+// never-matching demand bucket for a phrase the dictionary already tracks.
+func TestDemandKey_StripsMatchingQuotePairBeforeNormalising(t *testing.T) {
+	quoted := demandKey(`"Founding Engineer"`)
+	typed := demandKey(`Founding Engineer`)
+	if quoted != typed {
+		t.Fatalf("demandKey(quoted) = %q, demandKey(typed) = %q, want equal", quoted, typed)
+	}
+	if quoted != suggest.Title("Founding Engineer") {
+		t.Fatalf("demandKey(quoted) = %q, want %q", quoted, suggest.Title("Founding Engineer"))
+	}
+}
+
+// A single leading or trailing quote is not the suggestion-click shape (that always
+// wraps both ends), so it is left alone rather than guessed at — stripping only one
+// side would rewrite text nobody asked to rewrite.
+func TestDemandKey_LeavesUnmatchedQuoteAlone(t *testing.T) {
+	leading := demandKey(`"Founding Engineer`)
+	if want := suggest.Title(`"Founding Engineer`); leading != want {
+		t.Fatalf("demandKey(leading-only) = %q, want %q (untouched)", leading, want)
+	}
+	trailing := demandKey(`Founding Engineer"`)
+	if want := suggest.Title(`Founding Engineer"`); trailing != want {
+		t.Fatalf("demandKey(trailing-only) = %q, want %q (untouched)", trailing, want)
 	}
 }

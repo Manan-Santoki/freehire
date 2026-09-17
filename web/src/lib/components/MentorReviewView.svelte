@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { companyLabel } from '$lib/mentorship';
   import { errorMessage, formatDate } from '$lib/utils';
   import { AsyncData } from '$lib/asyncData.svelte';
@@ -78,7 +79,7 @@
                 </p>
               </div>
               <p class="text-muted-foreground shrink-0 text-xs">
-                Submitted {formatDate(profile.created_at)}
+                Submitted {formatDate(profile.created_at, locale())}
               </p>
             </div>
 

@@ -103,6 +103,24 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 	return stats, nil
 }
 
+// markRevoked flags the connection for re-consent, once a call has already logged which
+// one revealed the revoked grant. Shared by every call site that can reveal one (the
+// list call, a message fetch, a thread-sibling listing) so the store write and the
+// outcome it reports cannot drift between them the way ListThreadMessageIDs's own check
+// once did.
+func (w *Worker) markRevoked(ctx context.Context, userID int64) outcome {
+	if err := w.store.SetNeedsReconsent(ctx, userID); err != nil {
+		// The status did not move, so the mailbox is still `connected` and the next
+		// run will meet the same revoked grant and try again. Counting this as a
+		// re-consent would report a transition that did not happen — and this is the
+		// one outcome the run must not call clean, because nothing else will notice:
+		// the user is told to reconnect by a status that was never written.
+		log.Printf("gmail-sync: user %d: set status: %v", userID, err)
+		return outcomeFailed
+	}
+	return outcomeReconsent
+}
+
 // SyncUser syncs one connected user's mail on demand (a manual refresh from the
 // inbox), reusing the same best-effort per-user path as the cron worker. The outcome is
 // dropped: the caller is a background goroutine behind a button, and the user reads the
@@ -142,20 +160,12 @@ func (w *Worker) syncUser(ctx context.Context, u Connection) outcome {
 			return outcomeFailed
 		}
 		log.Printf("gmail-sync: user %d: list: %v — marking needs_reconsent", u.UserID, err)
-		if err := w.store.SetNeedsReconsent(ctx, u.UserID); err != nil {
-			// The status did not move, so the mailbox is still `connected` and the next
-			// run will meet the same revoked grant and try again. Counting this as a
-			// re-consent would report a transition that did not happen — and this is the
-			// one outcome the run must not call clean, because nothing else will notice:
-			// the user is told to reconnect by a status that was never written.
-			log.Printf("gmail-sync: user %d: set status: %v", u.UserID, err)
-			return outcomeFailed
-		}
-		return outcomeReconsent
+		return w.markRevoked(ctx, u.UserID)
 	}
 
 	newest := u.Cursor
 	sawFailure := false
+	revoked := false
 	seen := make(map[string]bool)
 	seenThread := make(map[string]bool)
 	var threadIDs []string
@@ -168,6 +178,12 @@ func (w *Worker) syncUser(ctx context.Context, u Connection) outcome {
 	// frozen at whatever it last reached — a newer message can easily succeed
 	// (and advance newest) BEFORE an older sibling in the same wave fails, and
 	// freezing in place would still let the watermark jump past the failed one.
+	//
+	// A message fetch can reveal a revoked grant exactly as the list call can —
+	// RevokedGrant reads the status code, not which endpoint sent it — and must be
+	// asked here too: otherwise a grant that lost message-read access but still
+	// lists fine re-fetches, and re-403s, the same unadvancing watermark's worth of
+	// messages every run, forever, instead of being flagged for re-consent once.
 	fetch := func(id string) {
 		if seen[id] {
 			return
@@ -175,6 +191,11 @@ func (w *Worker) syncUser(ctx context.Context, u Connection) outcome {
 		seen[id] = true
 		msg, err := reader.GetMessage(ctx, id)
 		if err != nil {
+			if RevokedGrant(err) {
+				log.Printf("gmail-sync: user %d: get %s: %v — marking needs_reconsent", u.UserID, id, err)
+				revoked = true
+				return
+			}
 			log.Printf("gmail-sync: user %d: get %s: %v", u.UserID, id, err)
 			sawFailure = true
 			return
@@ -198,19 +219,38 @@ func (w *Worker) syncUser(ctx context.Context, u Connection) outcome {
 
 	for _, id := range ids {
 		fetch(id)
+		if revoked {
+			break
+		}
 	}
 	// Thread expansion: pull every sibling of a matched message's thread so a
 	// reply with no ATS marker (a personal recruiter, a scheduling follow-up) is
-	// ingested behind the anchor the search already found.
+	// ingested behind the anchor the search already found. Skipped once the grant
+	// is known revoked — every further call would just 403 too.
 	for _, tid := range threadIDs {
+		if revoked {
+			break
+		}
 		siblings, err := reader.ListThreadMessageIDs(ctx, tid)
 		if err != nil {
+			if RevokedGrant(err) {
+				log.Printf("gmail-sync: user %d: thread %s: %v — marking needs_reconsent", u.UserID, tid, err)
+				revoked = true
+				break
+			}
 			log.Printf("gmail-sync: user %d: thread %s: %v", u.UserID, tid, err)
 			continue
 		}
 		for _, id := range siblings {
 			fetch(id)
+			if revoked {
+				break
+			}
 		}
+	}
+
+	if revoked {
+		return w.markRevoked(ctx, u.UserID)
 	}
 
 	if sawFailure {

@@ -68,8 +68,11 @@ func TestHackerNewsFetchReadsTheTwoNewestHiringThreads(t *testing.T) {
 	if modash.URL != "https://modash.io" {
 		t.Errorf("modash URL = %q, want the post's first link", modash.URL)
 	}
-	if !modash.Remote || modash.WorkMode != "remote" {
-		t.Errorf("modash Remote/WorkMode = %v/%q", modash.Remote, modash.WorkMode)
+	// WorkMode stays unset: it must carry only a platform-STRUCTURED signal (source.go),
+	// never this free-text heuristic, which the pipeline's own location dictionary resolves
+	// instead — see TestHackerNewsToJobDoesNotSetWorkModeFromFreeText.
+	if !modash.Remote || modash.WorkMode != "" {
+		t.Errorf("modash Remote/WorkMode = %v/%q, want true/\"\"", modash.Remote, modash.WorkMode)
 	}
 	if !strings.Contains(modash.Description, "Modash helps brands find creators.") || !strings.Contains(modash.Description, "Senior Product Engineer") {
 		t.Errorf("modash Description = %q, want the whole post", modash.Description)
@@ -126,15 +129,55 @@ func TestHackerNewsParseHeader(t *testing.T) {
 		{"Acme | Engineer | NYC | ONSITE<p>body", hackernewsHeader{Company: "Acme", Title: "Engineer", Location: "NYC"}, true},
 		{"Acme | Engineer | Contract | Remote<p>body", hackernewsHeader{Company: "Acme", Title: "Engineer", Location: "Remote", Remote: true}, true},
 		{"Acme | Engineer | $200k | London", hackernewsHeader{Company: "Acme", Title: "Engineer", Location: "London"}, true},
+		// € and £ are multi-byte UTF-8; a salary segment leading with either must be skipped
+		// the same way a $ one is, not mistaken for the location.
+		{"Acme | Engineer | €95k-120k | Berlin", hackernewsHeader{Company: "Acme", Title: "Engineer", Location: "Berlin"}, true},
+		{"Acme | Engineer | £80k-100k | London", hackernewsHeader{Company: "Acme", Title: "Engineer", Location: "London"}, true},
 		{"Acme | https://acme.example/jobs", hackernewsHeader{}, false},
 		{"Just a sentence with no pipes<p>more", hackernewsHeader{}, false},
 		{" | Engineer", hackernewsHeader{}, false},
+		// A URL immediately followed by closing punctuation, no space in between: the match
+		// must stop before the paren, not swallow it into the stripped segment.
+		{"Acme | Fullstack SWE (https://acme.example/jobs) | NYC", hackernewsHeader{Company: "Acme", Title: "Fullstack SWE ()", Location: "NYC"}, true},
+		// A header whose employer segment is itself a bare URL names no real employer —
+		// dropped the same way an all-URL title already is.
+		{"https://acme.example | Senior Engineer | NYC", hackernewsHeader{}, false},
+		// A post that opens with the role, not the employer: every segment is shifted by one,
+		// so filing it would write "Senior Software Engineer, Frontend" as the company and
+		// "New York, NY (In-Office)" as the role. Observed live; dropped, not corrected.
+		{"Senior Software Engineer, Frontend | New York, NY (In-Office) | Full-time", hackernewsHeader{}, false},
+		{"Founding Engineer | Remote | Equity", hackernewsHeader{}, false},
+		{"Head of Data Engineering | Berlin", hackernewsHeader{}, false},
+		// The seniority word alone is not evidence — these are real employers, and dropping
+		// them is the false positive the paired role noun exists to prevent.
+		{"Lead Bank | Engineer | Kansas City", hackernewsHeader{Company: "Lead Bank", Title: "Engineer", Location: "Kansas City"}, true},
+		{"Chief Industries | Welder | Nebraska", hackernewsHeader{Company: "Chief Industries", Title: "Welder", Location: "Nebraska"}, true},
 	}
 	for _, c := range cases {
 		got, ok := hackernewsParseHeader(c.text)
 		if ok != c.ok || got != c.want {
 			t.Errorf("hackernewsParseHeader(%q) = %+v, %v; want %+v, %v", c.text, got, ok, c.want, c.ok)
 		}
+	}
+}
+
+func TestHackerNewsToJobDoesNotSetWorkModeFromFreeText(t *testing.T) {
+	// "Remote" in the Title, not the Location — Job.WorkMode must stay unset so the
+	// pipeline's own location/description dictionary resolves it, per source.go's
+	// documented contract that WorkMode carries only a platform-STRUCTURED signal.
+	// A set WorkMode takes precedence over that dictionary, so this Title match would
+	// otherwise wrongly override a genuinely onsite Location.
+	c := hackernewsItem{
+		ID:        1,
+		CreatedAt: "2026-09-01T00:00:00Z",
+		Text:      "Acme | Remote Systems Engineer | Full-time | Austin, TX",
+	}
+	job, ok := c.toJob()
+	if !ok {
+		t.Fatal("toJob() = false, want a job")
+	}
+	if job.WorkMode != "" {
+		t.Errorf("WorkMode = %q, want empty", job.WorkMode)
 	}
 }
 

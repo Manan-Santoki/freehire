@@ -2,25 +2,7 @@
   import { page } from '$app/state';
   import { afterNavigate } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import {
-    Menu,
-    X,
-    Sun,
-    Moon,
-    CircleUser,
-    Activity,
-    ListChecks,
-    BellRing,
-    KeyRound,
-    Inbox,
-    Bot,
-    ScrollText,
-    FileText,
-    SquarePlus,
-    ShieldCheck,
-    LogOut,
-    LogIn,
-  } from '@lucide/svelte';
+  import { Menu, X, Sun, Moon, CircleUser, SquarePlus, ShieldCheck, LogOut, LogIn } from '@lucide/svelte';
   import { isAuthenticated, currentUser, logout as doLogout } from '$lib/auth.svelte';
   import { promptSignIn } from '$lib/signin';
   import { themeStore } from '$lib/theme.svelte';
@@ -30,18 +12,22 @@
   import BrandMark from './BrandMark.svelte';
   import GithubStars from './GithubStars.svelte';
   import NotificationBell from './NotificationBell.svelte';
+  import HeaderProfileMenu from './HeaderProfileMenu.svelte';
   import { ensureAccountSetupLoaded, setupOutstanding } from '$lib/accountSetup.svelte';
   import { ProviderIcon } from '$lib/ui';
   import { NAV } from '$lib/siteNav';
+  import { accountLinks } from '$lib/headerAccountLinks';
   import { DISCORD_URL } from '$lib/socialLinks';
 
-  // The single menu absorbs the site nav, the signed-in account items, the theme
-  // toggle, and the auth action — the header's only control besides search.
+  // This menu carries the site nav and the theme toggle on every viewport; on
+  // mobile it additionally carries the signed-in account items and the auth
+  // action (Sign in/Log out) — on desktop those live in HeaderProfileMenu, the
+  // bar's separate profile trigger, so Log out is reachable without scrolling
+  // past the whole site nav first (openspec/changes/split-header-profile-menu).
   //
   // Two layouts from one markup: on mobile the panel is a full-screen drawer
   // (own top bar · scrollable sectioned links · pinned bottom action bar); on
-  // desktop it stays the small anchored dropdown. The theme toggle lives inside
-  // the dropdown for both layouts — the bar itself only carries profile/sign-in.
+  // desktop it stays the small anchored dropdown.
 
   let open = $state(false);
   let root = $state<HTMLElement | null>(null);
@@ -55,8 +41,8 @@
     'flex items-center gap-2 rounded-md px-4 min-h-11 text-base transition-colors hover:bg-accent hover:text-accent-foreground sm:min-h-0 sm:rounded-none sm:px-3 sm:py-2 sm:text-sm';
   const linkClass = (href: string) =>
     cn(rowBase, isActive(href) ? 'font-medium text-foreground' : 'text-muted-foreground');
-  // Shared icon-button treatment for the bar controls (Discord, profile/sign-in,
-  // menu).
+  // Shared icon-button treatment for this component's own bar controls
+  // (Discord, menu) — HeaderProfileMenu defines its own copy for its trigger.
   const iconButton =
     'size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
@@ -72,9 +58,10 @@
   // /jobs — the homepage is the landing page above it, reachable via the logo.
   const primaryLinks = [NAV.jobs, NAV.companies];
 
-  // About is rendered on its own at the foot of the list, so its glyph is lifted out
-  // of NAV here rather than spelled a second time.
+  // About and Open are rendered on their own at the foot of the list, so their
+  // glyphs are lifted out of NAV here rather than spelled a second time.
   const AboutIcon = NAV.about.icon;
+  const OpenIcon = NAV.open.icon;
 
   // The rest of the site. The two feature pages here are what the product DOES beyond
   // listing jobs, and until now nothing in this menu led to either of them — the
@@ -91,6 +78,7 @@
   // too, but only there and only above 640px — this is where it is always reachable.
   const navLinks = [
     NAV.collections,
+    NAV.talent,
     NAV.howItWorks,
     NAV.cvTailoring,
     NAV.jobNotifications,
@@ -98,24 +86,6 @@
     NAV.trends,
     NAV.discussions,
   ];
-
-  // Personal account items — what the signed-in user owns/reads, in the same order
-  // as the account sidebar (Profile is rendered separately just above these, so the
-  // full run reads Profile · Activity · Tracking · Inbox · …). "Submit a job" is a
-  // create action, rendered separately (below), split off from the "My submissions"
-  // reading item it used to sit next to.
-  const accountLinks = [
-    { href: '/my/activity', label: 'Activity', icon: Activity },
-    { href: '/my/tracking', label: 'Tracking', icon: ListChecks },
-    { href: '/my/inbox', label: 'Inbox', icon: Inbox },
-    // The agent and the tailoring list are reached from anywhere, not only from the account
-    // shell, so they are duplicated here beside the inbox rather than left one level deeper.
-    { href: '/my/assistant', label: 'Agent', icon: Bot },
-    { href: '/my/cvs', label: 'Tailor', icon: ScrollText },
-    { href: '/my/notifications/searches', label: 'Search alerts', icon: BellRing },
-    { href: '/my/api-keys', label: 'API keys', icon: KeyRound },
-    { href: '/my/submissions', label: 'My submissions', icon: FileText },
-  ] as const;
 
   // What the setup dot reads. The signed-in check is inside the call, shared with the
   // card on the tracking page.
@@ -168,9 +138,10 @@
   onkeydown={(e) => e.key === 'Escape' && (open = false)}
 />
 
-<!-- Theme toggle and auth action: defined once, reused across layouts. Both live
-     inside the dropdown — theme in the mobile bottom bar and, on desktop, inline
-     at the end of the link list alongside auth. -->
+<!-- Theme toggle: reused across layouts, in the mobile bottom bar and, on
+     desktop, inline at the end of the link list. Auth action: reused only on
+     mobile (its own bottom bar) — desktop's Sign in/Log out live in
+     HeaderProfileMenu instead, so this snippet is unused there. -->
 {#snippet themeButton()}
   <button
     type="button"
@@ -230,27 +201,9 @@
 
   <NotificationBell />
 
-  <!-- Desktop only: profile (signed in) or sign-in (signed out) sits before the
-       menu button. -->
-  {#if isAuthenticated()}
-    <a
-      href={resolve('/my/profile')}
-      aria-label="Profile"
-      title={email}
-      class={cn('hidden sm:inline-flex', iconButton)}
-    >
-      <CircleUser class="size-5" />
-    </a>
-  {:else}
-    <button
-      type="button"
-      aria-label="Sign in"
-      onclick={signIn}
-      class={cn('hidden sm:inline-flex', iconButton)}
-    >
-      <LogIn class="size-5" />
-    </button>
-  {/if}
+  <!-- Desktop only: the profile menu (signed in) or a direct sign-in action
+       (signed out) sits before the menu button — see HeaderProfileMenu.svelte. -->
+  <HeaderProfileMenu />
 
   <button
     type="button"
@@ -329,44 +282,56 @@
         {/each}
         <div class="my-1 h-px bg-border"></div>
 
-        {#if isAuthenticated()}
-          <a
-            href={resolve('/my/profile')}
-            role="menuitem"
-            onclick={() => (open = false)}
-            class={linkClass('/my/profile')}
-            title={email}
-          >
-            <CircleUser class="size-4 shrink-0" />
-            Profile
-          </a>
-          {#each accountLinks as link (link.href)}
-            {@const Icon = link.icon}
-            <a href={resolve(link.href)} role="menuitem" onclick={() => (open = false)} class={linkClass(link.href)}>
-              <Icon class="size-4 shrink-0" />
-              {link.label}
-            </a>
-          {/each}
-
-          <!-- Create/action items, split off from the account reading items above. -->
-          <div class="my-1 h-px bg-border"></div>
-          <a href={resolve('/submit')} role="menuitem" onclick={() => (open = false)} class={linkClass('/submit')}>
-            <SquarePlus class="size-4 shrink-0" />
-            Submit a job
-          </a>
-          {#if isModerator}
+        <!-- Mobile-only: the account section moved to HeaderProfileMenu on desktop
+             (openspec/changes/split-header-profile-menu), so this stays scoped to
+             the drawer via sm:hidden rather than removed — the mobile drawer's
+             markup and item list are otherwise unchanged. accountLinks — the
+             personal items in the same order as the account sidebar (Profile is
+             rendered separately just above them, so the full run reads Profile ·
+             Activity · Tracking · Inbox · …) — is shared with HeaderProfileMenu's
+             desktop panel via $lib/headerAccountLinks, so the two cannot drift
+             apart. "Submit a job" below is a create action, split off from the
+             "My submissions" reading item it used to sit next to. -->
+        <div class="sm:hidden">
+          {#if isAuthenticated()}
             <a
-              href={resolve('/moderation')}
+              href={resolve('/my/profile')}
               role="menuitem"
               onclick={() => (open = false)}
-              class={linkClass('/moderation')}
+              class={linkClass('/my/profile')}
+              title={email}
             >
-              <ShieldCheck class="size-4 shrink-0" />
-              Moderation
+              <CircleUser class="size-4 shrink-0" />
+              Profile
             </a>
+            {#each accountLinks as link (link.href)}
+              {@const Icon = link.icon}
+              <a href={resolve(link.href)} role="menuitem" onclick={() => (open = false)} class={linkClass(link.href)}>
+                <Icon class="size-4 shrink-0" />
+                {link.label}
+              </a>
+            {/each}
+
+            <!-- Create/action items, split off from the account reading items above. -->
+            <div class="my-1 h-px bg-border"></div>
+            <a href={resolve('/submit')} role="menuitem" onclick={() => (open = false)} class={linkClass('/submit')}>
+              <SquarePlus class="size-4 shrink-0" />
+              Submit a job
+            </a>
+            {#if isModerator}
+              <a
+                href={resolve('/moderation')}
+                role="menuitem"
+                onclick={() => (open = false)}
+                class={linkClass('/moderation')}
+              >
+                <ShieldCheck class="size-4 shrink-0" />
+                Moderation
+              </a>
+            {/if}
+            <div class="my-1 h-px bg-border"></div>
           {/if}
-          <div class="my-1 h-px bg-border"></div>
-        {/if}
+        </div>
 
         {#each navLinks as link (link.href)}
           {@const Icon = link.icon}
@@ -376,10 +341,11 @@
           </a>
         {/each}
 
-        <!-- About sits at the very bottom of the link list, just before the
-             Sign in / Log out action (the marketing landing lives at /about). Read from
-             NAV like every other destination — spelled here it would be a second copy
-             of a page the header row already draws. -->
+        <!-- About and Open sit at the very bottom of the link list, just before the
+             theme toggle (the marketing landing lives at /about; Open is the
+             open-startup transparency page, already linked from the footer). Read
+             from NAV like every other destination — spelled here it would be a
+             second copy of a page the header row already draws. -->
         <a
           href={resolve(NAV.about.href)}
           role="menuitem"
@@ -389,12 +355,23 @@
           <AboutIcon class="size-4 shrink-0" />
           About
         </a>
+        <a
+          href={resolve(NAV.open.href)}
+          role="menuitem"
+          onclick={() => (open = false)}
+          class={linkClass(NAV.open.href)}
+        >
+          <OpenIcon class="size-4 shrink-0" />
+          Open
+        </a>
 
-        <!-- Desktop-only: theme toggle + auth inline at the end of the dropdown. -->
+        <!-- Desktop-only: theme toggle inline at the end of the dropdown. Auth is
+             not rendered here — signed in, it lives in HeaderProfileMenu's Log
+             out; signed out, the bar's own direct Sign-in action already covers
+             it (see HeaderProfileMenu.svelte). -->
         <div class="hidden sm:block">
           <div class="my-1 h-px bg-border"></div>
           {@render themeButton()}
-          {@render authButton()}
         </div>
       </div>
 

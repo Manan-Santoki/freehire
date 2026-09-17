@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -271,7 +272,7 @@ func (h *searchHandlers) runJobSearch(c *fiber.Ctx) (search.SearchResult, int, i
 // The key is the same normalisation the builder applies to mined titles, so a typed
 // query and the title it names land on one row.
 func (h *searchHandlers) recordQuery(raw string) {
-	q := suggest.Title(raw)
+	q := demandKey(raw)
 	if !suggest.Recordable(q) || h.queries == nil {
 		return
 	}
@@ -282,6 +283,19 @@ func (h *searchHandlers) recordQuery(raw string) {
 			log.Printf("search: record query: %v", err)
 		}
 	}()
+}
+
+// demandKey normalises a raw `q` into the same key suggest.Title gives a mined
+// posting title. A title suggestion's click sends its query wrapped in a matching
+// pair of `"` (see the search-suggestions spec) — that wrapper is Meilisearch's own
+// quoting syntax, not part of the phrase, so it is stripped before normalising.
+// Anything else — no quotes, or a quote at only one end — is not that shape and is
+// left alone: guessing would rewrite text nobody asked to rewrite.
+func demandKey(raw string) string {
+	if len(raw) >= 2 && strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`) {
+		raw = raw[1 : len(raw)-1]
+	}
+	return suggest.Title(raw)
 }
 
 // searchSort builds the Meilisearch sort directive from ?sort=<field>&order=<dir>.

@@ -33,6 +33,10 @@ var (
 	ErrEmptySkills = errors.New("userprofile: at least one skill is required")
 	// ErrTooManySkills is a wanted or avoided skill set past maxSkills (mapped to 400).
 	ErrTooManySkills = errors.New("userprofile: too many skills")
+	// ErrTooManySources is an excluded-sources set past maxExcludedCount (mapped to 400).
+	ErrTooManySources = errors.New("userprofile: too many excluded sources")
+	// ErrTooManyCompanies is an excluded-companies set past maxExcludedCount (mapped to 400).
+	ErrTooManyCompanies = errors.New("userprofile: too many excluded companies")
 	// ErrInvalidSeniority is a seniority outside the seniority vocabulary (mapped to 400).
 	ErrInvalidSeniority = errors.New("userprofile: seniority is not a known level")
 	// ErrNotFound is the caller having no profile yet (mapped to a null payload on GET,
@@ -79,6 +83,16 @@ const maxSkills = 200
 // single value from reaching the search filter as a multi-kilobyte literal.
 const maxSkillLen = 64
 
+// maxExcludedCount caps excluded_sources and excluded_companies, each independently. Set
+// equal to maxSkills for consistency rather than a measured need — unlike skills, neither
+// set is expanded into a per-element search filter today (see normalizeExcludedSet).
+const maxExcludedCount = maxSkills
+
+// maxExcludedLen bounds one excluded_sources or excluded_companies value's length. Source
+// values are short adapter names (well under 30 characters); company slugs run longer than
+// skill tokens, so 100 is generous headroom for both without a separate constant per field.
+const maxExcludedLen = 100
+
 // Profile is the user's saved professional profile: their specializations (job
 // categories) and skills, plus optional location preferences kept as raw JSON
 // (persisted and served verbatim). It is the package's domain type, decoupled from
@@ -90,6 +104,8 @@ type Profile struct {
 	Skills              []string
 	Seniorities         []string
 	ExcludedSkills      []string
+	ExcludedSources     []string
+	ExcludedCompanies   []string
 	LocationPreferences json.RawMessage
 	CreatedAt           *time.Time
 	UpdatedAt           *time.Time
@@ -101,13 +117,13 @@ type Profile struct {
 // generated db row to Profile, so the use case never sees db.*.
 type Repository interface {
 	Get(ctx context.Context, userID int64) (Profile, error)
-	Upsert(ctx context.Context, userID int64, specializations, skills, seniorities, excludedSkills []string, locationPreferences json.RawMessage) (Profile, error)
+	Upsert(ctx context.Context, userID int64, specializations, skills, seniorities, excludedSkills, excludedSources, excludedCompanies []string, locationPreferences json.RawMessage) (Profile, error)
 	// UpsertIfUnchanged behaves like Upsert but writes only when the row's updated_at
 	// still equals expectedUpdatedAt — the guard MergeSkills needs because its merge is
 	// computed from a prior Get outside any transaction, so a Save() landing in that
 	// gap must not be silently overwritten by a write built from a now-stale snapshot.
 	// No matching row (updated_at moved, or the profile was deleted) maps to ErrConflict.
-	UpsertIfUnchanged(ctx context.Context, userID int64, specializations, skills, seniorities, excludedSkills []string, locationPreferences json.RawMessage, expectedUpdatedAt time.Time) (Profile, error)
+	UpsertIfUnchanged(ctx context.Context, userID int64, specializations, skills, seniorities, excludedSkills, excludedSources, excludedCompanies []string, locationPreferences json.RawMessage, expectedUpdatedAt time.Time) (Profile, error)
 	Delete(ctx context.Context, userID int64) error
 }
 
@@ -131,10 +147,12 @@ func (s *Service) Get(ctx context.Context, userID int64) (Profile, error) {
 // normalized and must be non-empty; the seniorities are normalized (each a known level,
 // deduped, may be empty); the excluded skills are normalized (deduped, may be empty) and
 // any that also appear in skills are dropped — a skill cannot be both wanted and avoided,
-// and the wanted set wins; the optional location block is validated and normalized (or
-// stored NULL when nil/empty). It is a create-or-replace: the first save inserts, later
-// saves overwrite.
-func (s *Service) Save(ctx context.Context, userID int64, specializations, skills, seniorities, excludedSkills []string, loc *LocationPreferences) (Profile, error) {
+// and the wanted set wins; the excluded sources and excluded companies are each
+// normalized (trimmed, lowercased, deduped, capped, may be empty) with no such
+// wanted/avoided exclusivity rule, since neither has a corresponding "have" list; the
+// optional location block is validated and normalized (or stored NULL when nil/empty).
+// It is a create-or-replace: the first save inserts, later saves overwrite.
+func (s *Service) Save(ctx context.Context, userID int64, specializations, skills, seniorities, excludedSkills, excludedSources, excludedCompanies []string, loc *LocationPreferences) (Profile, error) {
 	specs, err := normalizeSpecializations(specializations)
 	if err != nil {
 		return Profile{}, err
@@ -152,11 +170,19 @@ func (s *Service) Save(ctx context.Context, userID int64, specializations, skill
 		return Profile{}, err
 	}
 	excluded := subtractSkills(avoided, normalized)
+	sources, err := normalizeExcludedSet(excludedSources, maxExcludedLen, maxExcludedCount, ErrTooManySources)
+	if err != nil {
+		return Profile{}, err
+	}
+	companies, err := normalizeExcludedSet(excludedCompanies, maxExcludedLen, maxExcludedCount, ErrTooManyCompanies)
+	if err != nil {
+		return Profile{}, err
+	}
 	locJSON, err := normalizeLocationPreferences(loc)
 	if err != nil {
 		return Profile{}, err
 	}
-	return s.repo.Upsert(ctx, userID, specs, normalized, levels, excluded, locJSON)
+	return s.repo.Upsert(ctx, userID, specs, normalized, levels, excluded, sources, companies, locJSON)
 }
 
 // Delete removes the user's profile. It is idempotent — deleting when none exists is not
@@ -170,9 +196,10 @@ func (s *Service) Delete(ctx context.Context, userID int64) error {
 // the bank without the candidate re-declaring what it already proves. It is a courtesy
 // update, not profile management: a user with no saved profile gets no side effect (the
 // same "do not invent one" rule the profile's own Save enforces), and it never removes a
-// skill, overwrites specializations, excluded_skills or location preferences, or errors
-// past the skill cap — it silently adds only as many of the new skills as still fit,
-// mirroring how a manual claim behaves when the profile is near the limit.
+// skill, overwrites specializations, excluded_skills, excluded_sources, excluded_companies,
+// or location preferences, or errors past the skill cap — it silently adds only as many of
+// the new skills as still fit, mirroring how a manual claim behaves when the profile is
+// near the limit.
 //
 // The merge (which skills still fit, what the rest of the profile currently holds) is
 // computed in Go from a Get read outside any transaction, so a concurrent Save() landing
@@ -211,10 +238,10 @@ func (s *Service) mergeSkillsOnce(ctx context.Context, userID int64, skills []st
 		// this fix. A profile read from the real Repository always carries a non-nil
 		// UpdatedAt (updated_at is NOT NULL); this only happens against a Repository
 		// fake that leaves it unset.
-		_, err = s.repo.Upsert(ctx, userID, profile.Specializations, merged, profile.Seniorities, profile.ExcludedSkills, profile.LocationPreferences)
+		_, err = s.repo.Upsert(ctx, userID, profile.Specializations, merged, profile.Seniorities, profile.ExcludedSkills, profile.ExcludedSources, profile.ExcludedCompanies, profile.LocationPreferences)
 		return err
 	}
-	_, err = s.repo.UpsertIfUnchanged(ctx, userID, profile.Specializations, merged, profile.Seniorities, profile.ExcludedSkills, profile.LocationPreferences, *profile.UpdatedAt)
+	_, err = s.repo.UpsertIfUnchanged(ctx, userID, profile.Specializations, merged, profile.Seniorities, profile.ExcludedSkills, profile.ExcludedSources, profile.ExcludedCompanies, profile.LocationPreferences, *profile.UpdatedAt)
 	return err
 }
 
@@ -329,23 +356,36 @@ func normalizeSkills(skills []string) ([]string, error) {
 // failing an otherwise valid save. A whole-list problem errors: a set past the cardinality cap
 // returns ErrTooManySkills, mirroring normalizeSpecializations. An empty result is valid here
 // (the user need not avoid anything), and the slice is always non-nil so the value persists as
-// an empty array, not NULL.
+// an empty array, not NULL. A thin parameterization of normalizeExcludedSet with the skill
+// vocabulary's own length/count bound and error.
 func normalizeSkillList(skills []string) ([]string, error) {
-	out := make([]string, 0, len(skills))
-	seen := make(map[string]struct{}, len(skills))
-	for _, raw := range skills {
-		skill := strings.ToLower(strings.TrimSpace(raw))
-		if skill == "" || len(skill) > maxSkillLen {
+	return normalizeExcludedSet(skills, maxSkillLen, maxSkills, ErrTooManySkills)
+}
+
+// normalizeExcludedSet lowercases, trims, and deduplicates an excluded_sources or
+// excluded_companies list (preserving first-seen order), dropping any value past maxLen
+// (a per-value problem, same treatment normalizeSkillList gives an over-long skill) and
+// rejecting the whole set with errTooMany past maxCount. An empty result is valid (the
+// user need not exclude anything), and the slice is always non-nil so the value persists
+// as an empty array, not NULL. Unlike normalizeSkillList, there is no wanted-set
+// subtraction step: excluded_sources and excluded_companies have no corresponding "have"
+// list to conflict with.
+func normalizeExcludedSet(values []string, maxLen, maxCount int, errTooMany error) ([]string, error) {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		if value == "" || len(value) > maxLen {
 			continue
 		}
-		if _, dup := seen[skill]; dup {
+		if _, dup := seen[value]; dup {
 			continue
 		}
-		seen[skill] = struct{}{}
-		out = append(out, skill)
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
-	if len(out) > maxSkills {
-		return nil, ErrTooManySkills
+	if len(out) > maxCount {
+		return nil, errTooMany
 	}
 	return out, nil
 }

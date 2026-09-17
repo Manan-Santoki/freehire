@@ -13,6 +13,7 @@
   } from '$lib/reports';
   import type { Report } from '$lib/types';
   import { Badge, Button } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
   import { timeAgo } from '$lib/utils';
   import States from './States.svelte';
 
@@ -127,7 +128,7 @@
             <span class="text-xs text-muted-foreground">
               by {r.reporter_email ?? 'unknown'}{r.contact_telegram
                 ? ` · TG: ${r.contact_telegram}`
-                : ''} · {timeAgo(r.created_at)}
+                : ''} · {timeAgo(r.created_at, locale())}
             </span>
           </div>
 

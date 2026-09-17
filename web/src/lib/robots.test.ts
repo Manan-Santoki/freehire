@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DISALLOWED, SEARCH_CRAWLERS, robotsBody } from './robots';
+import { DISALLOWED, SEARCH_CRAWLERS, disallowAllBody, robotsBody } from './robots';
 
 const BODY = robotsBody('https://freehire.me');
 
@@ -49,5 +49,29 @@ describe('robots.txt', () => {
     expect(BODY).toContain('Sitemap: https://freehire.me/sitemap.xml');
     expect(BODY).toContain('https://freehire.me/api/v1/jobs/search?q=golang');
     expect(BODY).toContain('https://freehire.me/llms.txt');
+  });
+});
+
+// The mirror body is the whole point of ROBOTS_DISALLOW_ALL: one group, one rule, and
+// no sitemap line — advertising a sitemap on a host that must not be indexed would hand
+// a crawler the very URLs the Disallow is there to withhold.
+describe('robots.txt on a mirror deployment', () => {
+  const MIRROR = disallowAllBody('https://mirror.example');
+
+  it('turns every crawler away from the whole host', () => {
+    expect(MIRROR).toContain('User-agent: *');
+    expect(MIRROR).toContain('Disallow: /');
+    expect(MIRROR).not.toContain('Allow: /');
+  });
+
+  it('names the canonical site so the exclusion reads as deliberate', () => {
+    expect(MIRROR).toContain('https://freehire.me');
+  });
+
+  it('advertises no sitemap directive', () => {
+    for (const line of MIRROR.split('
+')) {
+      expect(line.trimStart().startsWith('Sitemap:')).toBe(false);
+    }
   });
 });

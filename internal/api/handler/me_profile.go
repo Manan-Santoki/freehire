@@ -75,6 +75,8 @@ type profileResponse struct {
 	Skills              []string                    `json:"skills"`
 	Seniorities         []string                    `json:"seniorities"`
 	ExcludedSkills      []string                    `json:"excluded_skills"`
+	ExcludedSources     []string                    `json:"excluded_sources"`
+	ExcludedCompanies   []string                    `json:"excluded_companies"`
 	LocationPreferences json.RawMessage             `json:"location_preferences"`
 	DerivedLocation     *derivedLocation            `json:"derived_location"`
 	CV                  *resumeextract.Professional `json:"cv"`
@@ -106,6 +108,8 @@ func toProfileResponse(p userprofile.Profile, cv *resumeextract.Professional, lo
 		Skills:              p.Skills,
 		Seniorities:         p.Seniorities,
 		ExcludedSkills:      p.ExcludedSkills,
+		ExcludedSources:     p.ExcludedSources,
+		ExcludedCompanies:   p.ExcludedCompanies,
 		LocationPreferences: p.LocationPreferences,
 		DerivedLocation:     loc,
 		CV:                  cv,
@@ -178,6 +182,10 @@ func profileError(err error) error {
 		return fiber.NewError(fiber.StatusBadRequest, "at least one skill is required")
 	case errors.Is(err, userprofile.ErrTooManySkills):
 		return fiber.NewError(fiber.StatusBadRequest, "too many skills (max 200)")
+	case errors.Is(err, userprofile.ErrTooManySources):
+		return fiber.NewError(fiber.StatusBadRequest, "too many excluded sources (max 200)")
+	case errors.Is(err, userprofile.ErrTooManyCompanies):
+		return fiber.NewError(fiber.StatusBadRequest, "too many excluded companies (max 200)")
 	case errors.Is(err, userprofile.ErrInvalidSeniority):
 		return fiber.NewError(fiber.StatusBadRequest, "seniority is not a known level")
 	case errors.Is(err, userprofile.ErrInvalidWorkMode):
@@ -205,6 +213,8 @@ type saveProfileRequest struct {
 	Skills              []string                         `json:"skills"`
 	Seniorities         []string                         `json:"seniorities"`
 	ExcludedSkills      []string                         `json:"excluded_skills"`
+	ExcludedSources     []string                         `json:"excluded_sources"`
+	ExcludedCompanies   []string                         `json:"excluded_companies"`
 	LocationPreferences *userprofile.LocationPreferences `json:"location_preferences"`
 }
 
@@ -241,7 +251,7 @@ func (h *profileHandlers) PutProfile(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 
-	profile, err := h.userProfile.Save(c.Context(), userID, in.Specializations, in.Skills, in.Seniorities, in.ExcludedSkills, in.LocationPreferences)
+	profile, err := h.userProfile.Save(c.Context(), userID, in.Specializations, in.Skills, in.Seniorities, in.ExcludedSkills, in.ExcludedSources, in.ExcludedCompanies, in.LocationPreferences)
 	if err != nil {
 		return profileError(err)
 	}

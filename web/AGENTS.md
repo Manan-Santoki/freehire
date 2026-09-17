@@ -10,6 +10,20 @@ production; in dev the Vite proxy (`web/vite.config.ts`) forwards `/api` to the 
   automatically. `SameSite=Lax` + same-origin **is** the CSRF defence — no CSRF token.
 - OAuth buttons render from `GET /api/v1/auth/oauth/providers`. Callbacks 302 back to the
   SPA; failures 302 with `?auth_error=oauth`, never JSON.
+- Four actions need a *second* proof on top of the session — creating and revoking an API
+  key, changing the password, deleting the account — and answer `428 recent_auth_required`
+  without one. `ConfirmIdentity.svelte` is the only surface that asks for it: it decides
+  whether the account confirms by password or by provider, `prove()` produces the proof (and
+  refuses to send a blank one), and `handleRefusal()` words the `401`/`428` so no caller
+  keeps its own copy. Inside a `Dialog`, pass `active={open}` — `Dialog` renders its children
+  unconditionally, so an always-active instance fetches providers on pages whose dialog is
+  never opened. The exception is the password-change form: the current password already *is*
+  the confirmation, so a `428` there means the session cannot bind a proof at all and the
+  only remedy is signing in again.
+- A pending action survives the provider round trip in `sessionStorage` (`recentAuth.ts`,
+  `ReauthDraft`), because confirming leaves the site entirely. Secrets and anti-mistake
+  barriers never go in it: the typed key name is restored, the typed address confirming an
+  account deletion deliberately is not.
 - `stage` in job tracking mirrors the backend vocabulary (`internal/application/userjob/stages.go`):
   preparing/applied/screening/responded/interview/offer/accepted/rejected/withdrawn/expired.
 - A view is recorded silently when a signed-in user opens a job — failure is swallowed and
@@ -24,7 +38,10 @@ production; in dev the Vite proxy (`web/vite.config.ts`) forwards `/api` to the 
   `GET /api/v1/me/resume` (`structured` field, null when absent/stale/unconfigured).
 - Sentry is gated on `PUBLIC_SENTRY_DSN` (+ `PUBLIC_SENTRY_ENVIRONMENT`); source-map upload
   only when `SENTRY_AUTH_TOKEN`/`SENTRY_ORG`/`SENTRY_PROJECT` are set (build succeeds
-  without them).
+  without them — and, because an upload failure is swallowed, it succeeds with them and a
+  dead token too). `scripts/sentry-credential-check.mjs` is what actually asks, and its
+  header is the canonical account of why the build cannot; `deploy/bin/release.sh` runs it
+  before the build and refuses the release on a rejected or half-written credential.
 - PostHog is gated on `PUBLIC_POSTHOG_KEY` (inert without it — no init, no events);
   ingestion goes through the same-origin `/ingest` reverse proxy (nginx → `eu.i.posthog.com`),
   overridable via `PUBLIC_POSTHOG_HOST`. Injected by `freehire-ops`, never committed, unset

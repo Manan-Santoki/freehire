@@ -7,6 +7,7 @@
   import { api } from '$lib/api';
   import { isAuthenticated } from '$lib/auth.svelte';
   import { browseQuery, planForSuggestion } from '$lib/browseTarget';
+  import { displayQuery } from '$lib/filters';
   import { dropdownRows, namedCompanies, type DropdownRow } from '$lib/dropdownRows';
   import { companyLogoUrl } from '$lib/logo';
   import { EntityLogo } from '$lib/ui';
@@ -164,7 +165,17 @@
     const schedule = (from: TypewriterState) => {
       const { next, delayMs } = typewriterStep(from, roles);
       timer = setTimeout(() => {
-        typewriter = next;
+        // Untracked on the WRITE as well as on the seed below, and for the same reason
+        // stated the other way round: this chain drives itself, so neither end of it is
+        // part of any reaction. Svelte's `set` refuses a write whose active reaction is a
+        // derived or a block effect (svelte/src/internal/client/reactivity/sources.js),
+        // and `untrack` is what says this assignment answers to neither —
+        // state_unsafe_mutation reached production from this line (FREEHIRE-WEB-26) and
+        // took the header down with it, which a placeholder animation must never be able
+        // to do whatever raced it.
+        untrack(() => {
+          typewriter = next;
+        });
         schedule(next);
       }, delayMs);
     };
@@ -294,7 +305,7 @@
   );
   // Fall back to the URL's `q` before the view registers (SSR + first paint), so a
   // shared /jobs?q=… link shows its query immediately.
-  const q = $derived(target.value.q || (page.url.searchParams.get('q') ?? ''));
+  const q = $derived(displayQuery(target.value.q || (page.url.searchParams.get('q') ?? '')));
 
   // What the box shows, which is only the committed query until someone types.
   //
