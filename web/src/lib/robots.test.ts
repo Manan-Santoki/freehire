@@ -69,8 +69,7 @@ describe('robots.txt on a mirror deployment', () => {
   });
 
   it('advertises no sitemap directive', () => {
-    for (const line of MIRROR.split('
-')) {
+    for (const line of MIRROR.split('\n')) {
       expect(line.trimStart().startsWith('Sitemap:')).toBe(false);
     }
   });
