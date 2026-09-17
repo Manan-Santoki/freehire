@@ -4,7 +4,7 @@
   import { countryLabel, skillLabel } from '$lib/facets';
   import { CATEGORY_LABELS, CERTIFICATION_LABELS, EDUCATION_LEVEL_LABELS, titleCase } from '$lib/labels';
   import { talentHeading, talentPlace } from '$lib/talentCard';
-  import { Card, Chip, CountryFlag } from '$lib/ui';
+  import { Avatar, Card, Chip, CountryFlag } from '$lib/ui';
   import type { PageData } from './$types';
 
   // One member's public card. The same anonymised payload the catalogue list carries,
@@ -55,122 +55,141 @@
   <meta name="robots" content="noindex" />
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
-  <div class="flex items-start gap-4">
-    <div
-      class="flex size-14 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"
-    >
-      <User class="size-6" aria-hidden="true" />
-    </div>
-    <div class="flex min-w-0 flex-col gap-1">
-      <h1 class="text-2xl font-semibold tracking-tight">{heading}</h1>
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-        {#if card.total_years}
-          <span>{card.total_years} {card.total_years === 1 ? 'year' : 'years'} of experience</span>
-        {/if}
-        {#if place}
-          <span class="flex items-center gap-1.5">
-            <MapPin class="size-3.5" aria-hidden="true" />
-            {place}
-          </span>
-        {/if}
-        {#if zone}
-          <span class="flex items-center gap-1.5">
-            <Clock class="size-3.5" aria-hidden="true" />
-            {zone}
-          </span>
-        {/if}
-        {#if country}
-          <CountryFlag code={country} label={countryLabel(country)} />
-        {/if}
+<div
+  class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-5 py-6 sm:px-4 lg:grid lg:grid-cols-[20rem_minmax(0,1fr)] lg:gap-x-6 lg:gap-y-4"
+>
+  <div
+    class="flex min-w-0 flex-col gap-6 {card.skills.length ? 'lg:col-start-2' : 'lg:col-span-2'}"
+  >
+    <div class="flex items-start gap-4">
+      <!-- A member's uploaded photo, when present, is shown here — but never the original:
+      this route serves a strongly, irreversibly blurred rendering computed server-side on
+      every request (internal/candidate/headshot.Blur). Anonymity is still the point, so no
+      "name" is passed to Avatar — a member without a photo falls through to the same plain
+      silhouette this page has always shown, never a colour/initials avatar, which would
+      invent an identity marker this card is not supposed to carry. -->
+      <Avatar
+        src="/api/v1/talent/{member.handle}/photo"
+        size="lg"
+        class="size-14 shrink-0 bg-secondary"
+        fallbackIcon={personIcon}
+      />
+      {#snippet personIcon()}
+        <User class="size-6" aria-hidden="true" />
+      {/snippet}
+      <div class="flex min-w-0 flex-col gap-1">
+        <h1 class="text-2xl font-semibold tracking-tight">{heading}</h1>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+          {#if card.total_years}
+            <span>{card.total_years} {card.total_years === 1 ? 'year' : 'years'} of experience</span>
+          {/if}
+          {#if place}
+            <span class="flex items-center gap-1.5">
+              <MapPin class="size-3.5" aria-hidden="true" />
+              {place}
+            </span>
+          {/if}
+          {#if zone}
+            <span class="flex items-center gap-1.5">
+              <Clock class="size-3.5" aria-hidden="true" />
+              {zone}
+            </span>
+          {/if}
+          {#if country}
+            <CountryFlag code={country} label={countryLabel(country)} />
+          {/if}
+        </div>
       </div>
     </div>
+
+    {#if member.specializations.length}
+      <!-- What they said they are OPEN TO, which is the row the catalogue filters on, and
+      the forward-looking half of the page: the skills and roles below say where somebody
+      has been. It is on the list card too — a detail page showing less than the row that
+      led to it reads as a page that failed to load. -->
+      <section class="flex flex-col gap-2">
+        <h2 class="text-sm font-medium">Open to</h2>
+        <div class="flex flex-wrap gap-1.5">
+          {#each member.specializations as spec (spec)}
+            <Chip variant="secondary">{CATEGORY_LABELS[spec] ?? titleCase(spec)}</Chip>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if card.roles.length}
+      <section class="flex flex-col gap-2">
+        <h2 class="text-sm font-medium">Experience</h2>
+        <div class="flex flex-col gap-3">
+          <!-- Keyed by the index: roles carry no id, and two roles genuinely can share a
+          heading and a period (a title the dictionary could not place, twice), so anything
+          derived from the content risks a duplicate key — which aborts the whole block. -->
+          {#each card.roles as role, i (i)}
+            <Card class="flex flex-col gap-2 p-4">
+              <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <span class="font-medium">{roleHeading(role)}</span>
+                <span class="text-sm text-muted-foreground">{period(role)}</span>
+              </div>
+              {#if role.stack?.length}
+                <div class="flex flex-wrap gap-1.5">
+                  {#each role.stack as tech (tech)}
+                    <Chip>{skillLabel(tech)}</Chip>
+                  {/each}
+                </div>
+              {/if}
+            </Card>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if card.education?.length}
+      <section class="flex flex-col gap-2">
+        <h2 class="text-sm font-medium">Education</h2>
+        <div class="flex flex-wrap gap-1.5">
+          <!-- Keyed by index for the same reason Experience is: no id, and two entries can
+          share a level and year. -->
+          {#each card.education as entry, i (i)}
+            <Chip>{educationLabel(entry)}</Chip>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if card.certifications?.length}
+      <section class="flex flex-col gap-2">
+        <h2 class="text-sm font-medium">Certifications</h2>
+        <div class="flex flex-wrap gap-1.5">
+          {#each card.certifications as cert (cert)}
+            <Chip>{CERTIFICATION_LABELS[cert] ?? titleCase(cert)}</Chip>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if !card.skills.length && !card.roles.length && !card.education?.length && !card.certifications?.length}
+      <p class="text-sm text-muted-foreground">
+        This candidate has joined the network but has not published anything yet.
+      </p>
+    {/if}
+
+    <p class="text-xs text-muted-foreground">
+      Names, employers and contact details are never shown here — the profile is published
+      anonymously by the candidate's own choice. A photo, if uploaded, is shown heavily
+      blurred and cannot be recovered in its original form.
+    </p>
   </div>
 
-  {#if member.specializations.length}
-    <!-- What they said they are OPEN TO, which is the row the catalogue filters on, and
-    the forward-looking half of the page: the skills and roles below say where somebody
-    has been. It is on the list card too — a detail page showing less than the row that
-    led to it reads as a page that failed to load. -->
-    <section class="flex flex-col gap-2">
-      <h2 class="text-sm font-medium">Open to</h2>
-      <div class="flex flex-wrap gap-1.5">
-        {#each member.specializations as spec (spec)}
-          <Chip variant="secondary">{CATEGORY_LABELS[spec] ?? titleCase(spec)}</Chip>
-        {/each}
-      </div>
-    </section>
-  {/if}
-
-  {#if card.roles.length}
-    <section class="flex flex-col gap-2">
-      <h2 class="text-sm font-medium">Experience</h2>
-      <div class="flex flex-col gap-3">
-        <!-- Keyed by the index: roles carry no id, and two roles genuinely can share a
-        heading and a period (a title the dictionary could not place, twice), so anything
-        derived from the content risks a duplicate key — which aborts the whole block. -->
-        {#each card.roles as role, i (i)}
-          <Card class="flex flex-col gap-2 p-4">
-            <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <span class="font-medium">{roleHeading(role)}</span>
-              <span class="text-sm text-muted-foreground">{period(role)}</span>
-            </div>
-            {#if role.stack?.length}
-              <div class="flex flex-wrap gap-1.5">
-                {#each role.stack as tech (tech)}
-                  <Chip>{skillLabel(tech)}</Chip>
-                {/each}
-              </div>
-            {/if}
-          </Card>
-        {/each}
-      </div>
-    </section>
-  {/if}
-
-  {#if card.education?.length}
-    <section class="flex flex-col gap-2">
-      <h2 class="text-sm font-medium">Education</h2>
-      <div class="flex flex-wrap gap-1.5">
-        <!-- Keyed by index for the same reason Experience is: no id, and two entries can
-        share a level and year. -->
-        {#each card.education as entry, i (i)}
-          <Chip>{educationLabel(entry)}</Chip>
-        {/each}
-      </div>
-    </section>
-  {/if}
-
-  {#if card.certifications?.length}
-    <section class="flex flex-col gap-2">
-      <h2 class="text-sm font-medium">Certifications</h2>
-      <div class="flex flex-wrap gap-1.5">
-        {#each card.certifications as cert (cert)}
-          <Chip>{CERTIFICATION_LABELS[cert] ?? titleCase(cert)}</Chip>
-        {/each}
-      </div>
-    </section>
-  {/if}
-
   {#if card.skills.length}
-    <section class="flex flex-col gap-2">
-      <h2 class="text-sm font-medium">Skills</h2>
-      <div class="flex flex-wrap gap-1.5">
-        {#each card.skills as skill (skill)}
-          <Chip>{skillLabel(skill)}</Chip>
-        {/each}
+    <aside class="order-last w-full shrink-0 lg:order-none lg:col-start-1 lg:row-start-1">
+      <div class="sticky top-20 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Skills</p>
+        <div class="flex flex-wrap gap-1.5">
+          {#each card.skills as skill (skill)}
+            <Chip>{skillLabel(skill)}</Chip>
+          {/each}
+        </div>
       </div>
-    </section>
+    </aside>
   {/if}
-
-  {#if !card.skills.length && !card.roles.length && !card.education?.length && !card.certifications?.length}
-    <p class="text-sm text-muted-foreground">
-      This candidate has joined the network but has not published anything yet.
-    </p>
-  {/if}
-
-  <p class="text-xs text-muted-foreground">
-    Names, employers and contact details are never shown here — the profile is published
-    anonymously by the candidate's own choice.
-  </p>
 </div>

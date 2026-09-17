@@ -1,0 +1,60 @@
+import { defineMessages } from '$lib/i18n/t';
+
+export const messages = defineMessages(
+  {
+    headTitle: 'Webhook — freehire',
+    signInPrompt: 'Sign in to configure a webhook.',
+    heading: 'Webhook',
+    description:
+      'Get an HTTP POST whenever one of your saved searches finds a new match — alongside or instead of email/Telegram. Turn it on for a saved search from its alert settings once a destination is configured here.',
+    urlLabel: 'URL',
+    urlPlaceholder: 'https://example.com/freehire-hook',
+    saving: 'Saving…',
+    save: 'Save',
+    create: 'Create webhook',
+    invalidUrl: 'Enter a valid http:// or https:// URL.',
+    saveFailed: 'Could not save the webhook. Please try again.',
+    updateFailed: 'Could not update the webhook. Please try again.',
+    deleteFailed: 'Could not delete the webhook. Please try again.',
+    enabledPrefix: 'Enabled',
+    disabled: 'Disabled',
+    createdPrefix: 'created',
+    lastDeliveredPrefix: 'last delivered',
+    sincePrefix: 'since',
+    disable: 'Disable',
+    enable: 'Enable',
+    delete: 'Delete',
+    deleteDialogTitle: 'Delete webhook?',
+    deleteDialogDescription:
+      'Saved searches subscribed to this channel stop delivering immediately.',
+  },
+  {
+    ru: {
+      headTitle: 'Вебхук — freehire',
+      signInPrompt: 'Войдите, чтобы настроить вебхук.',
+      heading: 'Вебхук',
+      description:
+        'Получайте HTTP POST при каждом новом совпадении по сохранённому поиску — вместе с email/Telegram или вместо них. Включите его для сохранённого поиска в настройках алерта, когда здесь будет настроен адрес.',
+      urlLabel: 'URL',
+      urlPlaceholder: 'https://example.com/freehire-hook',
+      saving: 'Сохраняем…',
+      save: 'Сохранить',
+      create: 'Создать вебхук',
+      invalidUrl: 'Введите корректный URL, начинающийся с http:// или https://.',
+      saveFailed: 'Не удалось сохранить вебхук. Попробуйте ещё раз.',
+      updateFailed: 'Не удалось обновить вебхук. Попробуйте ещё раз.',
+      deleteFailed: 'Не удалось удалить вебхук. Попробуйте ещё раз.',
+      enabledPrefix: 'Включён',
+      disabled: 'Отключён',
+      createdPrefix: 'создан',
+      lastDeliveredPrefix: 'последняя доставка',
+      sincePrefix: 'с',
+      disable: 'Отключить',
+      enable: 'Включить',
+      delete: 'Удалить',
+      deleteDialogTitle: 'Удалить вебхук?',
+      deleteDialogDescription:
+        'Сохранённые поиски, подписанные на этот канал, сразу перестанут получать уведомления.',
+    },
+  },
+);

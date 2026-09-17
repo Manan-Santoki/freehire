@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +17,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/minio/minio-go/v7"
 
+	"github.com/strelov1/freehire/internal/candidate/headshot"
 	"github.com/strelov1/freehire/internal/candidate/talentnetwork"
 	"github.com/strelov1/freehire/internal/platform/db"
 )
@@ -28,8 +34,10 @@ const catalogFrontendCV = `{"total_years":3,"skills":["React"],
   "experience":[{"title":"Frontend Developer","company":"Acme","current":true}]}`
 
 type fakeTalentCatalogStore struct {
-	rows []db.ListTalentNetworkMembersRow
-	one  *db.GetTalentNetworkMemberByHandleRow
+	rows        []db.ListTalentNetworkMembersRow
+	one         *db.GetTalentNetworkMemberByHandleRow
+	ownerHandle string
+	ownerID     int64
 }
 
 func (f *fakeTalentCatalogStore) ListTalentNetworkMembers(context.Context) ([]db.ListTalentNetworkMembersRow, error) {
@@ -43,6 +51,13 @@ func (f *fakeTalentCatalogStore) GetTalentNetworkMemberByHandle(_ context.Contex
 	return *f.one, nil
 }
 
+func (f *fakeTalentCatalogStore) GetTalentNetworkMemberUserIDByHandle(_ context.Context, handle string) (int64, error) {
+	if f.ownerHandle == "" || f.ownerHandle != handle {
+		return 0, pgx.ErrNoRows
+	}
+	return f.ownerID, nil
+}
+
 func catalogRow(handle, cv string, fresh time.Time) db.ListTalentNetworkMembersRow {
 	return db.ListTalentNetworkMembersRow{
 		TalentHandle:               pgtype.Text{String: handle, Valid: true},
@@ -54,18 +69,98 @@ func catalogRow(handle, cv string, fresh time.Time) db.ListTalentNetworkMembersR
 	}
 }
 
-// talentCatalogApp mounts both public routes with NO auth and no limiter, so the tests
+// talentCatalogApp mounts all public routes with NO auth and no limiter, so the tests
 // exercise the handlers rather than the middleware. That the real routes carry a limiter
-// is asserted separately, against the real router.
-func talentCatalogApp(store talentnetwork.Store) *fiber.App {
-	h := newTalentCatalogHandlers(talentnetwork.NewCatalogue(store, time.Minute, time.Now))
+// is asserted separately, against the real router. photos may be nil — a nil *headshot.Store
+// behaves as "storage unconfigured", which is exactly what most of these tests want.
+func talentCatalogApp(store talentnetwork.Store, photos *headshot.Store) *fiber.App {
+	h := newTalentCatalogHandlers(talentnetwork.NewCatalogue(store, time.Minute, time.Now), photos)
 	app := fiber.New(fiber.Config{ErrorHandler: RenderError})
 	app.Get("/talent", h.List)
 	// Registered before the parametrised route, exactly as `register` does — a test that
 	// mounted them the other way round would pass while the real router 404s.
 	app.Get("/talent/facets", h.Facets)
 	app.Get("/talent/:handle", h.Get)
+	app.Get("/talent/:handle/photo", h.GetPhoto)
 	return app
+}
+
+// fakeTalentPhotoBlobs is a minimal in-memory blobstore.Store, just enough to back a
+// *headshot.Store for the photo route's tests without touching real object storage.
+type fakeTalentPhotoBlobs struct {
+	objects map[string][]byte
+}
+
+func (f *fakeTalentPhotoBlobs) Put(_ context.Context, key, _ string, r io.Reader, _ int64) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	f.objects[key] = data
+	return nil
+}
+
+func (f *fakeTalentPhotoBlobs) Get(_ context.Context, key string) (io.ReadCloser, error) {
+	data, ok := f.objects[key]
+	if !ok {
+		return nil, minio.ErrorResponse{Code: minio.NoSuchKey}
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (f *fakeTalentPhotoBlobs) Delete(_ context.Context, key string) error {
+	delete(f.objects, key)
+	return nil
+}
+
+// fakeTalentPhotoRepo is a minimal in-memory headshot.Repository: one pointer per user id.
+type fakeTalentPhotoRepo struct {
+	pointers map[int64]pgtype.Text
+}
+
+func (f *fakeTalentPhotoRepo) GetPhoto(_ context.Context, userID int64) (db.GetUserPhotoRow, error) {
+	return db.GetUserPhotoRow{PhotoObjectKey: f.pointers[userID]}, nil
+}
+
+func (f *fakeTalentPhotoRepo) SetPhoto(_ context.Context, userID int64, key string) error {
+	f.pointers[userID] = pgtype.Text{String: key, Valid: true}
+	return nil
+}
+
+func (f *fakeTalentPhotoRepo) ClearPhoto(_ context.Context, userID int64) error {
+	delete(f.pointers, userID)
+	return nil
+}
+
+// solidJPEG encodes a trivial single-colour square, just enough to be a valid stored
+// headshot for the photo route's tests — the blur transform itself is unit-tested in
+// internal/candidate/headshot, not re-verified here.
+func solidJPEG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for y := range 64 {
+		for x := range 64 {
+			img.Set(x, y, color.RGBA{R: 200, G: 100, B: 50, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode test jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// photoStoreWithOneMember builds a real *headshot.Store, backed by in-memory fakes, with
+// exactly one stored headshot for the given user id.
+func photoStoreWithOneMember(t *testing.T, userID int64) *headshot.Store {
+	t.Helper()
+	blobs := &fakeTalentPhotoBlobs{objects: map[string][]byte{}}
+	repo := &fakeTalentPhotoRepo{pointers: map[int64]pgtype.Text{}}
+	store := headshot.New(blobs, repo)
+	if _, err := store.Put(context.Background(), userID, solidJPEG(t)); err != nil {
+		t.Fatalf("seed headshot: %v", err)
+	}
+	return store
 }
 
 // readBody and forbidSubstrings moved here from talent_network_profile_test.go when that
@@ -136,7 +231,7 @@ func twoMemberStore() *fakeTalentCatalogStore {
 }
 
 func TestTalentCatalogList_IsOpenToAnonymousVisitors(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent")
 	defer resp.Body.Close()
@@ -153,7 +248,7 @@ func TestTalentCatalogList_IsOpenToAnonymousVisitors(t *testing.T) {
 // projection's own tests assert, checked once more at the wire — a handler that added a
 // field for convenience would pass those and fail this.
 func TestTalentCatalogList_LeaksNothingFromTheCV(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent")
 	defer resp.Body.Close()
@@ -162,7 +257,7 @@ func TestTalentCatalogList_LeaksNothingFromTheCV(t *testing.T) {
 }
 
 func TestTalentCatalogList_FiltersNarrowTheTotal(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent?categories=backend")
 	defer resp.Body.Close()
@@ -178,7 +273,7 @@ func TestTalentCatalogList_FiltersNarrowTheTotal(t *testing.T) {
 // meta.total must count the FILTERED set, not the catalogue. A total that reports the
 // whole membership behind a narrowed page is how a UI builds pages that do not exist.
 func TestTalentCatalogList_TotalIsBehindTheSameFilter(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent?categories=backend&limit=1")
 	defer resp.Body.Close()
@@ -188,7 +283,7 @@ func TestTalentCatalogList_TotalIsBehindTheSameFilter(t *testing.T) {
 }
 
 func TestTalentCatalogList_ReportsParamsItDidNotRead(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	cases := map[string]string{
 		"/talent?countries=de":     "countries", // a jobs facet, meaningless here
@@ -212,7 +307,7 @@ func TestTalentCatalogList_ReportsParamsItDidNotRead(t *testing.T) {
 // a field every reader learns to skip, and then the one response that carries a warning
 // gets skipped too.
 func TestTalentCatalogList_OmitsIgnoredParamsWhenThereAreNone(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent?categories=backend&limit=5")
 	defer resp.Body.Close()
@@ -231,7 +326,7 @@ func TestTalentCatalogGet_ServesAMemberByHandle(t *testing.T) {
 		ResumeStructuredUploadedAt: pgtype.Timestamptz{Time: base, Valid: true},
 		Specializations:            []string{},
 	}
-	app := talentCatalogApp(store)
+	app := talentCatalogApp(store, nil)
 
 	resp := doTalent(t, app, "/talent/backend-aaaa")
 	defer resp.Body.Close()
@@ -252,7 +347,7 @@ func TestTalentCatalogGet_ServesAMemberByHandle(t *testing.T) {
 // Every way of not being in the catalogue answers identically, so the route cannot be
 // used to ask whether an account exists.
 func TestTalentCatalogGet_AbsentMalformedAndUnknownAnswerTheSame(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	var bodies []string
 	for _, target := range []string{
@@ -275,6 +370,79 @@ func TestTalentCatalogGet_AbsentMalformedAndUnknownAnswerTheSame(t *testing.T) {
 	}
 }
 
+func TestTalentCatalogGetPhoto_ServesABlurredImageForAMemberWithAHeadshot(t *testing.T) {
+	store := twoMemberStore()
+	store.ownerHandle = "backend-aaaa"
+	store.ownerID = 42
+	photos := photoStoreWithOneMember(t, 42)
+	app := talentCatalogApp(store, photos)
+
+	resp := doTalent(t, app, "/talent/backend-aaaa/photo")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(fiber.HeaderContentType); got != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg", got)
+	}
+	if got := resp.Header.Get("X-Robots-Tag"); got != "noindex" {
+		t.Errorf("X-Robots-Tag = %q, want noindex", got)
+	}
+	if got := resp.Header.Get("Cache-Control"); !strings.HasPrefix(got, "private") {
+		t.Errorf("Cache-Control = %q, want it to start with private", got)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if bytes.Equal(body, solidJPEG(t)) {
+		t.Error("the response is byte-identical to the stored original — it must be blurred")
+	}
+}
+
+// The three reasons the route might have nothing to serve — no such member, a member
+// with no headshot, and (implicitly, since photos is nil here) storage being
+// unconfigured — must all answer exactly like a handle nobody holds. A caller must not
+// learn which of these is true from the shape of the response.
+func TestTalentCatalogGetPhoto_EveryAbsenceReasonAnswersTheSame(t *testing.T) {
+	// The same store for both "no headshot" and "storage unconfigured": what varies
+	// between those two cases is only the *headshot.Store the route is given (a real one
+	// with nothing stored for this user, vs. nil), never the membership fixture.
+	member := twoMemberStore()
+	member.ownerHandle = "backend-aaaa"
+	member.ownerID = 42
+	emptyPhotos := photoStoreWithOneMember(t, 999) // seeded for a DIFFERENT user id
+
+	nonMember := twoMemberStore()
+
+	cases := []struct {
+		name   string
+		app    *fiber.App
+		target string
+	}{
+		{"non-member handle", talentCatalogApp(nonMember, nil), "/talent/backend-aaaa/photo"},
+		{"member with no headshot", talentCatalogApp(member, emptyPhotos), "/talent/backend-aaaa/photo"},
+		{"storage unconfigured", talentCatalogApp(member, nil), "/talent/backend-aaaa/photo"},
+		{"malformed handle", talentCatalogApp(nonMember, nil), "/talent/NotAHandle/photo"},
+	}
+
+	var bodies []string
+	for _, tc := range cases {
+		resp := doTalent(t, tc.app, tc.target)
+		if resp.StatusCode != fiber.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", tc.name, resp.StatusCode)
+		}
+		bodies = append(bodies, talentNetworkReadBody(t, resp))
+		resp.Body.Close()
+	}
+	for i := 1; i < len(bodies); i++ {
+		if bodies[i] != bodies[0] {
+			t.Errorf("404 bodies differ between %q and %q:\n%s\n%s", cases[0].name, cases[i].name, bodies[0], bodies[i])
+		}
+	}
+}
+
 func decodeFacets(t *testing.T, resp *http.Response) talentnetwork.Counts {
 	t.Helper()
 	var out struct {
@@ -287,7 +455,7 @@ func decodeFacets(t *testing.T, resp *http.Response) talentnetwork.Counts {
 }
 
 func TestTalentFacets_ServesCountsToAnonymousVisitors(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent/facets")
 	defer resp.Body.Close()
@@ -307,7 +475,7 @@ func TestTalentFacets_ServesCountsToAnonymousVisitors(t *testing.T) {
 // answer an honest 404, which reads as "facets are broken" rather than "the route was
 // shadowed".
 func TestTalentFacets_IsNotSwallowedByTheHandleRoute(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent/facets")
 	defer resp.Body.Close()
@@ -319,7 +487,7 @@ func TestTalentFacets_IsNotSwallowedByTheHandleRoute(t *testing.T) {
 // Counts carry no more than a card does: they are numbers over dictionary values, and the
 // employer names seeded into the fixture must not reach them either.
 func TestTalentFacets_LeakNothingFromTheCV(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent/facets")
 	defer resp.Body.Close()
@@ -328,7 +496,7 @@ func TestTalentFacets_LeakNothingFromTheCV(t *testing.T) {
 }
 
 func TestTalentFacets_ReportsParamsItDidNotRead(t *testing.T) {
-	app := talentCatalogApp(twoMemberStore())
+	app := talentCatalogApp(twoMemberStore(), nil)
 
 	resp := doTalent(t, app, "/talent/facets?countries=de")
 	defer resp.Body.Close()

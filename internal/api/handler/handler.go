@@ -544,7 +544,7 @@ func Register(app *fiber.App, cfg Config) {
 	// enough that somebody who just joined sees themselves listed while still looking at
 	// the page that said they would be. Leaving takes effect immediately regardless —
 	// the card route re-reads the database rather than the snapshot.
-	talentCatalogH := newTalentCatalogHandlers(talentnetwork.NewCatalogue(queries, time.Minute, time.Now))
+	talentCatalogH := newTalentCatalogHandlers(talentnetwork.NewCatalogue(queries, time.Minute, time.Now), photoStore)
 	// One bank for the whole surface. It is stateless over the shared queries, but the
 	// single value is what keeps the evidence gate from being anyone's to attach later:
 	// the CV editor is constructed with it below, not handed it by the assistant.

@@ -180,6 +180,27 @@ func (q *Queries) GetTalentNetworkMemberByHandle(ctx context.Context, handle str
 	return i, err
 }
 
+const getTalentNetworkMemberUserIDByHandle = `-- name: GetTalentNetworkMemberUserIDByHandle :one
+SELECT u.id
+FROM users u
+WHERE u.talent_handle = $1::text
+  AND u.talent_network_visibility <> 'off'
+  AND u.resume_uploaded_at IS NOT NULL
+  AND u.resume_structured_uploaded_at = u.resume_uploaded_at
+`
+
+// The same "is this handle a current member" predicate as
+// GetTalentNetworkMemberByHandle, but naming only the user id — for the public photo
+// route, which needs a headshot owner, never a public card. Kept as its own query
+// rather than widening ByHandle's result: the id is not part of the public projection
+// and has no reason to travel through the same path that assembles one.
+func (q *Queries) GetTalentNetworkMemberUserIDByHandle(ctx context.Context, handle string) (int64, error) {
+	row := q.db.QueryRow(ctx, getTalentNetworkMemberUserIDByHandle, handle)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getTalentNetworkVisibility = `-- name: GetTalentNetworkVisibility :one
 SELECT talent_network_visibility,
        talent_handle,

@@ -7,13 +7,23 @@
   // A typeahead over the company catalogue: type a name, pick from a logo'd list, and
   // the chosen company's slug flows back through onSelect. Replaces a raw slug input so
   // the offerer never has to guess the slug.
+  //
+  // `value` is the typed text itself, bindable so a consumer whose field is always free
+  // text (no catalogue slug — the experience bank's Company field) can track it live,
+  // including a query that never resolves to a pick. `onSelect` stays the channel for a
+  // *resolved* company, and is optional for a consumer that only needs the text.
   let {
+    value = $bindable(''),
     onSelect,
+    id,
+    'aria-describedby': ariaDescribedby,
   }: {
-    onSelect: (company: { slug: string; name: string } | null) => void;
+    value?: string;
+    onSelect?: (company: { slug: string; name: string } | null) => void;
+    id?: string;
+    'aria-describedby'?: string;
   } = $props();
 
-  let query = $state('');
   let results = $state.raw<CompanyListItem[]>([]);
   let open = $state(false);
   let loading = $state(false);
@@ -32,11 +42,11 @@
     // Typing invalidates any prior pick until a new one is chosen.
     if (picked) {
       picked = null;
-      onSelect(null);
+      onSelect?.(null);
     }
     open = true;
     clearTimeout(timer);
-    const q = query.trim();
+    const q = value.trim();
     if (q.length < 2) {
       reqToken++;
       results = [];
@@ -60,19 +70,21 @@
 
   function pick(c: CompanyListItem) {
     picked = { slug: c.slug, name: c.name };
-    query = c.name;
+    value = c.name;
     open = false;
     results = [];
-    onSelect(picked);
+    onSelect?.(picked);
   }
 </script>
 
 <div class="relative">
   <input
+    {id}
+    aria-describedby={ariaDescribedby}
     type="text"
-    bind:value={query}
+    bind:value
     oninput={onInput}
-    onfocus={() => query.trim().length >= 2 && (open = true)}
+    onfocus={() => value.trim().length >= 2 && (open = true)}
     onblur={() => setTimeout(() => (open = false), 120)}
     placeholder="Search your company…"
     autocomplete="off"

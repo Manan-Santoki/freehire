@@ -26,6 +26,7 @@ var ErrNotFound = errors.New("talentnetwork: not found")
 type Store interface {
 	ListTalentNetworkMembers(ctx context.Context) ([]db.ListTalentNetworkMembersRow, error)
 	GetTalentNetworkMemberByHandle(ctx context.Context, handle string) (db.GetTalentNetworkMemberByHandleRow, error)
+	GetTalentNetworkMemberUserIDByHandle(ctx context.Context, handle string) (int64, error)
 }
 
 // Query is the catalogue's whole filter vocabulary. Every field is a closed-vocabulary
@@ -136,6 +137,27 @@ func (c *Catalogue) ByHandle(ctx context.Context, handle string) (CatalogueMembe
 		structured:      row.ResumeStructured,
 		updatedAt:       row.ResumeStructuredUploadedAt.Time,
 	}), nil
+}
+
+// HeadshotOwner resolves a handle straight to its current member's account id, read from
+// the DATABASE like ByHandle and for the same reason — never serving a headshot for a
+// member who has just left. It exists apart from ByHandle so the public photo route can
+// look up a headshot owner without building the public CandidateCard projection: the id
+// is not part of that projection and has no reason to travel through the code path that
+// assembles one.
+func (c *Catalogue) HeadshotOwner(ctx context.Context, handle string) (int64, error) {
+	if !ValidHandle(handle) {
+		return 0, ErrNotFound
+	}
+
+	id, err := c.store.GetTalentNetworkMemberUserIDByHandle(ctx, handle)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return id, nil
 }
 
 // current returns a snapshot no older than the TTL, refreshing if needed.

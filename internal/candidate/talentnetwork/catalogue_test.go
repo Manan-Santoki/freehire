@@ -37,13 +37,17 @@ const (
 )
 
 type fakeCatalogueStore struct {
-	mu       sync.Mutex
-	rows     []db.ListTalentNetworkMembersRow
-	one      db.GetTalentNetworkMemberByHandleRow
-	oneErr   error
-	listErr  error
-	listCall int
-	oneCall  int
+	mu          sync.Mutex
+	rows        []db.ListTalentNetworkMembersRow
+	one         db.GetTalentNetworkMemberByHandleRow
+	oneErr      error
+	listErr     error
+	listCall    int
+	oneCall     int
+	ownerHandle string
+	ownerID     int64
+	ownerErr    error
+	ownerCall   int
 }
 
 func (f *fakeCatalogueStore) ListTalentNetworkMembers(context.Context) ([]db.ListTalentNetworkMembersRow, error) {
@@ -67,6 +71,19 @@ func (f *fakeCatalogueStore) GetTalentNetworkMemberByHandle(_ context.Context, h
 		return db.GetTalentNetworkMemberByHandleRow{}, pgx.ErrNoRows
 	}
 	return f.one, nil
+}
+
+func (f *fakeCatalogueStore) GetTalentNetworkMemberUserIDByHandle(_ context.Context, handle string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ownerCall++
+	if f.ownerErr != nil {
+		return 0, f.ownerErr
+	}
+	if f.ownerHandle != handle {
+		return 0, pgx.ErrNoRows
+	}
+	return f.ownerID, nil
 }
 
 func (f *fakeCatalogueStore) calls() (list, one int) {
@@ -414,5 +431,48 @@ func TestByHandle_RefusesAMalformedHandleWithoutQuerying(t *testing.T) {
 	}
 	if _, one := store.calls(); one != 0 {
 		t.Errorf("the store was queried %d times for a malformed handle, want 0", one)
+	}
+}
+
+func TestHeadshotOwner_ReturnsTheUserIDForACurrentMember(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	store := &fakeCatalogueStore{ownerHandle: "backend-aaaa", ownerID: 42}
+	c := newTestCatalogue(t, store, func() time.Time { return base })
+
+	id, err := c.HeadshotOwner(context.Background(), "backend-aaaa")
+	if err != nil {
+		t.Fatalf("HeadshotOwner: %v", err)
+	}
+	if id != 42 {
+		t.Errorf("HeadshotOwner id = %d, want 42", id)
+	}
+}
+
+// The three ways ByHandle already treats as absent — a handle nobody holds, a member
+// who opted out, and one whose extract has gone stale — all live inside the SQL
+// predicate itself (see GetTalentNetworkMemberUserIDByHandle), so from this package's
+// perspective they are one case: the store returns no row.
+func TestHeadshotOwner_AbsentAndMalformedAnswerTheSame(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	store := &fakeCatalogueStore{ownerErr: pgx.ErrNoRows}
+	c := newTestCatalogue(t, store, func() time.Time { return base })
+
+	for _, handle := range []string{"backend-zzzz", "not a handle", "", "../etc/passwd"} {
+		if _, err := c.HeadshotOwner(context.Background(), handle); !errors.Is(err, ErrNotFound) {
+			t.Errorf("HeadshotOwner(%q) error = %v, want ErrNotFound", handle, err)
+		}
+	}
+}
+
+func TestHeadshotOwner_RefusesAMalformedHandleWithoutQuerying(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	store := &fakeCatalogueStore{}
+	c := newTestCatalogue(t, store, func() time.Time { return base })
+
+	if _, err := c.HeadshotOwner(context.Background(), "NOT-a-Handle!"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+	if store.ownerCall != 0 {
+		t.Errorf("the store was queried %d times for a malformed handle, want 0", store.ownerCall)
 	}
 }

@@ -5,8 +5,12 @@
   import type { WebhookConfig } from '$lib/types';
   import { Button, ConfirmDialog, Input } from '$lib/ui';
   import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './WebhookSettingsView.messages';
   import { timeAgo } from '$lib/utils';
   import States from './States.svelte';
+
+  const s = $derived(t(messages, locale()));
 
   // Load once the session is confirmed, mirroring ApiKeysView.
   const webhookData = new AsyncData<WebhookConfig | null>(null);
@@ -18,7 +22,13 @@
 
   let url = $state('');
   let saving = $state(false);
-  let formError = $state<string | null>(null);
+  // A key into the catalog, not the message itself — the text is derived from `s`
+  // below so an already-shown error follows a later locale change instead of
+  // freezing in whatever locale was resolved when it was set.
+  let formErrorKind = $state<'invalidUrl' | 'saveFailed' | 'updateFailed' | 'deleteFailed' | null>(
+    null,
+  );
+  const formError = $derived(formErrorKind ? s[formErrorKind] : null);
 
   $effect(() => {
     if (webhook && !url) url = webhook.url;
@@ -29,14 +39,11 @@
     const trimmed = url.trim();
     if (!trimmed || saving) return;
     saving = true;
-    formError = null;
+    formErrorKind = null;
     try {
       webhookData.value = await api.createOrUpdateWebhook(trimmed);
     } catch (error) {
-      formError =
-        error instanceof ApiError && error.status === 400
-          ? 'Enter a valid http:// or https:// URL.'
-          : 'Could not save the webhook. Please try again.';
+      formErrorKind = error instanceof ApiError && error.status === 400 ? 'invalidUrl' : 'saveFailed';
     } finally {
       saving = false;
     }
@@ -47,7 +54,7 @@
     try {
       webhookData.value = await api.setWebhookEnabled(!webhook.enabled);
     } catch {
-      formError = 'Could not update the webhook. Please try again.';
+      formErrorKind = 'updateFailed';
     }
   }
 
@@ -59,22 +66,20 @@
       webhookData.value = null;
       url = '';
     } catch (error) {
-      formError = 'Could not delete the webhook. Please try again.';
-      throw new Error(formError, { cause: error });
+      formErrorKind = 'deleteFailed';
+      throw new Error(s.deleteFailed, { cause: error });
     }
   }
 </script>
 
 {#if !isAuthenticated()}
-  <p class="py-12 text-center text-sm text-muted-foreground">Sign in to configure a webhook.</p>
+  <p class="py-12 text-center text-sm text-muted-foreground">{s.signInPrompt}</p>
 {:else}
   <div class="flex flex-col gap-6">
     <div class="flex flex-col gap-1">
-      <h1 class="text-2xl font-semibold tracking-tight">Webhook</h1>
+      <h1 class="text-2xl font-semibold tracking-tight">{s.heading}</h1>
       <p class="text-sm text-muted-foreground">
-        Get an HTTP POST whenever one of your saved searches finds a new match —
-        alongside or instead of email/Telegram. Turn it on for a saved search from its
-        alert settings once a destination is configured here.
+        {s.description}
       </p>
     </div>
 
@@ -86,16 +91,16 @@
         class="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-end"
       >
         <label class="flex flex-1 flex-col gap-1">
-          <span class="text-sm font-medium">URL</span>
+          <span class="text-sm font-medium">{s.urlLabel}</span>
           <Input
             bind:value={url}
             type="url"
-            placeholder="https://example.com/freehire-hook"
+            placeholder={s.urlPlaceholder}
             class="w-full"
           />
         </label>
         <Button variant="primary" type="submit" disabled={!url.trim() || saving}>
-          {saving ? 'Saving…' : webhook ? 'Save' : 'Create webhook'}
+          {saving ? s.saving : webhook ? s.save : s.create}
         </Button>
       </form>
 
@@ -109,20 +114,20 @@
             <span class="truncate font-mono text-sm">{webhook.url}</span>
             <span class="text-xs text-muted-foreground">
               {#if webhook.enabled}
-                Enabled · created {timeAgo(webhook.created_at, locale())}
-                {#if webhook.last_success_at}· last delivered {timeAgo(webhook.last_success_at, locale())}{/if}
+                {s.enabledPrefix} · {s.createdPrefix} {timeAgo(webhook.created_at, locale())}
+                {#if webhook.last_success_at}· {s.lastDeliveredPrefix} {timeAgo(webhook.last_success_at, locale())}{/if}
               {:else}
-                Disabled
-                {#if webhook.disabled_at}· since {timeAgo(webhook.disabled_at, locale())}{/if}
+                {s.disabled}
+                {#if webhook.disabled_at}· {s.sincePrefix} {timeAgo(webhook.disabled_at, locale())}{/if}
               {/if}
             </span>
           </div>
           <div class="flex shrink-0 items-center gap-2">
             <Button variant="outline" size="sm" onclick={toggleEnabled}>
-              {webhook.enabled ? 'Disable' : 'Enable'}
+              {webhook.enabled ? s.disable : s.enable}
             </Button>
             <Button variant="ghost" size="sm" onclick={() => (confirmDeleteOpen = true)}
-              >Delete</Button
+              >{s.delete}</Button
             >
           </div>
         </div>
@@ -132,9 +137,9 @@
 
   <ConfirmDialog
     bind:open={confirmDeleteOpen}
-    title="Delete webhook?"
-    description="Saved searches subscribed to this channel stop delivering immediately."
-    confirmLabel="Delete"
+    title={s.deleteDialogTitle}
+    description={s.deleteDialogDescription}
+    confirmLabel={s.delete}
     variant="destructive"
     onConfirm={remove}
   />

@@ -8,7 +8,12 @@
   import { jobLists } from '$lib/jobLists.svelte';
   import type { JobList } from '$lib/types';
   import { Button, ConfirmDialog, Input } from '$lib/ui';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { format, plural, t } from '$lib/i18n/t';
+  import { messages } from './JobListsView.messages';
   import States from './States.svelte';
+
+  const s = $derived(t(messages, locale()));
 
   // The account page for job lists: create a named list, rename it, edit its
   // description, publish/unpublish it as a public read-only page, and delete it.
@@ -17,7 +22,15 @@
 
   let status = $state<'loading' | 'error' | 'ready'>('loading');
   const items = $derived(jobLists.items);
-  let error = $state<string | null>(null);
+  // A key into `s.errors`, not the message itself — the text is derived below so
+  // an already-shown error follows a later locale change instead of freezing in
+  // whatever locale was resolved when it was set. `errorMessage` holds the
+  // server's own message when the action's own ApiError carries one; that raw
+  // text is never a catalog concern and takes priority over the fallback.
+  type ErrorKind = keyof typeof s.errors;
+  let errorKind = $state<ErrorKind | null>(null);
+  let errorMessage = $state<string | null>(null);
+  const error = $derived(errorKind ? (errorMessage ?? s.errors[errorKind]) : null);
 
   async function load() {
     status = 'loading';
@@ -49,43 +62,46 @@
     creating = true;
     newName = '';
     newDescription = '';
-    error = null;
+    errorKind = null;
   }
 
   async function confirmCreate() {
     const name = newName.trim();
     if (!name) return;
     createBusy = true;
-    error = null;
+    errorKind = null;
     try {
       await jobLists.create(name, newDescription.trim());
       creating = false;
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Could not create this list. Please try again.';
+      errorMessage = err instanceof ApiError ? err.message : null;
+      errorKind = 'create';
     } finally {
       createBusy = false;
     }
   }
 
   async function rename(l: JobList) {
-    const next = window.prompt('Rename job list', l.name)?.trim();
+    const next = window.prompt(s.renamePromptMessage, l.name)?.trim();
     if (!next || next === l.name) return;
-    error = null;
+    errorKind = null;
     try {
       await jobLists.update(l.id, { name: next });
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Could not rename this list. Please try again.';
+      errorMessage = err instanceof ApiError ? err.message : null;
+      errorKind = 'rename';
     }
   }
 
   async function editDescription(l: JobList) {
-    const next = window.prompt('Edit description', l.description);
+    const next = window.prompt(s.editDescriptionPromptMessage, l.description);
     if (next === null || next === l.description) return;
-    error = null;
+    errorKind = null;
     try {
       await jobLists.update(l.id, { description: next.trim() });
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Could not update the description. Please try again.';
+      errorMessage = err instanceof ApiError ? err.message : null;
+      errorKind = 'description';
     }
   }
 
@@ -98,11 +114,12 @@
 
   async function share(id: number) {
     busyId = id;
-    error = null;
+    errorKind = null;
     try {
       await jobLists.share(id);
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Could not share this list. Please try again.';
+      errorMessage = err instanceof ApiError ? err.message : null;
+      errorKind = 'share';
     } finally {
       busyId = null;
     }
@@ -110,11 +127,12 @@
 
   async function unshare(id: number) {
     busyId = id;
-    error = null;
+    errorKind = null;
     try {
       await jobLists.unshare(id);
     } catch {
-      error = 'Could not unshare this list. Please try again.';
+      errorMessage = null;
+      errorKind = 'unshare';
     } finally {
       busyId = null;
     }
@@ -128,7 +146,8 @@
         if (copiedId === l.id) copiedId = null;
       }, 1500);
     } catch {
-      error = 'Could not copy the link.';
+      errorMessage = null;
+      errorKind = 'copyLink';
     }
   }
 
@@ -143,27 +162,27 @@
   async function remove() {
     const l = removeTarget;
     if (!l) return;
-    error = null;
+    errorKind = null;
     try {
       await jobLists.remove(l.id);
     } catch {
-      error = 'Could not delete this list. Please try again.';
+      errorMessage = null;
+      errorKind = 'delete';
     }
   }
 </script>
 
 {#if !isAuthenticated()}
   <div class="flex flex-col items-center gap-3 py-12 text-center">
-    <p class="text-sm text-muted-foreground">Sign in to manage your job lists.</p>
-    <Button variant="primary" href={signinUrl({ returnTo: page.url.pathname + page.url.search, mode: 'login' })}>Sign in</Button>
+    <p class="text-sm text-muted-foreground">{s.signInPrompt}</p>
+    <Button variant="primary" href={signinUrl({ returnTo: page.url.pathname + page.url.search, mode: 'login' })}>{s.signIn}</Button>
   </div>
 {:else}
   <div class="flex flex-col gap-6">
     <div class="flex flex-col gap-1">
-      <h1 class="text-2xl font-semibold tracking-tight">Job lists</h1>
+      <h1 class="text-2xl font-semibold tracking-tight">{s.heading}</h1>
       <p class="text-sm text-muted-foreground">
-        Group specific jobs into named lists — independent of the "Save" star — and
-        optionally share one as a public, read-only page.
+        {s.description}
       </p>
     </div>
 
@@ -174,28 +193,25 @@
     {#if status === 'loading'}
       <States state="loading" />
     {:else if status === 'error'}
-      <States state="error" message="Couldn't load your job lists." />
+      <States state="error" message={s.loadError} />
     {:else}
       {#if creating}
         <div class="flex flex-col gap-2 rounded-xl border border-border p-4">
-          <Input bind:value={newName} placeholder="List name" maxlength={100} />
-          <Input bind:value={newDescription} placeholder="Description (optional)" maxlength={2000} />
+          <Input bind:value={newName} placeholder={s.namePlaceholder} maxlength={100} />
+          <Input bind:value={newDescription} placeholder={s.descriptionPlaceholder} maxlength={2000} />
           <div class="flex items-center gap-2">
             <Button variant="primary" size="sm" disabled={createBusy || !newName.trim()} onclick={confirmCreate}>
-              {createBusy ? 'Creating…' : 'Create list'}
+              {createBusy ? s.creating : s.create}
             </Button>
-            <Button variant="ghost" size="sm" onclick={() => (creating = false)}>Cancel</Button>
+            <Button variant="ghost" size="sm" onclick={() => (creating = false)}>{s.cancel}</Button>
           </div>
         </div>
       {:else}
-        <Button variant="secondary" size="sm" class="self-start" onclick={startCreate}>New list</Button>
+        <Button variant="secondary" size="sm" class="self-start" onclick={startCreate}>{s.newList}</Button>
       {/if}
 
       {#if items.length === 0}
-        <States
-          state="empty"
-          message="No job lists yet. Create one, or add a job to a new list from its card."
-        />
+        <States state="empty" message={s.empty} />
       {:else}
         <div class="flex flex-col gap-3">
         {#each items as l (l.id)}
@@ -204,8 +220,8 @@
               <div class="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span class="truncate text-sm font-medium">{l.name}</span>
                 <span class="text-xs text-muted-foreground">
-                  {l.job_count} {l.job_count === 1 ? 'job' : 'jobs'}
-                  {#if l.public_slug}· <span class="font-medium text-brand-strong">Shared</span>{/if}
+                  {format(plural(locale(), l.job_count, s.jobCount), { count: String(l.job_count) })}
+                  {#if l.public_slug}· <span class="font-medium text-brand-strong">{s.shared}</span>{/if}
                 </span>
                 {#if l.description}
                   <span class="mt-1 text-xs text-muted-foreground">{l.description}</span>
@@ -214,8 +230,8 @@
               <div class="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  aria-label="Rename “{l.name}”"
-                  title="Rename"
+                  aria-label={format(s.renameAriaLabel, { name: l.name })}
+                  title={s.renameTitle}
                   onclick={() => rename(l)}
                   class="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
@@ -223,8 +239,8 @@
                 </button>
                 <button
                   type="button"
-                  aria-label="Edit description of “{l.name}”"
-                  title="Edit description"
+                  aria-label={format(s.editDescriptionAriaLabel, { name: l.name })}
+                  title={s.editDescriptionTitle}
                   onclick={() => editDescription(l)}
                   class="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
@@ -233,8 +249,8 @@
                 {#if !l.public_slug}
                   <button
                     type="button"
-                    aria-label="Share “{l.name}”"
-                    title="Share as a public page"
+                    aria-label={format(s.shareAriaLabel, { name: l.name })}
+                    title={s.shareTitle}
                     disabled={busyId === l.id}
                     onclick={() => share(l.id)}
                     class="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -244,8 +260,8 @@
                 {/if}
                 <button
                   type="button"
-                  aria-label="Delete “{l.name}”"
-                  title="Delete"
+                  aria-label={format(s.deleteAriaLabel, { name: l.name })}
+                  title={s.deleteTitle}
                   onclick={() => requestRemove(l)}
                   class="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                 >
@@ -264,10 +280,10 @@
                   /l/{l.public_slug}
                 </a>
                 <Button variant="ghost" size="sm" class="ml-auto" onclick={() => copyLink(l)}>
-                  {copiedId === l.id ? 'Copied' : 'Copy link'}
+                  {copiedId === l.id ? s.copied : s.copyLink}
                 </Button>
                 <Button variant="ghost" size="sm" disabled={busyId === l.id} onclick={() => unshare(l.id)}>
-                  Unshare
+                  {s.unshare}
                 </Button>
               </div>
             {/if}
@@ -280,8 +296,8 @@
 
   <ConfirmDialog
     bind:open={confirmRemoveOpen}
-    title={`Delete job list “${removeTarget?.name ?? ''}”?`}
-    confirmLabel="Delete"
+    title={format(s.deleteDialogTitle, { name: removeTarget?.name ?? '' })}
+    confirmLabel={s.deleteTitle}
     variant="destructive"
     onConfirm={remove}
   />

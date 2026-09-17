@@ -547,6 +547,19 @@ WHERE u.talent_handle = sqlc.arg(handle)::text
   AND u.resume_uploaded_at IS NOT NULL
   AND u.resume_structured_uploaded_at = u.resume_uploaded_at;
 
+-- name: GetTalentNetworkMemberUserIDByHandle :one
+-- The same "is this handle a current member" predicate as
+-- GetTalentNetworkMemberByHandle, but naming only the user id — for the public photo
+-- route, which needs a headshot owner, never a public card. Kept as its own query
+-- rather than widening ByHandle's result: the id is not part of the public projection
+-- and has no reason to travel through the same path that assembles one.
+SELECT u.id
+FROM users u
+WHERE u.talent_handle = sqlc.arg(handle)::text
+  AND u.talent_network_visibility <> 'off'
+  AND u.resume_uploaded_at IS NOT NULL
+  AND u.resume_structured_uploaded_at = u.resume_uploaded_at;
+
 -- name: GetUserExperienceRequireContext :one
 -- Whether interactive atom creates require a non-empty context. Kept off /auth/me on
 -- purpose — only the experience write path and get_profile's bank summary need it.

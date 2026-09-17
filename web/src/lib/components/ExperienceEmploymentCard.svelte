@@ -6,6 +6,7 @@
    */
   import { ChevronRight, Trash2, Pencil } from '@lucide/svelte';
   import { Button, Chip, EntityLogo, FormField, Input } from '$lib/ui';
+  import CompanyPicker from '$lib/components/CompanyPicker.svelte';
   import ExperienceAchievementRow from '$lib/components/ExperienceAchievementRow.svelte';
   import SkillIcon from '$lib/components/SkillIcon.svelte';
   import PeriodDateInput from '$lib/components/PeriodDateInput.svelte';
@@ -83,6 +84,7 @@
   let empLink = $state('');
   let empStart = $state<PeriodDate | undefined>(undefined);
   let empEnd = $state<PeriodDate | undefined>(undefined);
+  let empCurrent = $state(false);
 
   function startEdit() {
     empName =
@@ -96,6 +98,7 @@
     empLink = employment.link || '';
     empStart = employment.start;
     empEnd = employment.end;
+    empCurrent = employment.current ?? false;
     isEditing = true;
   }
 
@@ -123,6 +126,8 @@
       body.company = empName.trim();
       body.role = empRole.trim() || undefined;
       body.location = empLocation.trim() || undefined;
+      body.end = empCurrent ? undefined : empEnd;
+      body.current = empCurrent;
     }
     if (await onSaveEmployment(employment, body)) {
       isEditing = false;
@@ -145,11 +150,19 @@
       <header class="flex flex-wrap items-baseline gap-x-2">
         {#if isEditing}
           <div class="flex w-full flex-col gap-2">
-            <FormField label={employment.kind === 'project' ? 'Project name' : 'Company'}>
-              {#snippet children({ id, describedBy })}
-                <Input {id} aria-describedby={describedBy} bind:value={empName} />
-              {/snippet}
-            </FormField>
+            {#if employment.kind === 'job'}
+              <FormField label="Company">
+                {#snippet children({ id, describedBy })}
+                  <CompanyPicker {id} aria-describedby={describedBy} bind:value={empName} />
+                {/snippet}
+              </FormField>
+            {:else}
+              <FormField label="Project name">
+                {#snippet children({ id, describedBy })}
+                  <Input {id} aria-describedby={describedBy} bind:value={empName} />
+                {/snippet}
+              </FormField>
+            {/if}
             {#if employment.kind === 'job'}
               <div class="flex gap-2">
                 <FormField label="Role" class="flex-1">
@@ -172,8 +185,16 @@
             {/if}
             <div class="flex gap-2">
               <PeriodDateInput bind:value={empStart} placeholder="Start" />
-              <PeriodDateInput bind:value={empEnd} placeholder="End" />
+              {#if !(employment.kind === 'job' && empCurrent)}
+                <PeriodDateInput bind:value={empEnd} placeholder="End" />
+              {/if}
             </div>
+            {#if employment.kind === 'job'}
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" bind:checked={empCurrent} class="h-4 w-4" />
+                <span class="text-muted-foreground">I currently work here</span>
+              </label>
+            {/if}
             <FormField label="Summary" hint="Optional">
               {#snippet children({ id, describedBy })}
                 <textarea

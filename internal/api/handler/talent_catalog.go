@@ -6,28 +6,31 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/strelov1/freehire/internal/candidate/headshot"
 	"github.com/strelov1/freehire/internal/candidate/talentnetwork"
 	"github.com/strelov1/freehire/internal/search/search"
 )
 
 // talentCatalogHandlers serves the PUBLIC Talent Network catalogue: the filtered list of
-// members and one member's card. Both are unauthenticated by design — the catalogue is
+// members, one member's card, and — when a member has uploaded one — a heavily blurred
+// rendering of their photo. All three are unauthenticated by design — the catalogue is
 // the front door of the feature, and a signed-out visitor is exactly who it is for — so
-// neither route takes any auth middleware.
+// none of the routes take any auth middleware.
 //
 // What they do take is a rate limiter. This is a small, complete, machine-readable set of
 // people, which is precisely the thing worth copying in one evening; the limiter is the
 // only thing standing between the catalogue and a copy of it.
 type talentCatalogHandlers struct {
 	catalogue *talentnetwork.Catalogue
+	photos    *headshot.Store
 }
 
-func newTalentCatalogHandlers(catalogue *talentnetwork.Catalogue) *talentCatalogHandlers {
-	return &talentCatalogHandlers{catalogue: catalogue}
+func newTalentCatalogHandlers(catalogue *talentnetwork.Catalogue, photos *headshot.Store) *talentCatalogHandlers {
+	return &talentCatalogHandlers{catalogue: catalogue, photos: photos}
 }
 
 func (h *talentCatalogHandlers) register(api fiber.Router, mw middleware) {
-	// The limiter is attached to these two routes rather than to a group, so it cannot
+	// The limiter is attached to these routes rather than to a group, so it cannot
 	// be lost by a later reshuffle that moves a route out of the group it was assumed to
 	// be in. It is the catalogue's OWN budget, not the shared public-read one — see
 	// talentCatalogPerMinute for why a read that returns people is bounded separately
@@ -38,6 +41,7 @@ func (h *talentCatalogHandlers) register(api fiber.Router, mw middleware) {
 	// for the facets is answered as a lookup of a member called "facets".
 	api.Get("/talent/facets", limiter, h.Facets)
 	api.Get("/talent/:handle", limiter, h.Get)
+	api.Get("/talent/:handle/photo", limiter, h.GetPhoto)
 }
 
 // Facets serves how many members stand behind each filter value, for the filter the
@@ -96,6 +100,50 @@ func (h *talentCatalogHandlers) Get(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "private, max-age=60")
 	c.Set("X-Robots-Tag", "noindex")
 	return c.JSON(fiber.Map{"data": member})
+}
+
+// GetPhoto serves a member's photo, blurred to the point of being unrecognisable —
+// never the stored original, which no public route ever serves. Every reason the route
+// might not have an image to serve — the handle is not a current member, the member has
+// no headshot uploaded, or headshot storage is unavailable — answers identically, the
+// same 404 `Get` gives a handle nobody holds: a caller must not be able to tell "not a
+// member" apart from "a member with no photo" by the shape of the response.
+func (h *talentCatalogHandlers) GetPhoto(c *fiber.Ctx) error {
+	userID, err := h.catalogue.HeadshotOwner(c.Context(), c.Params("handle"))
+	if err != nil {
+		if errors.Is(err, talentnetwork.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "not found")
+		}
+		return err
+	}
+
+	data, err := h.photos.Get(c.Context(), userID)
+	if err != nil {
+		// ErrNotStored (no headshot) and ErrStorageDisabled (storage unconfigured) both
+		// collapse into the same 404 a non-member gets — never the 501 the OWNER's own
+		// /me/photo/image route uses, which would tell a public caller storage is down
+		// as a fact distinct from "this member has no photo". Anything ELSE (a DB or
+		// blob-store fault) falls through to the ordinary error path instead of joining
+		// that same silent 404: collapsing those too would make a real outage
+		// indistinguishable from "no headshot" in every log and every alert, the same
+		// error-swallowing photo.go's mapPhotoError deliberately avoids.
+		if errors.Is(err, headshot.ErrNotStored) || errors.Is(err, headshot.ErrStorageDisabled) {
+			return fiber.NewError(fiber.StatusNotFound, "not found")
+		}
+		return err
+	}
+
+	blurred, err := headshot.Blur(data)
+	if err != nil {
+		return err
+	}
+
+	c.Set(fiber.HeaderContentType, "image/jpeg")
+	// Same reasoning as Get's Cache-Control: private, not public, so a shared cache
+	// never outlives a member's decision to leave.
+	c.Set("Cache-Control", "private, max-age=60")
+	c.Set("X-Robots-Tag", "noindex")
+	return c.Send(blurred)
 }
 
 // ignoredTalentParams reports what this listing did not read: the params it does not
