@@ -13,6 +13,7 @@
     jsonLdScript,
     metaDescription,
   } from '$lib/seo';
+  import { Breadcrumbs } from '$lib/ui';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -30,20 +31,22 @@
         ? `${data.job.title} at ${data.job.company} — apply on freehire.`
         : `${data.job.title} — apply on freehire.`)
   );
+  // The one breadcrumb trail feeding both the visible nav and the structured data below —
+  // a single array so the two can never disagree about what the trail is. There used to
+  // be no `Jobs` level here: `/jobs` was a 301 to `/`, and a trail step naming a redirect
+  // is a step Google resolves away. That is now backwards — `/jobs` is the real feed and
+  // `/` is the one that redirects (jobs/+page.server.ts's own comment: "The feed used to
+  // live at `/`, which is now the landing page") — so the level belongs back.
+  const breadcrumbItems = $derived([{ name: 'Jobs', href: '/jobs' }, { name: data.job.title }]);
   const jsonLd = $derived(
     jsonLdScript([
       jobPostingJsonLd(data.job, origin),
-      // Two levels, not three: the feed a job sits in IS the homepage, so the
-      // parent here is `/`. There was a `Jobs` level pointing at `/jobs`, but
-      // that route is a 301 to `/` (jobs/+page.server.ts — the feed moved), and
-      // a trail step naming a redirect is a step Google resolves away. Adding
-      // it back with `/` as its target would be worse still: two positions, one
-      // URL. If the feed ever gets its own page again, this is where the level
-      // returns.
-      breadcrumbJsonLd([
-        { name: 'freehire', url: `${origin}/` },
-        { name: data.job.title, url: canonical },
-      ]),
+      breadcrumbJsonLd(
+        breadcrumbItems.map((item) => ({
+          name: item.name,
+          url: item.href ? `${origin}${item.href}` : canonical,
+        })),
+      ),
     ])
   );
 </script>
@@ -60,6 +63,8 @@
      raw text with no card wrapper, so 16px reads tight against the edge; sm+ falls
      back to the shared px-4 rhythm. -->
 <div class="mx-auto w-full max-w-6xl px-5 py-6 sm:px-4">
+  <Breadcrumbs items={breadcrumbItems} class="mb-4" />
+
   <JobView job={data.job} applyForm={data.applyForm} />
 
   <JobRelated

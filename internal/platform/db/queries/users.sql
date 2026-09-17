@@ -513,7 +513,12 @@ SELECT u.talent_handle,
        COALESCE(u.resume_cities, '{}')::text[] AS cities,
        u.resume_structured,
        u.resume_structured_uploaded_at,
-       COALESCE(p.specializations, '{}')::text[] AS specializations
+       COALESCE(p.specializations, '{}')::text[] AS specializations,
+       -- Whether the member has an uploaded headshot, never the object key itself: the
+       -- catalogue card links to the blurred photo route by the member's own handle
+       -- (talentnetwork.CatalogueMember.HasPhoto), so a card can skip requesting a photo
+       -- that GetPhoto would only 404 for.
+       (u.photo_object_key IS NOT NULL AND u.photo_object_key <> '')::boolean AS has_photo
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
 WHERE u.talent_network_visibility <> 'off'
@@ -536,7 +541,8 @@ SELECT u.talent_handle,
        COALESCE(u.resume_cities, '{}')::text[] AS cities,
        u.resume_structured,
        u.resume_structured_uploaded_at,
-       COALESCE(p.specializations, '{}')::text[] AS specializations
+       COALESCE(p.specializations, '{}')::text[] AS specializations,
+       (u.photo_object_key IS NOT NULL AND u.photo_object_key <> '')::boolean AS has_photo
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
 -- The ::text cast is load-bearing, not decoration: talent_handle is nullable, so without

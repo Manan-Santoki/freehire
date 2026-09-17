@@ -136,6 +136,7 @@ func (c *Catalogue) ByHandle(ctx context.Context, handle string) (CatalogueMembe
 		specializations: row.Specializations,
 		structured:      row.ResumeStructured,
 		updatedAt:       row.ResumeStructuredUploadedAt.Time,
+		hasPhoto:        row.HasPhoto,
 	}), nil
 }
 
@@ -198,6 +199,7 @@ func (c *Catalogue) current(ctx context.Context) (*snapshot, error) {
 			specializations: r.Specializations,
 			structured:      r.ResumeStructured,
 			updatedAt:       r.ResumeStructuredUploadedAt.Time,
+			hasPhoto:        r.HasPhoto,
 		}))
 	}
 
@@ -218,6 +220,7 @@ type storedMember struct {
 	specializations []string
 	structured      []byte
 	updatedAt       time.Time
+	hasPhoto        bool
 }
 
 // projectMember turns one stored row into a catalogue entry.
@@ -238,6 +241,7 @@ func projectMember(row storedMember) CatalogueMember {
 		Cities:          nonNil(row.cities),
 		Specializations: nonNil(row.specializations),
 		UpdatedAt:       row.updatedAt,
+		HasPhoto:        row.hasPhoto,
 	}
 }
 

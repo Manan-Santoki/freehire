@@ -10,6 +10,7 @@
     listingRobots,
     organizationJsonLd,
   } from '$lib/seo';
+  import { Breadcrumbs } from '$lib/ui';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -31,14 +32,21 @@
       ? `${data.company.name} — page ${data.pageNumber} · freehire`
       : listingTitle,
   );
+  // The one breadcrumb trail feeding both the visible nav and the structured data below —
+  // a single array so the two can never disagree about what the trail is.
+  const breadcrumbItems = $derived([
+    { name: 'Companies', href: '/companies' },
+    { name: data.company.name },
+  ]);
   const jsonLd = $derived(
     jsonLdScript([
       organizationJsonLd(data.company, origin),
-      breadcrumbJsonLd([
-        { name: 'freehire', url: `${origin}/` },
-        { name: 'Companies', url: `${origin}/companies` },
-        { name: data.company.name, url: base },
-      ]),
+      breadcrumbJsonLd(
+        breadcrumbItems.map((item) => ({
+          name: item.name,
+          url: item.href ? `${origin}${item.href}` : base,
+        })),
+      ),
     ])
   );
 </script>
@@ -57,6 +65,8 @@
 </svelte:head>
 
 <div class="mx-auto w-full max-w-6xl px-4 py-6">
+  <Breadcrumbs items={breadcrumbItems} class="mb-4" />
+
   <!-- Remount on slug change so the seeded paginator/filters start fresh per company. -->
   {#key data.slug}
     <CompanyView

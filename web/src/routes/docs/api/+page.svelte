@@ -107,4 +107,16 @@
 
     --scalar-radius: var(--radius) !important;
   }
+
+  /* Scalar's markdown tables use `table-layout: fixed`, which splits every table's
+     columns evenly regardless of content. The "Filtering jobs" facet table has a
+     short Param/Filter column beside a Values column holding long comma-separated
+     lists, so at the width available inside Scalar's content pane the fixed split
+     squeezes Param/Filter narrower than a single word — and `word-break: break-word`
+     (also Scalar's own) then breaks mid-word. `auto` sizes each column to its own
+     content instead and lets the table's own `overflow-x: auto` scroll horizontally
+     if the result is still wider than the pane. */
+  :global(.scalar-app .markdown table) {
+    table-layout: auto !important;
+  }
 </style>

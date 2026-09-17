@@ -2,7 +2,7 @@
 // string out, no fetch (the generated spec is imported directly). The client
 // hydrates this same fragment with the same config in +page.svelte, so the two
 // never disagree about what the spec says.
-import spec from '../../../../static/api-reference.openapi.json' with { type: 'json' };
+import spec from '$lib/docs/generated/api-reference.openapi.json' with { type: 'json' };
 import { scalarConfigFromContent } from '$lib/docs/scalarConfig';
 import type { PageServerLoad } from './$types';
 

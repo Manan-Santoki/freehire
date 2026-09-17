@@ -7,7 +7,7 @@
   import { ROLE_PLACEHOLDER } from '$lib/placeholderRoles';
   import HeaderMenu from './HeaderMenu.svelte';
   import BrandMark from './BrandMark.svelte';
-  import { isFullBleedRoute } from '$lib/shellLayout';
+  import { isWideHeaderRoute } from '$lib/shellLayout';
   import { HEADER_LINKS } from '$lib/siteNav';
 
   // The header is three slots — logo | search | menu — identical on every
@@ -39,6 +39,14 @@
   // control strip, and both have to remain reachable.
   const bareHeader = $derived(page.url.pathname === '/');
 
+  // The API reference is the one page below that has its own search already: Scalar's
+  // sidebar answers Cmd/Ctrl+K over the spec, and it is already mounted the moment the
+  // reference hydrates. HeaderSearch binds those same global hotkeys for job search
+  // (see its own `onWindowKeydown`), so leaving it mounted here would not just be a
+  // search box with nothing to search — it would fight Scalar's for the very keys that
+  // are supposed to open it.
+  const docsApiHeader = $derived(page.url.pathname === '/docs/api');
+
   /** How many of HEADER_LINKS the bare header carries below `lg`, taken from the FRONT of
    *  that list — so its order is the contract, and reordering it changes what a narrow
    *  screen gets. Today that is Jobs and Companies.
@@ -55,10 +63,12 @@
   const LINKS_BELOW_LG = 2;
 
   // On the full-viewport surfaces (the agent, the tailor workspace) the page below runs
-  // edge to edge under its own icon rail, so the header drops the centered `max-w-6xl`
-  // and does the same: brand hard left, menu hard right. The search keeps a readable
-  // width and centers itself in the gap rather than stretching across the monitor.
-  const fullBleed = $derived(isFullBleedRoute(page.url.pathname));
+  // edge to edge under its own icon rail, and on the API reference the columns below
+  // (sidebar, content, request/response examples) are just as wide — so on all of them
+  // the header drops the centered `max-w-6xl` and does the same: brand hard left, menu
+  // hard right. The search keeps a readable width and centers itself in the gap rather
+  // than stretching across the monitor.
+  const wideHeader = $derived(isWideHeaderRoute(page.url.pathname));
 
   // A failed OAuth callback lands back wherever that attempt's `returnTo` pointed,
   // carrying `?auth_error` (appended by the backend — see internal/api/handler/oauth.go)
@@ -89,15 +99,15 @@
   <div
     class={[
       'mx-auto flex h-14 items-center gap-3 px-4 sm:gap-4',
-      fullBleed ? 'max-w-none' : 'max-w-6xl',
+      wideHeader ? 'max-w-none' : 'max-w-6xl',
     ]}
   >
-    <!-- Full-bleed only: the two side slots grow from a zero basis, so the free space
+    <!-- Wide header only: the two side slots grow from a zero basis, so the free space
          splits evenly between them and the search sits on the container's axis — the
          menu cluster is wider than the brand, so centering the middle slot on its own
          leftover space would push it visibly off-centre. `basis-0` also keeps them from
          shrinking (shrink scales the basis), so the narrow layout is untouched. -->
-    <div class={['flex shrink-0 items-center', fullBleed && 'flex-1 basis-0']}>
+    <div class={['flex shrink-0 items-center', wideHeader && 'flex-1 basis-0']}>
       <a
         href={resolve('/')}
         aria-label="freehire"
@@ -113,10 +123,10 @@
     </div>
 
     <!-- The slot, not the search component, owns the middle width: each search root is
-         `min-w-0 flex-1`, so it fills whatever this wrapper is given. Full-bleed gives it
+         `min-w-0 flex-1`, so it fills whatever this wrapper is given. The wide header gives it
          a 48rem basis so it lands at that width instead of an even third of the row; the
          cap then hands the rest back to the side slots, which keeps it on the axis. -->
-    <div class={['flex min-w-0 flex-1', fullBleed && 'max-w-3xl basis-3xl']}>
+    <div class={['flex min-w-0 flex-1', wideHeader && 'max-w-3xl basis-3xl']}>
       {#if bareHeader}
         <!-- All five do not fit beside the brand and the burger on a phone, but the row
              they share is otherwise EMPTY on this route — the homepage's search box is its
@@ -146,14 +156,14 @@
             </a>
           {/each}
         </nav>
-      {:else}
+      {:else if !docsApiHeader}
         <HeaderSearch {...searchWording} />
       {/if}
     </div>
 
     <!-- One cluster, not two: the bell lives inside HeaderMenu beside the profile it
          notifies about, so this slot is just the menu. -->
-    <div class={['flex shrink-0 items-center gap-1', fullBleed && 'flex-1 basis-0 justify-end']}>
+    <div class={['flex shrink-0 items-center gap-1', wideHeader && 'flex-1 basis-0 justify-end']}>
       <HeaderMenu />
     </div>
   </div>

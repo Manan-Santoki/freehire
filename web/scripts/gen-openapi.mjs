@@ -10,9 +10,13 @@
 // is a separate file with the whole public API surface, consumed only by the
 // Scalar reference.
 //
-//   node scripts/gen-openapi.mjs    # writes ../static/api-reference.openapi.json
+//   node scripts/gen-openapi.mjs    # writes ../src/lib/docs/generated/api-reference.openapi.json
+//
+// Lives under src/, not static/: the generated document is served to the browser
+// through src/routes/api-reference.openapi.json/+server.ts rather than as a raw
+// static file, so the route can set its own Cache-Control — see that file for why.
 
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { loadDocsModules } from './gen-api-docs.mjs';
@@ -20,7 +24,7 @@ import { renderFilterSectionLines } from './renderFilterSection.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const webRoot = resolve(here, '..');
-const outFile = resolve(webRoot, 'static', 'api-reference.openapi.json');
+const outFile = resolve(webRoot, 'src', 'lib', 'docs', 'generated', 'api-reference.openapi.json');
 
 const SESSION_COOKIE_NAME = 'hire_token';
 
@@ -289,6 +293,7 @@ async function main() {
   const { spec, filters } = await loadDocsModules();
   const doc = renderOpenApi(spec, filters);
   const json = `${JSON.stringify(doc, null, 2)}\n`;
+  await mkdir(dirname(outFile), { recursive: true });
   await writeFile(outFile, json);
   console.log(`Wrote ${outFile} (${json.length} bytes)`);
 }

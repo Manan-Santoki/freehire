@@ -5,15 +5,20 @@
   import type { CatalogueMember } from '$lib/generated/contracts';
   import { CATEGORY_LABELS, titleCase } from '$lib/labels';
   import { talentHeading, talentPlace } from '$lib/talentCard';
-  import { Card, Chip, CountryFlag } from '$lib/ui';
+  import { Avatar, Card, Chip, CountryFlag } from '$lib/ui';
 
   // One member of the public Talent Network catalogue.
   //
-  // There is no name, no photo and no employer to render — the payload carries none, by
-  // construction (internal/candidate/talentnetwork/card.go). So the card is built from
-  // what a dictionary vouched for: what they do, how long they have done it, what with,
-  // and roughly where. The generic person icon is the avatar; anything else here would
-  // be a placeholder pretending to be a person.
+  // There is no name and no employer to render — the payload carries none, by
+  // construction (internal/candidate/talentnetwork/card.go). So most of the card is
+  // built from what a dictionary vouched for: what they do, how long they have done it,
+  // what with, and roughly where.
+  //
+  // The photo is the one exception, and it is not a placeholder pretending to be a
+  // person — it is the actual member, blurred past recognition server-side on every
+  // request (internal/candidate/headshot.Blur), the same rendering the profile page
+  // shows. `has_photo` is checked first so a member with none never fires the request
+  // GetPhoto would only 404 for — most of the catalogue, in practice.
 
   let { member }: { member: CatalogueMember } = $props();
 
@@ -35,10 +40,20 @@
      product. The hover states are on the CARD rather than only on the heading link,
      because the whole row is what a pointer aims at. -->
 <Card class="flex gap-4 p-4 transition hover:border-brand hover:bg-accent">
-  <div
-    class="mt-0.5 flex size-11 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"
-  >
-    <User class="size-5" aria-hidden="true" />
+  <!-- display:contents so this wrapper (needed only to keep the snippet below from being
+  read as a prop passed to Card) does not itself become a flex item. Avatar falls back to
+  fallbackIcon on its own whenever src is absent, so has_photo needs no branch here — only
+  which src it gets. -->
+  <div class="contents">
+    <Avatar
+      src={member.has_photo ? `/api/v1/talent/${member.handle}/photo` : undefined}
+      size="md"
+      class="mt-0.5 size-11 shrink-0 bg-secondary"
+      fallbackIcon={personIcon}
+    />
+    {#snippet personIcon()}
+      <User class="size-5" aria-hidden="true" />
+    {/snippet}
   </div>
 
   <div class="flex min-w-0 flex-1 flex-col gap-2">

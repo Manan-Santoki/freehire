@@ -129,7 +129,12 @@ func cardEducation(education []resumeextract.Education) []EducationEntry {
 
 func cardRoles(experience []resumeextract.Experience) []CandidateRole {
 	if len(experience) == 0 {
-		return nil
+		// Never nil: CatalogueMember.Card.Roles has no `omitempty`, so the wire contract
+		// promises an array. A nil slice marshals to JSON `null`, which every frontend
+		// reader of this field (card.roles.length, card.roles.slice(...)) crashes on —
+		// found in production when a member with zero experience reached the catalogue
+		// list page (TalentCard.svelte:29) and 500'd it.
+		return []CandidateRole{}
 	}
 	roles := make([]CandidateRole, 0, len(experience))
 	for _, e := range experience {
@@ -154,10 +159,17 @@ func cardRoles(experience []resumeextract.Experience) []CandidateRole {
 // about themselves — the tier exists for exactly this side of the match, unlike cvmatch,
 // which mines a vacancy's prose and must not read a résumé-only acronym into it.
 func canonicalSkills(tokens []string) []string {
-	if len(tokens) == 0 {
-		return nil
+	// Never nil: CandidateCard.Skills and CandidateRole.Stack both promise an array on
+	// the wire (Skills has no `omitempty`; neither frontend reader checks for absence).
+	// A nil slice marshals to JSON `null` — see cardRoles for the production incident
+	// this caused. skilltag.Canonicalize returns nil whenever NOTHING resolves, which is
+	// not only the empty-input case: a candidate whose every listed token is unresolved
+	// (dropped by the dictionary) hits the same nil, so the coalesce covers the RESULT,
+	// not just a len(tokens) == 0 shortcut.
+	if resolved := skilltag.Canonicalize(tokens, skilltag.WithResumeAcronyms()); resolved != nil {
+		return resolved
 	}
-	return skilltag.Canonicalize(tokens, skilltag.WithResumeAcronyms())
+	return []string{}
 }
 
 // CatalogueMember is one entry in the public catalogue: the dictionary-checked card, plus the
@@ -191,4 +203,12 @@ type CatalogueMember struct {
 	// UpdatedAt is when the structured extract was written, which is the freshest thing
 	// the catalogue knows about a member. It orders the list.
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// HasPhoto says only whether GET /talent/{handle}/photo has something to serve —
+	// never the object key, and never the image itself. It survives the card's own
+	// dictionary-only rule because a boolean carries no name: the alternative was every
+	// list card firing that request and reading the 404 GetPhoto already gives a member
+	// with none, which is correct but a wasted round trip for what is, in practice, most
+	// of the catalogue.
+	HasPhoto bool `json:"has_photo"`
 }

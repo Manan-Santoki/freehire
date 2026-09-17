@@ -138,6 +138,30 @@ func TestList_ProjectsEveryMember(t *testing.T) {
 	}
 }
 
+// HasPhoto is the one column outside ProjectCard's dictionary-only rule: it says only
+// whether a headshot is stored, never anything about it, so it is asserted here rather
+// than folded into TestList_ProjectsEveryMember's card-shape assertions.
+func TestList_ProjectsHasPhoto(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	rows := threeMembers(base)
+	rows[0].HasPhoto = true
+	store := &fakeCatalogueStore{rows: rows}
+	c := newTestCatalogue(t, store, func() time.Time { return base })
+
+	page, err := c.List(context.Background(), Query{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if !page.Members[0].HasPhoto {
+		t.Error("HasPhoto = false, want true for the row with a stored headshot")
+	}
+	for _, m := range page.Members[1:] {
+		if m.HasPhoto {
+			t.Errorf("member %q: HasPhoto = true, want false — no headshot stored", m.Handle)
+		}
+	}
+}
+
 // A row whose stored CV cannot be parsed is still a member — they joined. It renders as
 // a card with nothing on it rather than vanishing, because vanishing is indistinguishable
 // from having left.
@@ -388,6 +412,7 @@ func TestByHandle_ReadsTheDatabaseNotTheSnapshot(t *testing.T) {
 			ResumeStructured:           []byte(backendCV),
 			ResumeStructuredUploadedAt: pgtype.Timestamptz{Time: base, Valid: true},
 			Specializations:            []string{},
+			HasPhoto:                   true,
 		},
 	}
 	c := newTestCatalogue(t, store, func() time.Time { return base })
@@ -401,6 +426,9 @@ func TestByHandle_ReadsTheDatabaseNotTheSnapshot(t *testing.T) {
 	}
 	if m.Card.Category != "backend" {
 		t.Errorf("card category = %q, want backend", m.Card.Category)
+	}
+	if !m.HasPhoto {
+		t.Error("HasPhoto = false, want true")
 	}
 	if _, one := store.calls(); one != 1 {
 		t.Errorf("ByHandle read the database %d times, want 1 — it must not serve from the snapshot", one)

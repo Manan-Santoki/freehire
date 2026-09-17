@@ -142,6 +142,46 @@ func TestProjectCard_CarriesTheProfessionalSignal(t *testing.T) {
 
 // A token outside the dictionary is dropped, and its resolved neighbours survive. That
 // is skilltag's own "never guess" rule doing the whitelisting for us.
+// Skills and Roles both marshal WITHOUT `omitempty`, so the wire contract promises an
+// array in every response, never an absent field — and CatalogueMember.Card.Skills is
+// `string[]` (not `string[] | null`) on the frontend, which crashes reading `.length` or
+// `.slice()` off a JSON `null`. Found in production: a member with zero skills reached
+// the catalogue list page and 500'd it (TalentCard.svelte:29), because canonicalSkills
+// and cardRoles both returned Go nil for an empty result, which encoding/json renders as
+// `null` regardless of the field having no data to omit.
+func TestProjectCard_NeverMarshalsSkillsOrRolesAsNull(t *testing.T) {
+	cases := []struct {
+		name string
+		s    resumeextract.Structured
+	}{
+		{"no skills, no experience at all", resumeextract.Structured{}},
+		{
+			"skills present but none resolve",
+			resumeextract.Structured{Skills: []string{"Vibes", "Synergy"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := json.Marshal(ProjectCard(tc.s))
+			if err != nil {
+				t.Fatalf("marshal card: %v", err)
+			}
+			if strings.Contains(string(out), `"skills":null`) {
+				t.Errorf("skills marshalled as null, want []:\n%s", out)
+			}
+			if strings.Contains(string(out), `"roles":null`) {
+				t.Errorf("roles marshalled as null, want []:\n%s", out)
+			}
+			if !strings.Contains(string(out), `"skills":[]`) {
+				t.Errorf("expected an explicit empty skills array:\n%s", out)
+			}
+			if !strings.Contains(string(out), `"roles":[]`) {
+				t.Errorf("expected an explicit empty roles array:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestProjectCard_KeepsOnlyResolvedSkills(t *testing.T) {
 	card := ProjectCard(resumeextract.Structured{
 		Skills: []string{"Go", "PostgreSQL", "Vibes", "Synergy"},

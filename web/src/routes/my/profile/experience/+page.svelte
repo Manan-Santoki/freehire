@@ -2,6 +2,7 @@
   import { api } from '$lib/api';
   import { askCvRefresh } from '$lib/cvRefreshDialog.svelte';
   import { BASE_REFRESH_MESSAGE, offerCvRefresh } from '$lib/cvRefreshOffer';
+  import { errorMessage } from '$lib/utils';
   import ExperienceBankView from '$lib/components/ExperienceBankView.svelte';
 
   // Scoped to this page rather than shared with sibling sections: a separate route
@@ -19,8 +20,11 @@
         actionError = null;
         try {
           await api.resetBaseCvFromResume();
-        } catch {
-          actionError = 'Could not update your base CV. Try Reset from résumé in a tailoring workspace.';
+        } catch (e) {
+          actionError = errorMessage(
+            e,
+            'Could not update your base CV. Try Reset from résumé in a tailoring workspace.',
+          );
         }
       },
     });

@@ -137,7 +137,8 @@ SELECT u.talent_handle,
        COALESCE(u.resume_cities, '{}')::text[] AS cities,
        u.resume_structured,
        u.resume_structured_uploaded_at,
-       COALESCE(p.specializations, '{}')::text[] AS specializations
+       COALESCE(p.specializations, '{}')::text[] AS specializations,
+       (u.photo_object_key IS NOT NULL AND u.photo_object_key <> '')::boolean AS has_photo
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
 WHERE u.talent_handle = $1::text
@@ -153,6 +154,7 @@ type GetTalentNetworkMemberByHandleRow struct {
 	ResumeStructured           []byte             `json:"resume_structured"`
 	ResumeStructuredUploadedAt pgtype.Timestamptz `json:"resume_structured_uploaded_at"`
 	Specializations            []string           `json:"specializations"`
+	HasPhoto                   bool               `json:"has_photo"`
 }
 
 // One member's card, by the handle in the public URL. Same predicate as the list, so a
@@ -176,6 +178,7 @@ func (q *Queries) GetTalentNetworkMemberByHandle(ctx context.Context, handle str
 		&i.ResumeStructured,
 		&i.ResumeStructuredUploadedAt,
 		&i.Specializations,
+		&i.HasPhoto,
 	)
 	return i, err
 }
@@ -666,7 +669,12 @@ SELECT u.talent_handle,
        COALESCE(u.resume_cities, '{}')::text[] AS cities,
        u.resume_structured,
        u.resume_structured_uploaded_at,
-       COALESCE(p.specializations, '{}')::text[] AS specializations
+       COALESCE(p.specializations, '{}')::text[] AS specializations,
+       -- Whether the member has an uploaded headshot, never the object key itself: the
+       -- catalogue card links to the blurred photo route by the member's own handle
+       -- (talentnetwork.CatalogueMember.HasPhoto), so a card can skip requesting a photo
+       -- that GetPhoto would only 404 for.
+       (u.photo_object_key IS NOT NULL AND u.photo_object_key <> '')::boolean AS has_photo
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
 WHERE u.talent_network_visibility <> 'off'
@@ -683,6 +691,7 @@ type ListTalentNetworkMembersRow struct {
 	ResumeStructured           []byte             `json:"resume_structured"`
 	ResumeStructuredUploadedAt pgtype.Timestamptz `json:"resume_structured_uploaded_at"`
 	Specializations            []string           `json:"specializations"`
+	HasPhoto                   bool               `json:"has_photo"`
 }
 
 // Every member the public catalogue may show, in one read. The caller projects each row
@@ -722,6 +731,7 @@ func (q *Queries) ListTalentNetworkMembers(ctx context.Context) ([]ListTalentNet
 			&i.ResumeStructured,
 			&i.ResumeStructuredUploadedAt,
 			&i.Specializations,
+			&i.HasPhoto,
 		); err != nil {
 			return nil, err
 		}

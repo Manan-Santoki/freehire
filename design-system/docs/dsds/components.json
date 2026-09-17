@@ -993,6 +993,32 @@
           "file": "../../src/brand-mark.stories.ts"
         }
       ]
+    },
+    {
+      "id": "component.breadcrumbs",
+      "type": "component",
+      "name": "Breadcrumbs",
+      "description": "Visible trail back to the page a detail page sits under: a hub link per level, then the current page bold and unlinked.",
+      "source": {
+        "file": "../../src/breadcrumbs.svelte"
+      },
+      "props": [
+        {
+          "name": "items",
+          "type": "BreadcrumbItem[]",
+          "required": true,
+          "description": "Each item is { name, href? } — an item without href renders as the current page (bold, aria-current=\"page\")."
+        },
+        {
+          "name": "class",
+          "type": "string"
+        }
+      ],
+      "stories": [
+        {
+          "file": "../../src/breadcrumbs.stories.ts"
+        }
+      ]
     }
   ]
 }

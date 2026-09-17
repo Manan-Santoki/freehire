@@ -7,6 +7,11 @@
   import { LoadMore } from '$lib/ui';
   import States from '$lib/components/States.svelte';
   import type { NotificationItem } from '$lib/types';
+  import { locale } from '$lib/i18n/currentLocale.svelte';
+  import { t } from '$lib/i18n/t';
+  import { messages } from './messages';
+
+  const s = $derived(t(messages, locale()));
 
   // The notification center's landing page: the full history — every
   // subscription-digest/reminder/nudge delivery ever recorded, not just the
@@ -50,7 +55,7 @@
 </script>
 
 <svelte:head>
-  <title>Notifications — freehire</title>
+  <title>{s.headTitle}</title>
 </svelte:head>
 
 <div class="max-w-2xl">
@@ -63,7 +68,7 @@
         onclick={markAllRead}
         class="shrink-0 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
-        Mark all read
+        {s.markAllRead}
       </button>
     </div>
   {/if}
@@ -73,7 +78,7 @@
   {:else if pager.status === 'error'}
     <States state="error" />
   {:else if pager.items.length === 0}
-    <States state="empty" message="No notifications yet." />
+    <States state="empty" message={s.empty} />
   {:else}
     <ul class="overflow-hidden rounded-md border border-border">
       {#each pager.items as item (item.id)}
