@@ -42,6 +42,7 @@
   import { track } from '$lib/analytics';
   import type { Job, FacetCounts } from '$lib/types';
   import FilterSummary from './filters/FilterSummary.svelte';
+  import SavedFilters from './filters/SavedFilters.svelte';
   import FilterModal from './filters/FilterModal.svelte';
   import ListToolbar from './ListToolbar.svelte';
   import States from './States.svelte';
@@ -754,6 +755,12 @@
       <div class="rounded-xl border border-border bg-card p-4">
         <FilterSummary store={filters} exclude={excludeFacets} onOpen={() => (modalOpen = true)} canSave={standalone} />
       </div>
+      <!-- Standalone only, matching the save control above: an embedded list (company,
+           collection) carries its own fixed scope, and a global saved set applied under
+           it would read as a filter the sidebar cannot show. -->
+      {#if standalone}
+        <SavedFilters store={filters} />
+      {/if}
     </div>
   </aside>
 

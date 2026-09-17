@@ -28,6 +28,7 @@ const alias = { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) };
 // own `vi.mock`, so these aliases exist only to give `vi.mock` a resolvable
 // module id — see vitest-stubs/*.ts.
 const appStubAlias = {
+  '$app/environment': fileURLToPath(new URL('./vitest-stubs/app-environment.ts', import.meta.url)),
   '$app/state': fileURLToPath(new URL('./vitest-stubs/app-state.ts', import.meta.url)),
   '$app/paths': fileURLToPath(new URL('./vitest-stubs/app-paths.ts', import.meta.url)),
   '$app/navigation': fileURLToPath(new URL('./vitest-stubs/app-navigation.ts', import.meta.url)),
