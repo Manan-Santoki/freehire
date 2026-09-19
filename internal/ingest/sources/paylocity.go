@@ -113,7 +113,7 @@ func paylocityDescription(root *html.Node) string {
 		if out != "" {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == "div" && hasClass(n, "job-listing-header") &&
+		if n.Type == html.ElementNode && n.Data == "div" && HasClass(n, "job-listing-header") &&
 			strings.EqualFold(textContent(n), "Description") {
 			for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
 				if sib.Type == html.ElementNode {

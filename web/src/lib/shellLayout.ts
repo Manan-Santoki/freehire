@@ -19,15 +19,22 @@ export function isFullBleedRoute(pathname: string): boolean {
 
 // Routes whose header should span the full width instead of centering inside
 // `max-w-6xl`, without the rest of isFullBleedRoute's consequences (no footer, no
-// viewport-height sizing). `/docs/api` is the one case today: Scalar's reference is a
-// three-column layout of sidebar, content and request/response examples that reads the
-// same way every full-bleed surface does — a centered header floating narrower than the
-// columns beneath it — but it stays a normal scrolling document (Scalar's own sidebar is
-// `position: sticky`, not a height-constrained pane) and still wants the site footer at
-// the bottom of it.
+// viewport-height sizing). `/docs/api` and `/docs/api/internal` are the two cases today:
+// both render the same Scalar three-column layout of sidebar, content and
+// request/response examples that reads the same way every full-bleed surface does — a
+// centered header floating narrower than the columns beneath it — but each stays a
+// normal scrolling document (Scalar's own sidebar is `position: sticky`, not a
+// height-constrained pane) and still wants the site footer at the bottom of it.
+
+/** True for either Scalar-rendered API reference page — the one route pair that
+ *  both isWideHeaderRoute and TopBar's search-box suppression need to recognize
+ *  as a group, kept here as the single place that lists them. */
+export function isApiReferenceRoute(pathname: string): boolean {
+  return pathname === '/docs/api' || pathname === '/docs/api/internal';
+}
 
 /** True wherever the header should go edge to edge — every isFullBleedRoute plus the
- *  API reference. */
+ *  external and internal API references. */
 export function isWideHeaderRoute(pathname: string): boolean {
-  return isFullBleedRoute(pathname) || pathname === '/docs/api';
+  return isFullBleedRoute(pathname) || isApiReferenceRoute(pathname);
 }

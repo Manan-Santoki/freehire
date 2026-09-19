@@ -103,13 +103,13 @@ func (r *QueriesRepository) ListByUser(ctx context.Context, userID int64) ([]Use
 	return out, nil
 }
 
-// MarkApproved marks a pending submission approved. The query is scoped to status='pending',
-// so a concurrent second decision affects no row — surfaced as ErrAlreadyDecided.
-func (r *QueriesRepository) MarkApproved(ctx context.Context, id, reviewerID, jobID int64) (Submission, error) {
-	sub, err := r.q.MarkSubmissionApproved(ctx, db.MarkSubmissionApprovedParams{
+// ClaimForApproval atomically claims a pending submission for approval. The query is
+// scoped to status='pending', so a concurrent second decision (an approve or a reject)
+// affects no row — surfaced as ErrAlreadyDecided.
+func (r *QueriesRepository) ClaimForApproval(ctx context.Context, id, reviewerID int64) (Submission, error) {
+	sub, err := r.q.ClaimSubmissionForApproval(ctx, db.ClaimSubmissionForApprovalParams{
 		ID:         id,
 		ReviewedBy: reviewerID,
-		JobID:      jobID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Submission{}, ErrAlreadyDecided
@@ -120,7 +120,23 @@ func (r *QueriesRepository) MarkApproved(ctx context.Context, id, reviewerID, jo
 	return fromRow(sub), nil
 }
 
-// MarkRejected marks a pending submission rejected (see MarkApproved for the status scope).
+// AttachJob records the minted job on a submission ClaimForApproval already claimed. The
+// query is scoped to status='approved'.
+func (r *QueriesRepository) AttachJob(ctx context.Context, id, jobID int64) (Submission, error) {
+	sub, err := r.q.AttachSubmissionJob(ctx, db.AttachSubmissionJobParams{
+		ID:    id,
+		JobID: jobID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Submission{}, ErrAlreadyDecided
+	}
+	if err != nil {
+		return Submission{}, err
+	}
+	return fromRow(sub), nil
+}
+
+// MarkRejected marks a pending submission rejected (see ClaimForApproval for the status scope).
 func (r *QueriesRepository) MarkRejected(ctx context.Context, id, reviewerID int64, reason string) (Submission, error) {
 	sub, err := r.q.MarkSubmissionRejected(ctx, db.MarkSubmissionRejectedParams{
 		ID:           id,
@@ -230,6 +246,7 @@ func fromRow(row db.JobSubmission) Submission {
 		Status:       row.Status,
 		ReviewReason: row.ReviewReason,
 		ReviewedAt:   pgconv.TimePtr(row.ReviewedAt),
+		JobID:        pgconv.Int8Ptr(row.JobID),
 		CreatedAt:    pgconv.TimePtr(row.CreatedAt),
 
 		Skills:         row.Skills,
@@ -248,33 +265,7 @@ func fromRow(row db.JobSubmission) Submission {
 // fromPendingRow maps a moderator-queue row to PendingSubmission, adding the submitter email.
 func fromPendingRow(row db.ListPendingSubmissionsRow) PendingSubmission {
 	return PendingSubmission{
-		Submission: Submission{
-			ID:           row.ID,
-			SubmittedBy:  row.SubmittedBy,
-			URL:          row.URL,
-			Source:       row.Source,
-			Title:        row.Title,
-			Company:      row.Company,
-			Location:     row.Location,
-			Remote:       row.Remote,
-			Description:  row.Description,
-			PostedAt:     pgconv.TimePtr(row.PostedAt),
-			Status:       row.Status,
-			ReviewReason: row.ReviewReason,
-			ReviewedAt:   pgconv.TimePtr(row.ReviewedAt),
-			CreatedAt:    pgconv.TimePtr(row.CreatedAt),
-
-			Skills:         row.Skills,
-			Regions:        row.Regions,
-			Cities:         row.Cities,
-			WorkMode:       row.WorkMode,
-			EmploymentType: row.EmploymentType,
-			Seniority:      row.Seniority,
-			SalaryMin:      pgconv.IntPtr(row.SalaryMin),
-			SalaryMax:      pgconv.IntPtr(row.SalaryMax),
-			SalaryCurrency: row.SalaryCurrency,
-			SalaryPeriod:   row.SalaryPeriod,
-		},
+		Submission:     fromRow(row.JobSubmission),
 		SubmitterEmail: row.SubmitterEmail,
 	}
 }
@@ -283,33 +274,7 @@ func fromPendingRow(row db.ListPendingSubmissionsRow) PendingSubmission {
 // (empty when the submission has not been approved into a live vacancy).
 func fromUserRow(row db.ListSubmissionsByUserRow) UserSubmission {
 	return UserSubmission{
-		Submission: Submission{
-			ID:           row.ID,
-			SubmittedBy:  row.SubmittedBy,
-			URL:          row.URL,
-			Source:       row.Source,
-			Title:        row.Title,
-			Company:      row.Company,
-			Location:     row.Location,
-			Remote:       row.Remote,
-			Description:  row.Description,
-			PostedAt:     pgconv.TimePtr(row.PostedAt),
-			Status:       row.Status,
-			ReviewReason: row.ReviewReason,
-			ReviewedAt:   pgconv.TimePtr(row.ReviewedAt),
-			CreatedAt:    pgconv.TimePtr(row.CreatedAt),
-
-			Skills:         row.Skills,
-			Regions:        row.Regions,
-			Cities:         row.Cities,
-			WorkMode:       row.WorkMode,
-			EmploymentType: row.EmploymentType,
-			Seniority:      row.Seniority,
-			SalaryMin:      pgconv.IntPtr(row.SalaryMin),
-			SalaryMax:      pgconv.IntPtr(row.SalaryMax),
-			SalaryCurrency: row.SalaryCurrency,
-			SalaryPeriod:   row.SalaryPeriod,
-		},
-		JobSlug: row.JobSlug.String,
+		Submission: fromRow(row.JobSubmission),
+		JobSlug:    row.JobSlug.String,
 	}
 }

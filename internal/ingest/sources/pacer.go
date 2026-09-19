@@ -284,8 +284,22 @@ const (
 // Tune it the way ADP's is tuned: downward while boards still 429, upward only while none do.
 // Under-shooting leaves boards uncrawled this hour and they keep their last-known state;
 // over-shooting re-triggers the storm this exists to stop.
+//
+// RAISED 2026-09-17 from 200ms (~5 req/s) on the evidence the rule asks for: six hours of
+// paced crawling produced ZERO 429s while 231 boards succeeded and the healthy count climbed
+// from 2,958 to 3,355. Coverage was the argument for moving — a 50-minute run reached about
+// 200 of 5,170 boards before TimeoutStartSec killed it, so a full sweep took roughly two
+// days, and the limiter is the wall: the adapter fans out across boards concurrently but
+// every request queues behind one shared bucket, so boards-per-run scales with this number
+// and nothing else.
+//
+// 125ms sits at 80% of the measured ceiling rather than at it. That ceiling — 30 of 30
+// requests served at 10 req/s — was measured from a CLEAN egress IP, and production shares
+// one address with the rest of the fleet, so the last fifth is the margin that measurement
+// cannot see. The next move is not a higher number: it is sharding the provider the way
+// paylocity is sharded, which buys coverage without asking SmartRecruiters for more.
 const (
-	smartRecruitersRequestInterval = 200 * time.Millisecond // ~5 req/s
+	smartRecruitersRequestInterval = 125 * time.Millisecond // ~8 req/s
 	smartRecruitersRequestBurst    = 2
 )
 
@@ -295,6 +309,30 @@ func pacedSmartRecruitersGetter(c JSONGetter) JSONGetter {
 	return rateLimitedJSONGetter{
 		inner:   c,
 		limiter: rate.NewLimiter(rate.Every(smartRecruitersRequestInterval), smartRecruitersRequestBurst),
+	}
+}
+
+// doverRequestInterval/doverRequestBurst are NOT measured against a clean ceiling the way
+// smartRecruitersRequestInterval's comment documents — freehire crawled zero Dover boards
+// before this pacer existed. They are a conservative starting point, set after a live
+// incident: a single unpaced run against 31 boards (each firing its own resolve+list+detail
+// requests independently) drew 22 HTTP 429s from Dover's API within roughly two seconds
+// (2026-09-19). Dover explicitly positions itself as a free ATS for startups, not a platform
+// built for a multi-tenant crawl fleet, so this errs slow; revisit only against a real
+// ceiling measurement, the same way smartRecruitersRequestInterval eventually was.
+const (
+	doverRequestInterval = 500 * time.Millisecond // ~2 req/s
+	doverRequestBurst    = 1
+)
+
+// pacedDoverGetter wraps a getter with a fresh limiter shared across one registry build, so
+// every Dover board's resolve/list/detail requests in a run compete for the same token bucket
+// — otherwise the runner's per-board concurrency fires them all at once (see
+// doverRequestInterval's incident note).
+func pacedDoverGetter(c JSONGetter) JSONGetter {
+	return rateLimitedJSONGetter{
+		inner:   c,
+		limiter: rate.NewLimiter(rate.Every(doverRequestInterval), doverRequestBurst),
 	}
 }
 

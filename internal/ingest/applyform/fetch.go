@@ -80,6 +80,7 @@ var fetcherFor = map[string]func(Transport) Fetcher{
 	"ashby":      func(t Transport) Fetcher { return ashbyFetcher{http: t} },
 	"workable":   func(t Transport) Fetcher { return workableFetcher{http: t} },
 	"lever":      func(t Transport) Fetcher { return leverFetcher{http: t} },
+	"dover":      func(t Transport) Fetcher { return doverFetcher{http: t} },
 }
 
 // Fetchers builds the per-provider fetcher registry over one transport.
@@ -241,4 +242,26 @@ func (a ashbyFetcher) Fetch(ctx context.Context, c Claimed) (Form, error) {
 		return Form{}, fmt.Errorf("ashby: no posting %s/%s: %w", board, postingID, ErrPostingGone)
 	}
 	return FromAshby(resp.Data.JobPosting.ApplicationForm), nil
+}
+
+// doverApplicationPortalJobURL is the same public detail endpoint the dover source adapter
+// hydrates postings from (internal/ingest/sources/dover.go) — Dover has no separate form
+// endpoint, and the questions live on this one. It takes only the posting id, no board.
+const doverApplicationPortalJobURL = "https://app.dover.com/api/v1/inbound/application-portal-job/%s"
+
+type doverFetcher struct{ http Transport }
+
+// Fetch ignores its board argument: the detail endpoint is addressed by posting id alone,
+// the same shape workableFetcher's form endpoint has.
+func (d doverFetcher) Fetch(ctx context.Context, c Claimed) (Form, error) {
+	_, postingID, _ := splitBoardPosting(c.ExternalID)
+	url := fmt.Sprintf(doverApplicationPortalJobURL, postingID)
+
+	var resp struct {
+		ApplicationQuestions []DoverApplicationQuestion `json:"application_questions"`
+	}
+	if err := d.http.GetJSON(ctx, url, &resp); err != nil {
+		return Form{}, fmt.Errorf("dover: fetch form for %s: %w", postingID, asGone(err))
+	}
+	return FromDover(resp.ApplicationQuestions), nil
 }

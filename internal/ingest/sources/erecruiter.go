@@ -148,8 +148,8 @@ func parseErecruiterRows(body string) ([]erecruiterRow, int, error) {
 			return true
 		}
 		// The marker row (a non-offer <tr>) carries the total in its tr attribute.
-		if attr(n, "skkresult") != "offer" {
-			if t := attr(n, "tr"); t != "" {
+		if Attr(n, "skkresult") != "offer" {
+			if t := Attr(n, "tr"); t != "" {
 				if v, err := strconv.Atoi(t); err == nil {
 					total = v
 				}
@@ -170,10 +170,10 @@ func parseErecruiterRows(body string) ([]erecruiterRow, int, error) {
 // in lower case.
 func erecruiterOfferRow(tr *html.Node) (erecruiterRow, bool) {
 	r := erecruiterRow{
-		offerID:  attr(tr, "offerid"),
-		extID:    attr(tr, "externaljobofferid"),
-		regionID: attr(tr, "externaljobofferregionid"),
-		comID:    attr(tr, "comid"),
+		offerID:  Attr(tr, "offerid"),
+		extID:    Attr(tr, "externaljobofferid"),
+		regionID: Attr(tr, "externaljobofferregionid"),
+		comID:    Attr(tr, "comid"),
 	}
 	if r.offerID == "" {
 		return erecruiterRow{}, false
@@ -187,7 +187,7 @@ func erecruiterOfferRow(tr *html.Node) (erecruiterRow, bool) {
 		return true
 	})
 	for _, td := range cells {
-		if hasClass(td, "skk_positionName") {
+		if HasClass(td, "skk_positionName") {
 			r.title = textContent(td)
 		}
 	}
@@ -224,7 +224,7 @@ func erecruiterBody(root *html.Node) string {
 	if cont := firstByID(root, "offCont"); cont != nil {
 		var drop []*html.Node
 		walk(cont, func(n *html.Node) bool {
-			if n.Type == html.ElementNode && erecruiterBodyExcludeIDs[attr(n, "id")] {
+			if n.Type == html.ElementNode && erecruiterBodyExcludeIDs[Attr(n, "id")] {
 				drop = append(drop, n)
 				return false
 			}

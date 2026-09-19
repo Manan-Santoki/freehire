@@ -12,7 +12,8 @@ anything.
 ## The one rule
 
 > Everything this package publishes is a value a DICTIONARY resolved, a number, or a
-> date. Nothing a candidate typed reaches a public response.
+> date. Nothing a candidate typed reaches a public response — except a role's own
+> **title**, which is published verbatim.
 
 That is stricter than masking the fields which identify somebody, and the difference is
 why `ProjectCard` exists instead of reusing `resumeextract.Anonymous`. `Anonymous`
@@ -33,6 +34,39 @@ until somebody adds it deliberately.
 `card_test.go` is the guard: one CV, run once per hiding place, asserting a distinctive
 employer token appears nowhere in the marshalled card. **Add a case to it whenever the
 extraction contract grows a field.**
+
+## The one exception, and what it was measured against
+
+`CandidateRole.Title` is the single field published in the candidate's own words. Without
+it a work history reads as one "Senior · Backend" per row, and a title no dictionary can
+place ("Technical Lead | Team Lead") reads as nothing at all — the card keeps the row so
+the career has no gap, but says nothing about it.
+
+The cost is the hazard the rest of this file exists to avoid, so it was measured rather
+than argued. On production, 2026-09-18, across every account with a stored extract: **59
+of 9,748 roles** carried their own `company` string inside the title, and roughly half of
+those were `Freelance`, `Independent` or `Self-Employed`, which name no employer. Scoped
+to the accounts actually in the catalogue: **1 of 343**.
+
+**Scrubbing was considered and declined.** The separators a cut rule would key on sit in
+ordinary titles far more often than beside an employer — `Senior Staff Engineer | Team
+Lead`, `AWS and GCP Cloud Engineer | Linux Administrator` — so cutting on a symbol mangles
+the common case to catch the rare one. Cutting on a known company name from the same CV is
+narrower but still misses the shapes that spell the employer differently (`Software
+Specialist, embedded at League Inc.`), which is the "a hand-made list hides what it does
+not contain" trap. What was chosen instead is to publish it and **say so where a candidate
+decides** — `/my/talent-network`, `TalentNetworkInvite` and the profile footer all state
+it, and those three strings are part of this decision, not decoration around it.
+
+The candidate's own NAME is a different question and is already answered upstream:
+`resumeextract` blanks any field still carrying a redaction placeholder, so a title like
+"&lt;name&gt; Consulting" arrives here empty and the row falls back to its dictionary label.
+This package makes no such guarantee itself.
+
+`TestProjectCard_PublishesTheRoleTitleVerbatim` is the record. The `"title"` case stays in
+`cvWithLeakIn` and is deliberately absent from the leak test's list: an exception written
+as an inverted assertion can be found, while one written as a deleted line looks exactly
+like an oversight.
 
 ## What the rule costs
 

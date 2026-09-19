@@ -83,14 +83,14 @@
       publish (see 3.3) — neither degrades the server's own startup.
 - [x] 4.2 `deploy/`: `freehire-auto-apply-orchestrate.service` (`Restart=always`, mirrors
       `freehire-mail-ingest.service`, built from `hire-current` — added to
-      `deploy/bin/release.sh`'s own build list and long-lived-daemon restart line, the
+      `freehire-ops' scripts/host2/release.sh`'s own build list and long-lived-daemon restart line, the
       same two places `mail-ingest` is, per that script's own comment about what happens
       when a unit is missing from them) and `freehire-inngest.service` (the self-hosted
       Inngest server itself — `inngest start`, not built by this repo, mirrors
       `freehire-logo.service`'s "third-party binary in /opt/freehire/bin" shape rather
       than a `hire-current` one). No new env FILE — `AUTO_APPLY_ORCHESTRATOR_SECRET` /
       `INNGEST_*` join the one shared `/opt/freehire/.env` every non-mail worker already
-      reads. Per `deploy/AGENTS.md`: this only edits the checked-in unit files — copying
+      reads. Per `freehire-ops' provision/host2/AGENTS.md`: this only edits the checked-in unit files — copying
       them to host-2, provisioning the self-hosted Inngest server's own Postgres database,
       and enabling both units is a separate, manual step, not part of this task.
 

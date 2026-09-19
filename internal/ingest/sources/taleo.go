@@ -316,8 +316,8 @@ func taleoInitialHistory(page string) string {
 		if value != "" {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == "input" && attr(n, "name") == "initialHistory" {
-			value = attr(n, "value")
+		if n.Type == html.ElementNode && n.Data == "input" && Attr(n, "name") == "initialHistory" {
+			value = Attr(n, "value")
 			return false
 		}
 		return true

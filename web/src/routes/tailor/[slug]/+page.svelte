@@ -376,14 +376,14 @@
   // one side's work silently. Every entry point to a reset reads this, so none can drift.
   const resetLocked = $derived(resetBusy || turnActive || runActive);
 
-  async function applyResetFromResume() {
+  async function applyReseed() {
     resetBusy = true;
     resetError = '';
     try {
       await undoRun({
         flush: flushPendingSave,
         undo: async () => {
-          const rec = await api.resetCvFromResume(cvId);
+          const rec = await api.reseedCv(cvId);
           hydrate(rec);
         },
         refetch: async () => {
@@ -402,7 +402,7 @@
 
   let confirmResetOpen = $state(false);
 
-  async function resetFromResume() {
+  async function reseed() {
     confirmResetOpen = true;
   }
 
@@ -761,7 +761,7 @@
         onPreviewRevision={(r) => (pinnedRevision = r)}
         onUndoRevision={undoRevision}
         onUndoRevisionRun={undoRevisionRun}
-        onResetFromResume={resetFromResume}
+        onReseed={reseed}
         resetBusy={resetLocked}
         {resetError}
         {cvId}
@@ -777,8 +777,8 @@
 
 <ConfirmDialog
   bind:open={confirmResetOpen}
-  title="Reset this tailored CV from your current uploaded résumé?"
+  title="Rebuild this tailored CV from your current seed?"
   description="Your template and typography stay; content edits can be undone from History."
   confirmLabel="Reset"
-  onConfirm={applyResetFromResume}
+  onConfirm={applyReseed}
 />

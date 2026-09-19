@@ -209,7 +209,7 @@ func avatureFieldValue(root *html.Node, label string) string {
 		if out != "" {
 			return false
 		}
-		if n.Type != html.ElementNode || !hasClass(n, "article__content__view__field") {
+		if n.Type != html.ElementNode || !HasClass(n, "article__content__view__field") {
 			return true
 		}
 		var lab, val string
@@ -218,9 +218,9 @@ func avatureFieldValue(root *html.Node, label string) string {
 				return true
 			}
 			switch {
-			case hasClass(c, "article__content__view__field__label"):
+			case HasClass(c, "article__content__view__field__label"):
 				lab = strings.TrimSpace(textContent(c))
-			case hasClass(c, "article__content__view__field__value"):
+			case HasClass(c, "article__content__view__field__value"):
 				val = strings.TrimSpace(textContent(c))
 			}
 			return true
@@ -245,7 +245,7 @@ func avatureLabeledValue(root *html.Node, label string) string {
 		if found {
 			return false
 		}
-		if n.Type != html.ElementNode || !hasClass(n, "article__content__view__field__value") {
+		if n.Type != html.ElementNode || !HasClass(n, "article__content__view__field__value") {
 			return true
 		}
 		var strongText string
@@ -283,7 +283,7 @@ func avatureDescription(root *html.Node) string {
 	var prose, any string
 	proseLen, anyLen := 0, 0
 	walk(root, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || !hasClass(n, "article__content__view__field__value") {
+		if n.Type != html.ElementNode || !HasClass(n, "article__content__view__field__value") {
 			return true
 		}
 		l := len(textContent(n))

@@ -4,7 +4,7 @@
 //
 //   node scripts/gen-openapi-smoke.mjs   # asserts; exits non-zero on failure
 
-import { loadDocsModules } from './gen-api-docs.mjs';
+import { loadDocsModules, partitionForAudience } from './gen-api-docs.mjs';
 import { renderOpenApi } from './gen-openapi.mjs';
 import { buildDeprecatedFixture } from './deprecatedFixture.mjs';
 
@@ -113,6 +113,26 @@ async function main() {
   assert('deprecated note names the replacement', fixtureOp.description.includes('GET /fixture/v2/{id}'));
   // Path params are always required in OpenAPI, even if the source data omits it.
   assert('path param is forced required', fixtureOp.parameters.find((p) => p.name === 'id')?.required === true);
+
+  // Audience partitioning, mirrored from gen-api-docs-smoke.mjs's Markdown checks:
+  // `GET /jobs` (auth: none) and `POST /jobs` (auth: moderator, "Moderator jobs"
+  // group) share one path but land in opposite documents.
+  const ext = renderOpenApi(partitionForAudience(spec, 'external'), filters);
+  const int = renderOpenApi(partitionForAudience(spec, 'internal'), filters, { title: 'freehire API — internal reference' });
+
+  assert('external spec documents GET /jobs', Boolean(ext.paths['/jobs']?.get));
+  assert('external spec omits the moderator-only POST /jobs', !ext.paths['/jobs']?.post);
+  assert('external spec has no Moderator jobs tag', !ext.tags.some((t) => t.name === 'Moderator jobs'));
+
+  assert('internal spec documents the moderator-only POST /jobs', Boolean(int.paths['/jobs']?.post));
+  assert('internal spec omits GET /jobs', !int.paths['/jobs']?.get);
+  assert('internal spec has a Moderator jobs tag', int.tags.some((t) => t.name === 'Moderator jobs'));
+
+  assert('default title is unchanged', ext.info.title === 'freehire API');
+  assert('title override reaches info.title', int.info.title === 'freehire API — internal reference');
+
+  assert('external description cross-links to the internal reference', ext.info.description.includes('freehire.me/docs/api/internal'));
+  assert('internal description cross-links back to the external reference', int.info.description.includes('freehire.me/docs/api'));
 
   let failed = 0;
   for (const c of checks) {

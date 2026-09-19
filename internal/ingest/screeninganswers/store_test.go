@@ -9,23 +9,36 @@ import (
 )
 
 // fakeRepo records the params it is handed and returns canned records/errors, so the
-// store tests run without a database.
+// store tests run without a database. UpdateLocked simulates the real QueriesRepository's
+// locked read-merge-write: it feeds getRet/getErr to merge exactly as a real transaction's
+// locked SELECT would (ErrNotFound reading as a fully-unstated record), records what merge
+// returned, and answers with upsertRet/upsertErr — so Store.Update's callers here never
+// call Get and Upsert as two separate, unlocked steps.
 type fakeRepo struct {
 	getRet screeninganswers.Answers
 	getErr error
 
-	upserted     screeninganswers.Answers
-	upsertCalled bool
-	upsertRet    screeninganswers.Answers
-	upsertErr    error
+	updateLockedCalls int
+	upserted          screeninganswers.Answers
+	upsertCalled      bool
+	upsertRet         screeninganswers.Answers
+	upsertErr         error
 }
 
 func (f *fakeRepo) Get(_ context.Context, _ int64) (screeninganswers.Answers, error) {
 	return f.getRet, f.getErr
 }
 
-func (f *fakeRepo) Upsert(_ context.Context, _ int64, a screeninganswers.Answers) (screeninganswers.Answers, error) {
-	f.upserted = a
+func (f *fakeRepo) UpdateLocked(_ context.Context, _ int64, merge func(screeninganswers.Answers) screeninganswers.Answers) (screeninganswers.Answers, error) {
+	f.updateLockedCalls++
+	existing := f.getRet
+	if f.getErr != nil {
+		if !errors.Is(f.getErr, screeninganswers.ErrNotFound) {
+			return screeninganswers.Answers{}, f.getErr
+		}
+		existing = screeninganswers.Answers{}
+	}
+	f.upserted = merge(existing)
 	f.upsertCalled = true
 	return f.upsertRet, f.upsertErr
 }
@@ -127,5 +140,40 @@ func TestUpdate_PropagatesAGetErrorOtherThanNotFound(t *testing.T) {
 	}
 	if repo.upsertCalled {
 		t.Error("repo.Upsert was called despite the Get error")
+	}
+}
+
+// spyRepo records the order Store.Update calls its Repository methods in, so this test can
+// prove the read-merge-write happens as one call into the Repository rather than as a
+// separate Get followed by a separate write — the shape that let two concurrent Update
+// calls for the same userID both read the same "existing" record and lose one's fields to
+// the other's write (the bug this fix closes). A repository that still called Get from
+// Store.Update, instead of doing its own locked read inside UpdateLocked, would show up
+// here as more than one recorded call.
+type spyRepo struct {
+	calls []string
+}
+
+func (s *spyRepo) Get(_ context.Context, _ int64) (screeninganswers.Answers, error) {
+	s.calls = append(s.calls, "Get")
+	return screeninganswers.Answers{}, screeninganswers.ErrNotFound
+}
+
+func (s *spyRepo) UpdateLocked(_ context.Context, _ int64, merge func(screeninganswers.Answers) screeninganswers.Answers) (screeninganswers.Answers, error) {
+	s.calls = append(s.calls, "UpdateLocked")
+	return merge(screeninganswers.Answers{}), nil
+}
+
+func TestUpdate_ReadsMergesAndWritesAsOneRepositoryCallNotGetThenUpsert(t *testing.T) {
+	repo := &spyRepo{}
+	store := screeninganswers.New(repo)
+
+	if _, err := store.Update(context.Background(), 1, screeninganswers.Answers{WillingToRelocate: ptrBool(true)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	want := []string{"UpdateLocked"}
+	if len(repo.calls) != len(want) || repo.calls[0] != want[0] {
+		t.Errorf("repo calls = %v, want %v — Store.Update must not read and write as two separate, unlocked Repository calls", repo.calls, want)
 	}
 }

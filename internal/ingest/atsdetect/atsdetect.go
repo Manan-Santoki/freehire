@@ -92,10 +92,13 @@ func DetectSelfHosted(html, host string) (provider, board string, ok bool) {
 	return "", "", false
 }
 
-// absURLRe extracts absolute http(s) URLs from arbitrary markup (href/src attributes
+// AbsURLRe extracts absolute http(s) URLs from arbitrary markup (href/src attributes
 // or bare URLs in inline scripts), stopping at the first quote, angle bracket, or
-// whitespace. It is the second-tier feed into FromURL.
-var absURLRe = regexp.MustCompile(`https?://[^\s"'<>)\\]+`)
+// whitespace. It is the second-tier feed into FromURL, and is exported so callers that
+// scan the same markup for other purposes (e.g. internal/ingest/boardresolve, running the
+// full atsboard.Recognize over every URL) share one definition rather than a byte-for-byte
+// duplicate.
+var AbsURLRe = regexp.MustCompile(`https?://[^\s"'<>)\\]+`)
 
 // Detect returns the first supported ATS board found in html. It first tries the
 // ordered slug matchers (whose order encodes provider precedence and covers the
@@ -111,7 +114,7 @@ func Detect(html string) (provider, slug string, ok bool) {
 			}
 		}
 	}
-	for _, u := range absURLRe.FindAllString(html, -1) {
+	for _, u := range AbsURLRe.FindAllString(html, -1) {
 		if p, b, ok := FromURL(u); ok {
 			return p, b, true
 		}

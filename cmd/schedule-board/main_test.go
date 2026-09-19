@@ -82,6 +82,9 @@ func TestEditRefusesContradictoryFlags(t *testing.T) {
 	if _, err := edit("greenhouse", editFlags{manage: true, unmanage: true}); err == nil {
 		t.Error("--manage --unmanage together were accepted")
 	}
+	if _, err := edit("greenhouse", editFlags{heavy: true, notHeavy: true}); err == nil {
+		t.Error("--heavy --not-heavy together were accepted")
+	}
 }
 
 // A typo written into the table would otherwise sit there, reported as refused by every
@@ -133,5 +136,26 @@ func TestEditFlipsTheRolloutGateBothWays(t *testing.T) {
 	}
 	if off.Managed == nil || *off.Managed {
 		t.Errorf("Managed = %v, want false — rollback is the reverse of the cutover step", off.Managed)
+	}
+}
+
+// The explicit half of Settings.IsHeavy has no application write path unless this flag
+// exists — a curator placing a single-shard-but-costly provider in the reserved pool has no
+// other way to set ingest_schedule.heavy without hand-written SQL.
+func TestEditFlipsTheHeavyPoolFlagBothWays(t *testing.T) {
+	on, err := edit("greenhouse", editFlags{heavy: true})
+	if err != nil {
+		t.Fatalf("edit --heavy: %v", err)
+	}
+	if on.Heavy == nil || !*on.Heavy {
+		t.Errorf("Heavy = %v, want true", on.Heavy)
+	}
+
+	off, err := edit("greenhouse", editFlags{notHeavy: true})
+	if err != nil {
+		t.Fatalf("edit --not-heavy: %v", err)
+	}
+	if off.Heavy == nil || *off.Heavy {
+		t.Errorf("Heavy = %v, want false", off.Heavy)
 	}
 }

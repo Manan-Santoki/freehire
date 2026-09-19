@@ -87,5 +87,5 @@ func itempropAttr(root *html.Node, prop string) string {
 	if len(ns) == 0 {
 		return ""
 	}
-	return firstNonEmpty(attr(ns[0], "datetime"), attr(ns[0], "content"))
+	return firstNonEmpty(Attr(ns[0], "datetime"), Attr(ns[0], "content"))
 }

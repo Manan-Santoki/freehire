@@ -363,6 +363,20 @@ func TestRecognize(t *testing.T) {
 		// only move the false board one segment along.
 		{"greenhouse ai opt-out form carries no board", "http://app4.greenhouse.io/ai_opt_out_request/job_post/6178374004/ai_opt_out", "", "", "", false},
 		{"greenhouse ai opt-out form bare", "https://my.greenhouse.io/ai_opt_out_request", "", "", "", false},
+
+		// Dover: app.dover.com is the whole product SPA (dashboard, /crm, /docs/api, login), not a
+		// dedicated boards host, so only an ALLOWED leading segment ("apply"/"jobs") carries a
+		// board — everything else is declined outright, the inverse of every deny-list
+		// (reservedSegments) rule above.
+		{"dover apply link", "https://app.dover.com/apply/qompyl/f9fd123e-e7ff-4bcc-a16a-bb8c47e591b5", "dover", "qompyl", "https://app.dover.com/jobs/qompyl", true},
+		{"dover board listing", "https://app.dover.com/jobs/qompyl", "dover", "qompyl", "https://app.dover.com/jobs/qompyl", true},
+		{"dover pricing page carries no board", "https://app.dover.com/pricing", "", "", "", false},
+		{"dover login page carries no board", "https://app.dover.com/login", "", "", "", false},
+		{"dover crm dashboard carries no board", "https://app.dover.com/crm", "", "", "", false},
+		{"dover api docs carry no board", "https://app.dover.com/docs/api", "", "", "", false},
+		{"dover bare apply has no board", "https://app.dover.com/apply", "", "", "", false},
+		{"dover bare jobs has no board", "https://app.dover.com/jobs", "", "", "", false},
+
 		{"unknown host", "https://example.com/careers/1", "", "", "", false},
 		{"not http", "ftp://acme.recruitee.com", "", "", "", false},
 		{"garbage", "not a url", "", "", "", false},

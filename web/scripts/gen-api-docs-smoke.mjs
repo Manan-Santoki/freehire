@@ -5,7 +5,7 @@
 //
 //   node scripts/gen-api-docs-smoke.mjs   # asserts; exits non-zero on failure
 
-import { loadDocsModules, renderMarkdown } from './gen-api-docs.mjs';
+import { loadDocsModules, renderMarkdown, partitionForAudience } from './gen-api-docs.mjs';
 import { buildDeprecatedFixture } from './deprecatedFixture.mjs';
 
 const checks = [];
@@ -65,6 +65,50 @@ async function main() {
   assert('deprecated endpoint is marked', d.includes('**Deprecated'));
   assert('deprecated note names the replacement', d.includes('GET /fixture/v2/{id}'));
   assert('deprecated note names the since date', d.includes('2026-09-08'));
+
+  // Audience partitioning: external excludes cookie/moderator/extension-only
+  // endpoints, internal excludes public/cookie-or-key ones. `GET /jobs` (auth:
+  // none) and `POST /jobs` (auth: moderator, in the "Moderator jobs" group) share
+  // one path but sit on opposite sides of the split — a real overlap, not a
+  // contrived one.
+  const external = renderMarkdown(partitionForAudience(spec, 'external'), filters);
+  const internal = renderMarkdown(partitionForAudience(spec, 'internal'), filters);
+
+  assert('external doc documents GET /jobs', external.includes('`GET /jobs`'));
+  assert('external doc omits the moderator-only POST /jobs', !external.includes('`POST /jobs`'));
+  assert('external doc omits the Moderator jobs group entirely', !external.includes('## Moderator jobs'));
+
+  assert('internal doc documents the moderator-only POST /jobs', internal.includes('`POST /jobs`'));
+  assert('internal doc omits GET /jobs', !internal.includes('`GET /jobs`'));
+  assert('internal doc keeps the Moderator jobs group', internal.includes('## Moderator jobs'));
+
+  assert('external doc cross-links to the internal reference', external.includes('freehire.me/docs/api/internal'));
+  assert('internal doc cross-links back to the external reference', internal.includes('freehire.me/docs/api'));
+  assert(
+    'internal doc cross-link is not confused for the external doc\'s own link',
+    !internal.includes('freehire.me/docs/api/internal'),
+  );
+
+  assert('unknown audience throws', (() => {
+    try {
+      partitionForAudience(spec, 'nonsense');
+      return false;
+    } catch {
+      return true;
+    }
+  })());
+
+  // An `Auth` level AUDIENCE_AUTH doesn't route to either side must fail loudly,
+  // not silently drop whatever endpoint carries it from both documents.
+  assert('an auth level AUDIENCE_AUTH does not cover throws', (() => {
+    const bogusSpec = { ...spec, AUTH_LABELS: { ...spec.AUTH_LABELS, mystery: 'Mystery' } };
+    try {
+      partitionForAudience(bogusSpec, 'external');
+      return false;
+    } catch {
+      return true;
+    }
+  })());
 
   let failed = 0;
   for (const c of checks) {

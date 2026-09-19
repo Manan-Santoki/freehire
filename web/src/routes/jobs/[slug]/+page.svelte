@@ -5,6 +5,8 @@
   import JobSeeAlso from '$lib/components/JobSeeAlso.svelte';
   import JobView from '$lib/components/JobView.svelte';
   import Seo from '$lib/components/Seo.svelte';
+  import { filterHref } from '$lib/enrichment';
+  import { categoryLabel } from '$lib/labels';
   import { categoryLandingLink } from '$lib/roleLandings';
   import {
     breadcrumbJsonLd,
@@ -31,13 +33,38 @@
         ? `${data.job.title} at ${data.job.company} — apply on freehire.`
         : `${data.job.title} — apply on freehire.`)
   );
-  // The one breadcrumb trail feeding both the visible nav and the structured data below —
-  // a single array so the two can never disagree about what the trail is. There used to
+  // The one breadcrumb trail behind both the visible nav (via visibleBreadcrumbItems below)
+  // and the structured data — a single array so the two can never disagree about what the
+  // trail is. There used to
   // be no `Jobs` level here: `/jobs` was a 301 to `/`, and a trail step naming a redirect
   // is a step Google resolves away. That is now backwards — `/jobs` is the real feed and
   // `/` is the one that redirects (jobs/+page.server.ts's own comment: "The feed used to
   // live at `/`, which is now the landing page") — so the level belongs back.
-  const breadcrumbItems = $derived([{ name: 'Jobs', href: '/jobs' }, { name: data.job.title }]);
+  //
+  // The category level in between is the same facet `/jobs` itself filters on
+  // (search.query_filter's StringFacets["category"]), via filterHref — the same helper
+  // every other facet link in the app builds its /jobs?<facet>= URL through, rather than
+  // a hand-rolled, unencoded string. `categoryLabel` matches what marketLink.label would
+  // say when marketLink exists (categoryLandingLink sets it from the same function) and
+  // also covers a category the market-landing table doesn't publish (marketLink null,
+  // e.g. `other`); a job with no category at all skips the level.
+  const breadcrumbItems = $derived([
+    { name: 'Jobs', href: '/jobs' },
+    ...(data.job.enrichment.category
+      ? [
+          {
+            name: categoryLabel(data.job.enrichment.category),
+            href: filterHref('category', data.job.enrichment.category),
+          },
+        ]
+      : []),
+    { name: data.job.title },
+  ]);
+  // Drops the trailing current-page entry for the visible nav: JobView renders the same
+  // title as the <h1> right below it, so repeating it here only wraps a long title onto
+  // a second line. JSON-LD below keeps the full breadcrumbItems — schema.org's
+  // BreadcrumbList is meant to name the page itself.
+  const visibleBreadcrumbItems = $derived(breadcrumbItems.slice(0, -1));
   const jsonLd = $derived(
     jsonLdScript([
       jobPostingJsonLd(data.job, origin),
@@ -63,8 +90,6 @@
      raw text with no card wrapper, so 16px reads tight against the edge; sm+ falls
      back to the shared px-4 rhythm. -->
 <div class="mx-auto w-full max-w-6xl px-5 py-6 sm:px-4">
-  <Breadcrumbs items={breadcrumbItems} class="mb-4" />
-
   <JobView job={data.job} applyForm={data.applyForm} />
 
   <JobRelated
@@ -73,6 +98,11 @@
     copiesTotal={data.copiesTotal}
     slug={data.job.public_slug}
   />
+
+  <!-- Below the related postings and right above "See also" on every width: at the top
+       of the page it sat far from the title/apply button on a phone, and it stole space
+       from the match card and provenance line above the title on a wide screen too. -->
+  <Breadcrumbs items={visibleBreadcrumbItems} class="my-4" />
 
   <JobSeeAlso cards={data.seeAlso} />
 

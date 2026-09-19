@@ -37,6 +37,10 @@ type OverrideInput struct {
 	DisabledReason *string
 	Notes          *string
 	Managed        *bool
+	// Heavy places a provider in the scheduler's reserved heavy pool (see
+	// Settings.IsHeavy) without sharding it — the explicit half of that decision, for a
+	// single-shard-but-costly provider a curator wants reserved slots for.
+	Heavy *bool
 }
 
 // Report lists every eligible provider with its effective settings and run status.
@@ -58,6 +62,7 @@ func (r *QueriesRepository) Report(ctx context.Context) ([]ProviderReport, error
 				DisabledReason: row.DisabledReason,
 				Notes:          row.Notes,
 				Managed:        row.Managed,
+				Heavy:          row.Heavy,
 			})),
 			ShardsInState:  int(row.ShardsInState),
 			InFlight:       int(row.InFlight),
@@ -81,6 +86,7 @@ func (r *QueriesRepository) SaveOverride(ctx context.Context, in OverrideInput) 
 		DisabledReason: textPtr(in.DisabledReason),
 		Notes:          textPtr(in.Notes),
 		Managed:        boolPtr(in.Managed),
+		Heavy:          boolPtr(in.Heavy),
 		// What a field the caller did not name falls back to on a NEW row. Supplied here
 		// rather than written into the query, so this package's constants are the one
 		// place the fleet's shape is stated. Note that Go will happily compile this call

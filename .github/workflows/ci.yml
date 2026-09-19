@@ -563,29 +563,32 @@ jobs:
       - name: Type check
         run: pnpm run check
 
-      # docs/API.md is generated from web/src/lib/docs/api-spec.ts and says so in its
-      # first line — and until this step nothing checked it. Adding `sort=view_count`
-      # to the endpoint updated api-spec.ts and openapi.yaml but not the generated
-      # file, so the published API reference sat contradicting the handler's own
-      # allowlist with every check green. Same ratchet as the `sqlc` and `contracts`
-      # jobs, and it lives here rather than in its own job because the generator loads
-      # the TypeScript through Vite: the toolchain is exactly this job's, already
+      # docs/API.md and docs/API.internal.md (the external and internal-audience
+      # halves of the API reference, split by each endpoint's `auth` level — see
+      # partitionForAudience in gen-api-docs.mjs) are both generated from
+      # web/src/lib/docs/api-spec.ts and say so in their first line — and until this
+      # step nothing checked either. Adding `sort=view_count` to the endpoint
+      # updated api-spec.ts and openapi.yaml but not the generated file, so the
+      # published API reference sat contradicting the handler's own allowlist with
+      # every check green. Same ratchet as the `sqlc` and `contracts` jobs, and it
+      # lives here rather than in its own job because the generator loads the
+      # TypeScript through Vite: the toolchain is exactly this job's, already
       # installed, and a second job would buy a clearer check name for a second full
       # pnpm install.
       #
       # It runs after the type check on purpose. A broken api-spec.ts fails the
       # generator too, but as a Vite SSR error — the type check says what is actually
       # wrong first.
-      - name: Assert docs/API.md matches its source
+      - name: Assert docs/API.md and docs/API.internal.md match their source
         run: |
           pnpm run gen:api-docs
-          if [ -n "$(git status --porcelain -- ../docs/API.md)" ]; then
-            git --no-pager diff -- ../docs/API.md
+          if [ -n "$(git status --porcelain -- ../docs/API.md ../docs/API.internal.md)" ]; then
+            git --no-pager diff -- ../docs/API.md ../docs/API.internal.md
             echo
-            echo 'docs/API.md is stale. Run "pnpm run gen:api-docs" in web/ and commit the result.'
+            echo 'docs/API.md or docs/API.internal.md is stale. Run "pnpm run gen:api-docs" in web/ and commit the result.'
             exit 1
           fi
-          echo 'docs/API.md matches web/src/lib/docs/api-spec.ts.'
+          echo 'docs/API.md and docs/API.internal.md match web/src/lib/docs/api-spec.ts.'
 
       - name: API docs generator smoke test
         run: pnpm run gen:api-docs:smoke
@@ -599,24 +602,26 @@ jobs:
       # (the hand-maintained ChatGPT Actions schema, linted separately in the
       # `artifacts` job): that file is deliberately narrow for the GPT Actions
       # importer's own limits, this one is the whole public API surface.
-      - name: Assert the generated OpenAPI reference matches its source
+      - name: Assert the generated OpenAPI references match their source
         run: |
           pnpm run gen:openapi
-          if [ -n "$(git status --porcelain -- src/lib/docs/generated/api-reference.openapi.json)" ]; then
-            git --no-pager diff -- src/lib/docs/generated/api-reference.openapi.json
+          if [ -n "$(git status --porcelain -- src/lib/docs/generated/api-reference.openapi.json src/lib/docs/generated/api-reference.internal.openapi.json)" ]; then
+            git --no-pager diff -- src/lib/docs/generated/api-reference.openapi.json src/lib/docs/generated/api-reference.internal.openapi.json
             echo
-            echo 'web/src/lib/docs/generated/api-reference.openapi.json is stale. Run "pnpm run gen:openapi" in web/ and commit the result.'
+            echo 'web/src/lib/docs/generated/api-reference.openapi.json or api-reference.internal.openapi.json is stale. Run "pnpm run gen:openapi" in web/ and commit the result.'
             exit 1
           fi
-          echo 'web/src/lib/docs/generated/api-reference.openapi.json matches web/src/lib/docs/api-spec.ts.'
+          echo 'Both generated OpenAPI references match web/src/lib/docs/api-spec.ts.'
 
       - name: OpenAPI generator smoke test
         run: pnpm run gen:openapi:smoke
 
       # Same `minimal` gate as web/static/openapi.yaml in the `artifacts` job: can a
       # client generator read this at all.
-      - name: Validate the generated OpenAPI reference
-        run: npx --yes @redocly/cli@2.49.0 lint src/lib/docs/generated/api-reference.openapi.json --extends=minimal
+      - name: Validate the generated OpenAPI references
+        run: |
+          npx --yes @redocly/cli@2.49.0 lint src/lib/docs/generated/api-reference.openapi.json --extends=minimal
+          npx --yes @redocly/cli@2.49.0 lint src/lib/docs/generated/api-reference.internal.openapi.json --extends=minimal
 
       - name: Unit tests with coverage
         run: pnpm run test:coverage

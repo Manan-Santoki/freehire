@@ -1,5 +1,5 @@
 // Package ingestsched decides when each provider's crawl is due, claims a due run exactly
-// once, and hands it to a launcher. It replaces deploy/bin/gen-ingest-timers.sh, which
+// once, and hands it to a launcher. It replaces freehire-ops' provision/host2/gen-ingest-timers.sh, which
 // materialised one static systemd timer per provider from a script nothing on the host
 // invoked — so between its manual runs the schedule was a photograph of a catalog that had
 // since moved, and every divergence was silent.
@@ -59,6 +59,11 @@ type Override struct {
 	DisabledReason string
 	Notes          string
 	Managed        bool
+
+	// Heavy is the explicit half of IsHeavy: a curator's own flag that a provider belongs
+	// in the fleet's reserved heavy pool even without being sharded. See IsHeavy for the
+	// other half, which no override needs to set.
+	Heavy bool
 }
 
 // Settings is what a provider is actually scheduled on, after an override (if any) is
@@ -76,6 +81,11 @@ type Settings struct {
 	// provider is launched, so the two cannot both drive one provider. Removed with the
 	// column once every provider is cut over.
 	Managed bool
+
+	// Heavy is the curator's explicit flag. Callers that want to know whether a provider
+	// belongs in the fleet's reserved heavy pool call IsHeavy, not this field directly — a
+	// sharded provider is heavy whether or not anyone ever set the flag.
+	Heavy bool
 
 	// Overridden is false when the provider has no ingest_schedule row at all, which is
 	// what the report shows as "running on defaults".
@@ -110,6 +120,7 @@ func Effective(provider string, o *Override) Settings {
 		DisabledReason: o.DisabledReason,
 		Notes:          o.Notes,
 		Managed:        o.Managed,
+		Heavy:          o.Heavy,
 		Overridden:     true,
 	}
 }
@@ -123,6 +134,19 @@ func Effective(provider string, o *Override) Settings {
 // openspec/changes/ingest-scheduler-in-db; until then it is what stops the scheduler and
 // the static timers from both driving one provider.
 func (s Settings) Schedulable() bool { return s.Enabled && s.Managed }
+
+// IsHeavy reports whether a provider belongs in the fleet's reserved heavy pool: the
+// concurrency reservation freehire-ops' scripts/host2/ingest-slot.sh's HEAVY_SLOTS split already makes for
+// the flock semaphore this package replaces, so a burst of long crawls can never starve the
+// short tail the way the pre-split semaphore measured happening.
+//
+// A provider is heavy when the curator flagged it explicitly, OR when it is sharded — more
+// than one shard is exactly what makes a provider too large for one run, which is the same
+// property that makes it long-running. Every sharded family today (workday, eightfold,
+// oracle, paylocity, join, dayforce, workstream, adp, adpmyjobs) is heavy through this
+// second arm alone; the flag exists for a curator to place a future single-shard-but-costly
+// provider in the reserved pool without sharding it just to get there.
+func (s Settings) IsHeavy() bool { return s.Heavy || s.Shards > 1 }
 
 // ShardSelectors lists the runs that together cover this provider once.
 func (s Settings) ShardSelectors() []ShardSelector {

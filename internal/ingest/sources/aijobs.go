@@ -126,7 +126,7 @@ func aijobsListingLinks(root *html.Node) []string {
 	var hrefs []string
 	walk(root, func(n *html.Node) bool {
 		if n.Type == html.ElementNode && n.Data == "a" {
-			if href := attr(n, "href"); aijobsJobIDPattern.MatchString(href) {
+			if href := Attr(n, "href"); aijobsJobIDPattern.MatchString(href) {
 				hrefs = append(hrefs, href)
 			}
 		}
@@ -241,7 +241,7 @@ func aijobsCompanyName(root *html.Node) string {
 	var slug string
 	walk(root, func(n *html.Node) bool {
 		if slug == "" && n.Type == html.ElementNode && n.Data == "a" {
-			if m := aijobsCompanySlugPattern.FindStringSubmatch(attr(n, "href")); m != nil {
+			if m := aijobsCompanySlugPattern.FindStringSubmatch(Attr(n, "href")); m != nil {
 				slug = m[1]
 			}
 		}
@@ -274,7 +274,7 @@ func titleCaseSlug(slug string) string {
 func aijobsIsRemote(root *html.Node) bool {
 	remote := false
 	walk(root, func(n *html.Node) bool {
-		if n.Type == html.ElementNode && n.Data == "span" && hasClass(n, "text-bg-success") {
+		if n.Type == html.ElementNode && n.Data == "span" && HasClass(n, "text-bg-success") {
 			if strings.TrimSpace(textContent(n)) == "R" {
 				remote = true
 			}

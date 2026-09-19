@@ -21,11 +21,22 @@ func (e *ValidationError) Error() string { return e.err.Error() }
 func (e *ValidationError) Unwrap() error { return e.err }
 
 // Repository is the persistence contract for the single per-user screening-answers
-// record. Get maps a missing row to ErrNotFound; Upsert creates or replaces.
-// Implementations map the generated db row to Answers, so the use case never sees db.*.
+// record. Implementations map the generated db row to Answers, so the use case never sees
+// db.*.
+//
+// Get maps a missing row to ErrNotFound — a plain, unlocked read for callers (Store.Get)
+// that only display the record.
+//
+// UpdateLocked is the only write path, and it is atomic by construction: implementations
+// must take an exclusive lock on the caller's row for the whole operation (a no-op when no
+// row exists yet), call merge exactly once with what that locked read found (a fully
+// unstated Answers{} when there is no row), and persist whatever merge returns before
+// releasing the lock. That is what serializes two concurrent Update calls for the same
+// userID onto one, race-free read-merge-write instead of each reading independently and
+// whichever writes second clobbering the first (a lost update).
 type Repository interface {
 	Get(ctx context.Context, userID int64) (Answers, error)
-	Upsert(ctx context.Context, userID int64, a Answers) (Answers, error)
+	UpdateLocked(ctx context.Context, userID int64, merge func(existing Answers) Answers) (Answers, error)
 }
 
 // Store implements the screening-answers use case: read the caller's record, and
@@ -49,16 +60,20 @@ func (s *Store) Get(ctx context.Context, userID int64) (Answers, error) {
 // already has stored (a field the update leaves unset keeps its stored value), and
 // persists the merged record. A caller with no existing record is treated as starting
 // from a fully unstated one, so the first update is also a create.
+//
+// The read, merge and write happen as one atomic operation inside UpdateLocked (a row
+// lock held for the whole transaction), not as separate Get/Upsert calls: two Updates
+// racing for the same userID — the manual-edit handler and the assistant's
+// screening_answers_set tool both call this same method — would otherwise both read the
+// same "existing" record and the one that commits second would silently overwrite the
+// first's fields instead of merging onto them.
 func (s *Store) Update(ctx context.Context, userID int64, update Answers) (Answers, error) {
 	update.Sanitize()
 	if err := update.Validate(); err != nil {
 		return Answers{}, &ValidationError{err: err}
 	}
 
-	existing, err := s.repo.Get(ctx, userID)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return Answers{}, err
-	}
-
-	return s.repo.Upsert(ctx, userID, Merge(existing, update))
+	return s.repo.UpdateLocked(ctx, userID, func(existing Answers) Answers {
+		return Merge(existing, update)
+	})
 }

@@ -14,7 +14,26 @@ import (
 // The public catalogue card, and the one rule that makes it safe:
 //
 //	every string it carries is a value a DICTIONARY resolved, or a date. Never a
-//	string the candidate typed.
+//	string the candidate typed — with ONE deliberate exception, CandidateRole.Title.
+//
+// The exception, and what it was measured against: a work history reduced to
+// "Senior · Backend" per row loses the part a reader came for, and a title the dictionary
+// cannot place ("Technical Lead | Team Lead") reduces to nothing at all. Publishing the
+// title verbatim gives that back, and its cost is the hazard this whole file exists to
+// avoid — an employer's name riding along inside the title.
+//
+// Measured on production (2026-09-18), across every account with a stored extract: 59 of
+// 9,748 roles carried their own `company` string somewhere in the title, and half of those
+// were "Freelance", "Independent" or "Self-Employed", which name no employer. Scoped to
+// the accounts actually IN the catalogue: 1 of 343. Scrubbing was considered and declined
+// — the separators that would drive it ("|", " - ", "@") sit in ordinary titles far more
+// often than beside an employer ("Senior Staff Engineer | Team Lead"), so a cut-on-symbol
+// rule mangles the common case to catch the rare one, and a cut-on-known-company rule
+// still misses the shapes that spell the employer differently ("embedded at League Inc.").
+// The decision is therefore: publish it, say so where a candidate decides, and keep the
+// exception to this ONE field.
+//
+// Everything else on the card keeps the original rule, and the reasoning below is why.
 //
 // That is a stronger rule than "mask the fields that identify somebody", and the
 // difference is the whole reason this type exists rather than reusing
@@ -80,6 +99,12 @@ type EducationEntry struct {
 
 // CandidateRole is one position: what it was, when, and what it was built with.
 type CandidateRole struct {
+	// Title is the candidate's own words, verbatim — the card's ONE exception to the
+	// dictionary-only rule, argued in this file's header comment. Seniority and Category
+	// remain beside it as the fallback for a role whose title is absent, and as the
+	// values every filter reads: the raw string is for a human to read, never to match on.
+	Title string `json:"title,omitempty"`
+
 	Seniority string `json:"seniority,omitempty"`
 	Category  string `json:"category,omitempty"`
 
@@ -140,6 +165,7 @@ func cardRoles(experience []resumeextract.Experience) []CandidateRole {
 	for _, e := range experience {
 		c := classify.Parse(e.Title)
 		roles = append(roles, CandidateRole{
+			Title:     e.Title,
 			Seniority: c.Seniority,
 			Category:  c.Category,
 			Start:     e.Start,

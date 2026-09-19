@@ -3,6 +3,8 @@ package submission_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/strelov1/freehire/internal/ingest/moderation"
@@ -23,12 +25,17 @@ type fakeRepo struct {
 	getRet submission.Submission
 	getErr error
 
-	approveID       int64
-	approveReviewer int64
-	approveJobID    int64
-	approveCalled   bool
-	approveErr      error
-	approveRet      submission.Submission
+	claimID       int64
+	claimReviewer int64
+	claimCalled   bool
+	claimErr      error
+	claimRet      submission.Submission
+
+	attachID     int64
+	attachJobID  int64
+	attachCalled bool
+	attachErr    error
+	attachRet    submission.Submission
 
 	rejectID       int64
 	rejectReviewer int64
@@ -49,6 +56,11 @@ type fakeRepo struct {
 	blockCalled   bool
 	blockErr      error
 	blockRet      submission.Submission
+
+	// order, when set, records the sequence of side-effecting calls this repo and a
+	// fakeMinter sharing the same pointer make ("claim", "mint", "attach"), so a test can
+	// assert Approve's call order without guessing at timing.
+	order *[]string
 }
 
 func (f *fakeRepo) Create(_ context.Context, submittedBy int64, in moderation.CreateInput) (submission.Submission, error) {
@@ -68,9 +80,20 @@ func (f *fakeRepo) ListByUser(_ context.Context, _ int64) ([]submission.UserSubm
 	return nil, nil
 }
 
-func (f *fakeRepo) MarkApproved(_ context.Context, id, reviewerID, jobID int64) (submission.Submission, error) {
-	f.approveID, f.approveReviewer, f.approveJobID, f.approveCalled = id, reviewerID, jobID, true
-	return f.approveRet, f.approveErr
+func (f *fakeRepo) ClaimForApproval(_ context.Context, id, reviewerID int64) (submission.Submission, error) {
+	f.claimID, f.claimReviewer, f.claimCalled = id, reviewerID, true
+	if f.order != nil {
+		*f.order = append(*f.order, "claim")
+	}
+	return f.claimRet, f.claimErr
+}
+
+func (f *fakeRepo) AttachJob(_ context.Context, id, jobID int64) (submission.Submission, error) {
+	f.attachID, f.attachJobID, f.attachCalled = id, jobID, true
+	if f.order != nil {
+		*f.order = append(*f.order, "attach")
+	}
+	return f.attachRet, f.attachErr
 }
 
 func (f *fakeRepo) MarkRejected(_ context.Context, id, reviewerID int64, reason string) (submission.Submission, error) {
@@ -95,10 +118,16 @@ type fakeMinter struct {
 	called  bool
 	ret     job.Job
 	err     error
+
+	// order, when set, records this call as "mint" — see fakeRepo.order.
+	order *[]string
 }
 
 func (m *fakeMinter) Create(_ context.Context, actorID int64, in moderation.CreateInput) (job.Job, job.Extras, error) {
 	m.actorID, m.in, m.called = actorID, in, true
+	if m.order != nil {
+		*m.order = append(*m.order, "mint")
+	}
 	return m.ret, job.Extras{}, m.err
 }
 
@@ -145,6 +174,26 @@ func TestSubmit_PersistsPendingWithOwner(t *testing.T) {
 	}
 }
 
+func TestSubmit_SanitizesDescriptionBeforePersist(t *testing.T) {
+	repo := &fakeRepo{createRet: submission.Submission{ID: 1, Status: "pending"}}
+	in := validInput()
+	in.Description = "Build it<script>alert(1)</script>"
+
+	_, err := submission.New(repo, &fakeMinter{}).Submit(context.Background(), 7, in)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if !repo.createCalled {
+		t.Fatal("repo.Create was not called")
+	}
+	if strings.Contains(repo.created.Description, "<script") {
+		t.Errorf("repo.Create received unsanitized description: %q", repo.created.Description)
+	}
+	if repo.created.Description != "Build it" {
+		t.Errorf("description = %q, want sanitized %q", repo.created.Description, "Build it")
+	}
+}
+
 func TestSubmit_ValidatesBeforePersist(t *testing.T) {
 	cases := []struct {
 		name string
@@ -177,15 +226,24 @@ func TestSubmit_PropagatesDuplicatePending(t *testing.T) {
 	}
 }
 
-func TestApprove_MintsUnderSubmitterAndMarks(t *testing.T) {
+func TestApprove_ClaimsThenMintsThenAttaches(t *testing.T) {
 	sub := submission.Submission{ID: 5, SubmittedBy: 7, Status: "pending", URL: "https://x/1", Source: "workatastartup", Title: "Dev", Company: "Acme", Location: "Berlin", Remote: true, Description: "Build <b>it</b>"}
-	repo := &fakeRepo{getRet: sub, approveRet: submission.Submission{ID: 5, Status: "approved"}}
-	minter := &fakeMinter{ret: mustJob(t, db.Job{ID: 99})}
+	claimed := sub
+	claimed.Status = "approved"
+	var order []string
+	repo := &fakeRepo{getRet: sub, claimRet: claimed, attachRet: submission.Submission{ID: 5, Status: "approved"}, order: &order}
+	minter := &fakeMinter{ret: mustJob(t, db.Job{ID: 99}), order: &order}
 	svc := submission.New(repo, minter)
 
 	_, err := svc.Approve(context.Background(), 3, 5)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
+	}
+	if !repo.claimCalled {
+		t.Fatal("repo.ClaimForApproval was not called")
+	}
+	if repo.claimID != 5 || repo.claimReviewer != 3 {
+		t.Errorf("claim params = id=%d reviewer=%d, want id=5 reviewer=3", repo.claimID, repo.claimReviewer)
 	}
 	if !minter.called {
 		t.Fatal("minter.Create was not called")
@@ -193,17 +251,25 @@ func TestApprove_MintsUnderSubmitterAndMarks(t *testing.T) {
 	if minter.actorID != 7 {
 		t.Errorf("mint actorID = %d, want 7 (the submitter, as job author)", minter.actorID)
 	}
-	// Every content field must travel from the submission to the mint input — especially
-	// Description, the one field the minter sanitizes, and Source, which the minter defaults.
+	// Every content field must travel from the (claimed) submission to the mint input —
+	// especially Description, the one field the minter sanitizes, and Source, which the
+	// minter defaults.
 	if minter.in.URL != "https://x/1" || minter.in.Source != "workatastartup" ||
 		minter.in.Company != "Acme" || !minter.in.Remote || minter.in.Description != "Build <b>it</b>" {
 		t.Errorf("mint input not built from submission: %+v", minter.in)
 	}
-	if !repo.approveCalled {
-		t.Fatal("repo.MarkApproved was not called")
+	if !repo.attachCalled {
+		t.Fatal("repo.AttachJob was not called")
 	}
-	if repo.approveID != 5 || repo.approveReviewer != 3 || repo.approveJobID != 99 {
-		t.Errorf("approve params = id=%d reviewer=%d job=%d, want id=5 reviewer=3 job=99", repo.approveID, repo.approveReviewer, repo.approveJobID)
+	if repo.attachID != 5 || repo.attachJobID != 99 {
+		t.Errorf("attach params = id=%d job=%d, want id=5 job=99", repo.attachID, repo.attachJobID)
+	}
+	// The claim must precede the mint — that ordering is the whole fix, closing the race
+	// where a concurrent Reject could flip the status between the mint and the mark — and
+	// the mint must precede the attach, since there is no job to attach before it exists.
+	want := []string{"claim", "mint", "attach"}
+	if !slices.Equal(order, want) {
+		t.Errorf("call order = %v, want %v", order, want)
 	}
 }
 
@@ -220,14 +286,68 @@ func TestApprove_NotFound(t *testing.T) {
 }
 
 func TestApprove_AlreadyDecided(t *testing.T) {
-	repo := &fakeRepo{getRet: submission.Submission{ID: 5, Status: "approved"}}
+	jobID := int64(9)
+	repo := &fakeRepo{getRet: submission.Submission{ID: 5, Status: "approved", JobID: &jobID}}
 	minter := &fakeMinter{}
 	_, err := submission.New(repo, minter).Approve(context.Background(), 3, 5)
 	if !errors.Is(err, submission.ErrAlreadyDecided) {
 		t.Errorf("err = %v, want ErrAlreadyDecided", err)
 	}
-	if minter.called || repo.approveCalled {
-		t.Error("a decided submission must not be minted or re-marked")
+	if minter.called || repo.claimCalled || repo.attachCalled {
+		t.Error("a fully decided submission must not be claimed, minted, or attached")
+	}
+}
+
+// TestApprove_ClaimLosesRace_PropagatesErrAlreadyDecided covers the race the whole
+// claim-first design exists to close: Get sees 'pending' (a snapshot that is already
+// stale by the time this runs), but the atomic ClaimForApproval loses to a concurrent
+// decision — exactly what a real Reject's own status='pending'-guarded update would cause,
+// by flipping the row to 'rejected' between this call's Get and its claim. The claim must
+// never be allowed to appear to succeed once it has actually lost.
+func TestApprove_ClaimLosesRace_PropagatesErrAlreadyDecided(t *testing.T) {
+	repo := &fakeRepo{getRet: submission.Submission{ID: 5, Status: "pending"}, claimErr: submission.ErrAlreadyDecided}
+	minter := &fakeMinter{}
+	_, err := submission.New(repo, minter).Approve(context.Background(), 3, 5)
+	if !errors.Is(err, submission.ErrAlreadyDecided) {
+		t.Errorf("err = %v, want ErrAlreadyDecided", err)
+	}
+	if !repo.claimCalled {
+		t.Error("repo.ClaimForApproval should have been attempted")
+	}
+	if minter.called || repo.attachCalled {
+		t.Error("a lost claim must never mint or attach a job")
+	}
+}
+
+// TestApprove_ResumesClaimedButUnattachedSubmission covers a process that died between the
+// claim and the attach on an earlier call: Get now sees status='approved' with no job_id
+// yet. Approve must mint and attach without claiming again — the claim's own
+// status='pending' guard would no longer match a row this call's own earlier attempt
+// already moved to 'approved'.
+func TestApprove_ResumesClaimedButUnattachedSubmission(t *testing.T) {
+	sub := submission.Submission{ID: 5, SubmittedBy: 7, Status: "approved", JobID: nil, URL: "https://x/1", Source: "workatastartup", Title: "Dev", Company: "Acme"}
+	repo := &fakeRepo{getRet: sub, attachRet: submission.Submission{ID: 5, Status: "approved"}}
+	minter := &fakeMinter{ret: mustJob(t, db.Job{ID: 99})}
+	svc := submission.New(repo, minter)
+
+	_, err := svc.Approve(context.Background(), 3, 5)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if repo.claimCalled {
+		t.Error("a resumed approval must not call ClaimForApproval again")
+	}
+	if !minter.called {
+		t.Fatal("minter.Create was not called")
+	}
+	if minter.actorID != 7 {
+		t.Errorf("mint actorID = %d, want 7 (the submitter, as job author)", minter.actorID)
+	}
+	if !repo.attachCalled {
+		t.Fatal("repo.AttachJob was not called")
+	}
+	if repo.attachID != 5 || repo.attachJobID != 99 {
+		t.Errorf("attach params = id=%d job=%d, want id=5 job=99", repo.attachID, repo.attachJobID)
 	}
 }
 

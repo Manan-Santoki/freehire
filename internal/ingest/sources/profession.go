@@ -420,7 +420,7 @@ func professionBody(root *html.Node) string {
 // child, so it is reached by walking up to the box and back down to its <h2>.
 func professionSectionHeading(section *html.Node) string {
 	for n := section.Parent; n != nil; n = n.Parent {
-		if n.Type != html.ElementNode || !hasClass(n, "box-container") {
+		if n.Type != html.ElementNode || !HasClass(n, "box-container") {
 			continue
 		}
 		if h2 := firstByTag(n, "h2"); h2 != nil {

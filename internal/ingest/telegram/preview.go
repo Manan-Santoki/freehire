@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"github.com/strelov1/freehire/internal/ingest/sources"
 )
 
 // Post is one message parsed from a channel's public web preview page.
@@ -90,12 +92,12 @@ func parseMessage(n *html.Node, id int64) (Post, bool) {
 		if n.Type == html.ElementNode {
 			switch {
 			case n.Data == "time":
-				if dt := attr(n, "datetime"); dt != "" {
+				if dt := sources.Attr(n, "datetime"); dt != "" {
 					if t, err := time.Parse(time.RFC3339, dt); err == nil {
 						postedAt = t.UTC()
 					}
 				}
-			case hasClass(n, "tgme_widget_message_text"):
+			case sources.HasClass(n, "tgme_widget_message_text"):
 				text = nodeText(n)
 				links = messageLinks(n)
 				return
@@ -122,7 +124,7 @@ func messageLinks(n *html.Node) []Link {
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "a" {
-			if href := attr(n, "href"); href != "" {
+			if href := sources.Attr(n, "href"); href != "" {
 				links = append(links, Link{Text: strings.TrimSpace(nodeText(n)), URL: href})
 			}
 		}
@@ -153,22 +155,4 @@ func nodeText(n *html.Node) string {
 	}
 	walk(n)
 	return b.String()
-}
-
-func attr(n *html.Node, key string) string {
-	for _, a := range n.Attr {
-		if a.Key == key {
-			return a.Val
-		}
-	}
-	return ""
-}
-
-func hasClass(n *html.Node, class string) bool {
-	for _, c := range strings.Fields(attr(n, "class")) {
-		if c == class {
-			return true
-		}
-	}
-	return false
 }

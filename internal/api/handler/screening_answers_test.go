@@ -17,8 +17,9 @@ import (
 )
 
 // fakeScreeningAnswersRepo is a screeninganswers.Repository that returns canned
-// records/errors and records the upsert it is handed, so the handler tests run without a
-// database. The DB-backed contract is covered by the store's own tests.
+// records/errors and records the merged write it is handed, so the handler tests run
+// without a database. The DB-backed contract, including the locked read-merge-write
+// UpdateLocked stands for here, is covered by the store's own tests.
 type fakeScreeningAnswersRepo struct {
 	getRet screeninganswers.Answers
 	getErr error
@@ -33,8 +34,15 @@ func (f *fakeScreeningAnswersRepo) Get(context.Context, int64) (screeninganswers
 	return f.getRet, f.getErr
 }
 
-func (f *fakeScreeningAnswersRepo) Upsert(_ context.Context, _ int64, a screeninganswers.Answers) (screeninganswers.Answers, error) {
-	f.upserted = a
+func (f *fakeScreeningAnswersRepo) UpdateLocked(_ context.Context, _ int64, merge func(screeninganswers.Answers) screeninganswers.Answers) (screeninganswers.Answers, error) {
+	existing := f.getRet
+	if f.getErr != nil {
+		if !errors.Is(f.getErr, screeninganswers.ErrNotFound) {
+			return screeninganswers.Answers{}, f.getErr
+		}
+		existing = screeninganswers.Answers{}
+	}
+	f.upserted = merge(existing)
 	f.upsertCalled = true
 	return f.upsertRet, f.upsertErr
 }

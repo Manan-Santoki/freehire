@@ -106,30 +106,8 @@ const listChronicBoards = `-- name: ListChronicBoards :many
 SELECT provider, board, region, consecutive_failures, cooldown_until, last_error, last_error_at,
        last_success_at, first_seen_at, count(*) OVER () AS total
 FROM board_health h
-WHERE ((last_success_at IS NOT NULL AND last_success_at < now() - $1::interval)
-    OR (last_success_at IS NULL AND first_seen_at < now() - $1::interval))
-  -- ... and no differently-cased twin of this board has fresher evidence.
-  --
-  -- A board id used to reach this table lowercased and now reaches it with the provider's
-  -- own casing, so one board can hold two records: an abandoned one that ages forever and
-  -- a live one crawled this morning. Without this clause the abandoned record reports its
-  -- own board unreachable — measured 2026-09-16, that was 325 of the 353 boards the
-  -- safety-net closer offered to close, and arming it would have closed the postings of
-  -- boards that were working, under the label ` + "`" + `board_unreachable` + "`" + `.
-  --
-  -- A FRESHNESS comparison, not a case-folding rule: the twin must have STRICTLY newer
-  -- evidence, so two genuinely distinct case-sensitive boards are both still reported and
-  -- nothing real is explained away. Migration 0170 removed the twins that already existed;
-  -- this keeps the next rename from recreating the same blind spot silently.
-  AND NOT EXISTS (
-        SELECT 1 FROM board_health twin
-        WHERE twin.provider = h.provider
-          AND twin.region = h.region
-          AND lower(twin.board) = lower(h.board)
-          AND twin.board <> h.board
-          AND coalesce(twin.last_success_at, twin.last_error_at)
-              > coalesce(h.last_success_at, h.last_error_at)
-      )
+WHERE (last_success_at IS NOT NULL AND last_success_at < now() - $1::interval)
+    OR (last_success_at IS NULL AND first_seen_at < now() - $1::interval)
 ORDER BY coalesce(last_success_at, first_seen_at), provider, board, region
 LIMIT $2
 `
@@ -166,6 +144,12 @@ type ListChronicBoardsRow struct {
 // the two callers' needs differ, so one query with a caller-supplied cap serves both rather
 // than duplicating the threshold logic across an uncapped and a capped variant. total is the
 // FULL count before the cap, same convention as ListUnhealthyBoards.Total.
+//
+// No differently-cased-twin guard here any more: board_health's identity is
+// case-insensitive as of migration 0171 (board_health_identity_key), so two rows for the
+// same (provider, board, region) that differ only by case cannot exist — the schema
+// makes the twin this query used to filter out impossible to create, rather than this
+// query hiding it after the fact.
 func (q *Queries) ListChronicBoards(ctx context.Context, arg ListChronicBoardsParams) ([]ListChronicBoardsRow, error) {
 	rows, err := q.db.Query(ctx, listChronicBoards, arg.AgeWindow, arg.MaxBoards)
 	if err != nil {
@@ -435,7 +419,8 @@ func (q *Queries) ProviderHealthRollup(ctx context.Context) ([]ProviderHealthRol
 const recordBoardFailure = `-- name: RecordBoardFailure :one
 INSERT INTO board_health (provider, board, region, consecutive_failures, last_error, last_error_at, last_run_at)
 VALUES ($1, $2, $3, 1, $4, now(), now())
-ON CONFLICT (provider, board, region) DO UPDATE SET
+ON CONFLICT (provider, lower(board), region) DO UPDATE SET
+    board                = EXCLUDED.board,
     consecutive_failures = board_health.consecutive_failures + 1,
     last_error           = EXCLUDED.last_error,
     last_error_at        = now(),
@@ -453,6 +438,8 @@ type RecordBoardFailureParams struct {
 // Count a failed crawl: bump consecutive_failures, record the error, stamp the run,
 // and RETURN the new failure count so the caller can compute the cooldown (the backoff
 // policy lives in Go, not here). The cooldown itself is applied by SetBoardCooldown.
+//
+// Conflict target and board = EXCLUDED.board: same reasoning as RecordBoardSuccess above.
 func (q *Queries) RecordBoardFailure(ctx context.Context, arg RecordBoardFailureParams) (int32, error) {
 	row := q.db.QueryRow(ctx, recordBoardFailure,
 		arg.Provider,
@@ -470,7 +457,8 @@ INSERT INTO board_health (provider, board, region, consecutive_failures, cooldow
                           last_success_at, last_ingested_count, last_run_at, last_yield_at)
 VALUES ($1, $2, $3, 0, NULL, now(), $4, now(),
         CASE WHEN $5::boolean THEN now() END)
-ON CONFLICT (provider, board, region) DO UPDATE SET
+ON CONFLICT (provider, lower(board), region) DO UPDATE SET
+    board                = EXCLUDED.board,
     consecutive_failures = 0,
     cooldown_until       = NULL,
     last_success_at      = now(),
@@ -490,6 +478,15 @@ type RecordBoardSuccessParams struct {
 
 // A successful crawl clears the failure state and stamps freshness. Upsert so a
 // first-ever crawl creates the row.
+//
+// The conflict target is (provider, lower(board), region) — board_health's identity
+// since migration 0171, matching boards_identity_key on the `boards` catalog itself —
+// so a board id that changes case at the provider converges onto its EXISTING row
+// instead of inserting a stale twin. `board = EXCLUDED.board` is what makes that
+// convergence real: without it the row would keep whichever casing it was first
+// created under forever, and every later exact-match lookup by the provider's CURRENT
+// casing (GetBoardCooldown, SetBoardCooldown, DeleteBoardHealth, ClearProviderCooldowns
+// — all below) would stop finding the row.
 //
 // `reached` stamps last_yield_at (migration 0158) and is the caller's answer to a question
 // last_ingested_count cannot: whether the crawl actually found a posting on this board. The two
@@ -513,27 +510,42 @@ func (q *Queries) RecordBoardSuccess(ctx context.Context, arg RecordBoardSuccess
 	return err
 }
 
-const setBoardCooldown = `-- name: SetBoardCooldown :exec
+const setBoardCooldown = `-- name: SetBoardCooldown :execrows
 UPDATE board_health
 SET cooldown_until = $4
-WHERE provider = $1 AND board = $2 AND region = $3
+WHERE provider = $1 AND board = $2 AND region = $3 AND consecutive_failures = $5
 `
 
 type SetBoardCooldownParams struct {
-	Provider      string             `json:"provider"`
-	Board         string             `json:"board"`
-	Region        string             `json:"region"`
-	CooldownUntil pgtype.Timestamptz `json:"cooldown_until"`
+	Provider            string             `json:"provider"`
+	Board               string             `json:"board"`
+	Region              string             `json:"region"`
+	CooldownUntil       pgtype.Timestamptz `json:"cooldown_until"`
+	ConsecutiveFailures int32              `json:"consecutive_failures"`
 }
 
 // Apply the Go-computed cooldown window to a board (called only when the backoff
 // policy says to cool down).
-func (q *Queries) SetBoardCooldown(ctx context.Context, arg SetBoardCooldownParams) error {
-	_, err := q.db.Exec(ctx, setBoardCooldown,
+//
+// Guarded by the consecutive_failures value the cooldown was computed FROM (the count
+// RecordBoardFailure just returned), not merely the board's identity: the pipeline's worker
+// pool can process the same board twice in one run, so two concurrent RecordFailure calls can
+// race between their own RecordBoardFailure and this UPDATE. Without the guard, whichever
+// SetBoardCooldown lands last wins regardless of which failure count is newer — an earlier,
+// shorter cooldown can overwrite a later, longer one, or this call can clobber a cooldown a
+// concurrent RecordSuccess/ClearProviderCooldowns just cleared. Zero rows affected means a
+// newer writer already moved consecutive_failures past what this cooldown was computed from —
+// expected under the race, not an error, and the caller applies nothing further.
+func (q *Queries) SetBoardCooldown(ctx context.Context, arg SetBoardCooldownParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setBoardCooldown,
 		arg.Provider,
 		arg.Board,
 		arg.Region,
 		arg.CooldownUntil,
+		arg.ConsecutiveFailures,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

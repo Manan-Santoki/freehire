@@ -147,7 +147,7 @@ func onstriderPositionOpen(root *html.Node) bool {
 			return false
 		}
 		if n.Type == html.ElementNode {
-			if v := attr(n, "data-position-open"); v != "" {
+			if v := Attr(n, "data-position-open"); v != "" {
 				open, done = v == "1", true
 				return false
 			}

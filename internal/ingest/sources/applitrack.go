@@ -403,7 +403,7 @@ func applitrackTechnologyCategories(root *html.Node) []string {
 		if n.Type != html.ElementNode || n.Data != "option" {
 			return true
 		}
-		name := firstSubmatch(applitrackCategoryID, attr(n, "value"))
+		name := firstSubmatch(applitrackCategoryID, Attr(n, "value"))
 		if name != "" && AppliTrackTechnologyCategory(name) {
 			out = append(out, name)
 		}
@@ -419,14 +419,14 @@ func applitrackListing(root *html.Node) []applitrackPosting {
 	var out []applitrackPosting
 	listed := map[string]bool{}
 	walk(root, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || n.Data != "span" || !hasClass(n, "title") {
+		if n.Type != html.ElementNode || n.Data != "span" || !HasClass(n, "title") {
 			return true
 		}
 		view := firstByTag(n, "a")
 		if view == nil {
 			return true
 		}
-		id := applitrackJobID(attr(view, "href"))
+		id := applitrackJobID(Attr(view, "href"))
 		if id == "" || listed[id] {
 			return true
 		}
@@ -454,7 +454,7 @@ func applitrackField(block *html.Node, label string) string {
 		if value != "" {
 			return false
 		}
-		if n.Type != html.ElementNode || n.Data != "span" || !hasClass(n, "label") {
+		if n.Type != html.ElementNode || n.Data != "span" || !HasClass(n, "label") {
 			return true
 		}
 		if strings.TrimSpace(strings.TrimSuffix(textContent(n), ":")) != label {
@@ -463,7 +463,7 @@ func applitrackField(block *html.Node, label string) string {
 		// The value is the next "normal" span in the same row; NextSibling cannot leave the
 		// row, so a row whose markup has moved yields no value rather than the next row's.
 		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
-			if sib.Type == html.ElementNode && sib.Data == "span" && hasClass(sib, "normal") {
+			if sib.Type == html.ElementNode && sib.Data == "span" && HasClass(sib, "normal") {
 				value = textContent(sib)
 				break
 			}
@@ -484,7 +484,7 @@ func applitrackDescription(block *html.Node) string {
 		if out != "" {
 			return false
 		}
-		if n.Type != html.ElementNode || n.Data != "span" || !hasClass(n, "normal") {
+		if n.Type != html.ElementNode || n.Data != "span" || !HasClass(n, "normal") {
 			return true
 		}
 		if applitrackInRow(n, block) {

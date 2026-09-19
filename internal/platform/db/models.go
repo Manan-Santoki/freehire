@@ -597,6 +597,8 @@ type IngestSchedule struct {
 	Managed        bool               `json:"managed"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	// Explicit heavy-pool override. A provider is ALSO heavy when ingest_run_state holds more than one row for it (sharded) -- see ingestsched.Settings.IsHeavy, which ORs the two the same way the scheduler's claim queries do.
+	Heavy bool `json:"heavy"`
 }
 
 type InsightsCompanyGrowth struct {
@@ -624,6 +626,19 @@ type InsightsFacetStat struct {
 	Facet string `json:"facet"`
 	Value string `json:"value"`
 	Count int64  `json:"count"`
+}
+
+type InsightsRoleSkillSample struct {
+	Category   string `json:"category"`
+	Seniority  string `json:"seniority"`
+	SampleSize int32  `json:"sample_size"`
+}
+
+type InsightsRoleSkillStat struct {
+	Category  string `json:"category"`
+	Seniority string `json:"seniority"`
+	Skill     string `json:"skill"`
+	OpenCount int32  `json:"open_count"`
 }
 
 type InsightsRoleStat struct {
@@ -1423,6 +1438,7 @@ type UserNotification struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	ReadAt     pgtype.Timestamptz `json:"read_at"`
 	Jobs       json.RawMessage    `json:"jobs"`
+	DedupKey   pgtype.Text        `json:"dedup_key"`
 }
 
 type UserProfile struct {

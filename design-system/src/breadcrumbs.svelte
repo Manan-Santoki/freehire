@@ -20,7 +20,10 @@
 
 <nav aria-label="Breadcrumb" class={cn('text-sm', className)}>
   <ol class="flex flex-wrap items-center gap-1.5">
-    {#each items as item, i (item.name)}
+    <!-- Keyed by position, not name: two levels can legitimately share a label (a job
+    titled exactly "QA" filed under the QA category), and a trail never reorders or
+    drops an entry from under itself, so position IS identity here. -->
+    {#each items as item, i (i)}
       {#if i > 0}
         <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
       {/if}

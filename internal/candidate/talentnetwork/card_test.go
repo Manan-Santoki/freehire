@@ -71,9 +71,15 @@ func cvWithLeakIn(where string) resumeextract.Structured {
 // The invariant this whole feature rests on: nothing a candidate typed reaches the
 // public card unless a dictionary resolved it. Masking named fields is not enough — the
 // employer's name is usually sitting in the prose beside the field that was masked.
+//
+// "title" is absent from this list, and deliberately so — see
+// TestProjectCard_PublishesTheRoleTitleVerbatim, which asserts the opposite for that one
+// field. The case stays in cvWithLeakIn because that test uses it: an exception recorded
+// as an inverted assertion is an exception somebody can find, while one recorded as a
+// deleted line is indistinguishable from an oversight.
 func TestProjectCard_LeaksNothingFromTheCV(t *testing.T) {
 	places := []string{
-		"company", "summary", "role summary", "highlights", "title", "headline",
+		"company", "summary", "role summary", "highlights", "headline",
 		"project name", "project highlights", "institution", "degree", "location",
 		"certifications", "languages", "skills", "stack",
 	}
@@ -87,6 +93,42 @@ func TestProjectCard_LeaksNothingFromTheCV(t *testing.T) {
 				t.Errorf("card carries %q from %s:\n%s", leak, where, out)
 			}
 		})
+	}
+}
+
+// The card's one exception to the dictionary-only rule, asserted rather than assumed: a
+// role's title is published in the candidate's own words, employer and all.
+//
+// This is the inverse of the case TestProjectCard_LeaksNothingFromTheCV drops, and it is
+// here so that reinstating the old behaviour fails a test instead of passing silently.
+// What makes the exception safe to make is measured, not argued — see card.go's header.
+//
+// The candidate's own NAME is a different question, and it is already answered upstream:
+// resumeextract blanks any field still carrying a redaction placeholder, so a title like
+// "<name> Consulting" reaches this package empty and falls back to the dictionary label.
+// ProjectCard makes no such guarantee itself and must not be read as though it does.
+func TestProjectCard_PublishesTheRoleTitleVerbatim(t *testing.T) {
+	card := ProjectCard(cvWithLeakIn("title"))
+	if len(card.Roles) != 1 {
+		t.Fatalf("roles = %d, want 1", len(card.Roles))
+	}
+	if got, want := card.Roles[0].Title, "Backend Engineer @ "+leak; got != want {
+		t.Errorf("title = %q, want %q", got, want)
+	}
+}
+
+// A role the dictionary cannot place still carries its title, which is the whole point of
+// publishing one: "Senior · Backend" and "" are the two things the card could say without
+// it, and neither is what the candidate wrote.
+func TestProjectCard_CarriesTheTitleOfAnUnresolvedRole(t *testing.T) {
+	card := ProjectCard(resumeextract.Structured{
+		Experience: []resumeextract.Experience{{Title: "Lighthouse Keeper"}},
+	})
+	if len(card.Roles) != 1 {
+		t.Fatalf("roles = %d, want 1", len(card.Roles))
+	}
+	if got := card.Roles[0].Title; got != "Lighthouse Keeper" {
+		t.Errorf("title = %q, want %q", got, "Lighthouse Keeper")
 	}
 }
 

@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/strelov1/freehire/internal/ingest/boardcatalog"
 	"github.com/strelov1/freehire/internal/ingest/sources"
 	"github.com/strelov1/freehire/internal/platform/db"
+	"github.com/strelov1/freehire/internal/platform/externalid"
 	"github.com/strelov1/freehire/internal/platform/pgconv"
 	"github.com/strelov1/freehire/internal/platform/pgerr"
 )
@@ -37,7 +37,7 @@ func NewQueriesRepository(q *db.Queries) *QueriesRepository {
 // so a slug with % or _ cannot widen the match. Reads `jobs`, unaffected by the
 // board-catalog migration.
 func (r *QueriesRepository) BoardTracked(ctx context.Context, source, board string) (bool, error) {
-	return r.q.JobsExistForBoard(ctx, db.JobsExistForBoardParams{Source: source, BoardPattern: likePrefix(board)})
+	return r.q.JobsExistForBoard(ctx, db.JobsExistForBoardParams{Source: source, BoardPattern: externalid.BoardPattern(board)})
 }
 
 // BoardByGreenhouseJobID returns the greenhouse board already carrying a job with the given
@@ -70,7 +70,7 @@ func (r *QueriesRepository) BoardByAshbyJobID(ctx context.Context, jobID string)
 // when the board has no job with a resolved company. Reads `jobs`/`companies`, unaffected
 // by the board-catalog migration.
 func (r *QueriesRepository) CompanyForBoard(ctx context.Context, source, board string) (name, slug string, ok bool, err error) {
-	row, err := r.q.CompanyForBoard(ctx, db.CompanyForBoardParams{Source: source, BoardPattern: likePrefix(board)})
+	row, err := r.q.CompanyForBoard(ctx, db.CompanyForBoardParams{Source: source, BoardPattern: externalid.BoardPattern(board)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", false, nil
 	}
@@ -78,13 +78,6 @@ func (r *QueriesRepository) CompanyForBoard(ctx context.Context, source, board s
 		return "", "", false, err
 	}
 	return row.Company, row.CompanySlug, true, nil
-}
-
-// likePrefix builds a LIKE pattern matching external_ids on board ("<board>:…"), escaping the
-// LIKE metacharacters \ % _ in the (URL-derived) board with the default backslash escape.
-func likePrefix(board string) string {
-	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(board)
-	return esc + ":%"
 }
 
 // Record inserts the board at status='pending' — immediately eligible for the provider's

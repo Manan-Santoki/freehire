@@ -85,8 +85,13 @@
         </span>
         <span class="text-sm text-muted-foreground">
           {#if !isMember}
-            Appear in a public catalogue — your skills and experience, never your name,
-            employer or contacts.
+            <!-- "employer" used to be in this list and no longer is: role titles are
+                 published verbatim, so one that names an employer names it. The full
+                 statement belongs on the page where the decision is made
+                 (/my/talent-network); what this teaser must not do is promise more than
+                 that page delivers. -->
+            Appear in a public catalogue — your skills and experience, never your name or
+            contacts.
           {:else if listed}
             Your anonymous profile is in the public catalogue.
           {:else}

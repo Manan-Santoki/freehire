@@ -51,15 +51,90 @@ WHERE open_count > 0 OR open_count_prev > 0;
 -- Ranked roles within one country slice ('' = all countries), ordered by raw
 -- demand or by growth (open_count - open_count_prev), demand as the tiebreak.
 -- An empty @category means all categories (the original behavior); a non-empty
--- @category restricts the ranking to that category's seniorities.
+-- @category restricts the ranking to that category's seniorities, and a non-empty
+-- @seniority narrows it to ONE role. Until @seniority existed the parameter was not
+-- read at all, so a caller who sent it was answered with every seniority — the
+-- dropped-filter-widens-the-answer trap in its silent form, and the endpoint has no
+-- meta.ignored_params to have reported it.
 SELECT category, seniority, open_count, (open_count - open_count_prev)::int AS growth
 FROM insights_role_stats
 WHERE country = sqlc.arg('country')
   AND (sqlc.arg('category')::text = '' OR category = sqlc.arg('category'))
+  AND (sqlc.arg('seniority')::text = '' OR seniority = sqlc.arg('seniority'))
 ORDER BY
     (CASE WHEN sqlc.arg('sort')::text = 'growth' THEN (open_count - open_count_prev) ELSE open_count END) DESC,
     open_count DESC
 LIMIT sqlc.arg('lim')::int;
+
+-- ---------------------------------------------------------------------------
+-- Per-role skill demand
+-- ---------------------------------------------------------------------------
+
+-- name: DeleteAllInsightsRoleSkillStats :exec
+DELETE FROM insights_role_skill_stats;
+
+-- name: RebuildInsightsRoleSkillStats :execrows
+-- The skill distribution WITHIN one role. Same shape as
+-- RebuildInsightsRoleStatsByCountry's `FROM jobs, unnest(countries)` above — a job
+-- contributes once per skill it carries — so its cost is one already measured in
+-- production, and `skills` is a small text[] rather than the TOASTed description.
+--
+-- Open postings only: a closed posting's skills describe a vacancy nobody can apply
+-- to. No growth column, unlike the sibling rollups: "docker is up 4% within senior
+-- backend" is a second question, and answering it would need a prior-window pass
+-- over the same unnest.
+INSERT INTO insights_role_skill_stats (category, seniority, skill, open_count)
+SELECT category, seniority, skill, count(*)::int
+FROM jobs, unnest(skills) AS skill
+WHERE closed_at IS NULL
+  AND NOT is_private
+  AND category <> '' AND seniority <> ''
+GROUP BY category, seniority, skill
+HAVING count(*) >= sqlc.arg('min_sample')::int;
+
+-- name: DeleteAllInsightsRoleSkillSample :exec
+DELETE FROM insights_role_skill_sample;
+
+-- name: RebuildInsightsRoleSkillSample :execrows
+-- The denominator every share in insights_role_skill_stats divides by: the role's
+-- open postings that carry AT LEAST ONE tagged skill. Measured 2026-09-18, 11% of
+-- the eligible postings carry none, so dividing by the role's open count would fold
+-- our own tagging gap into every published share — and because that gap differs per
+-- role, two roles' shares would stop being comparable.
+--
+-- Takes NO @min_sample, deliberately. The floor selects which SKILLS are published;
+-- applied here it would delete the denominator of a share that did clear the floor,
+-- leaving a numerator with nothing to divide by.
+-- The NOT is_private clause must stay in step with the distribution's: a numerator
+-- and a denominator counting different populations is a share that is quietly wrong
+-- rather than visibly broken.
+INSERT INTO insights_role_skill_sample (category, seniority, sample_size)
+SELECT category, seniority, count(*)::int
+FROM jobs
+WHERE closed_at IS NULL
+  AND NOT is_private
+  AND category <> '' AND seniority <> ''
+  AND cardinality(skills) > 0
+GROUP BY category, seniority;
+
+-- name: ListInsightsRoleSkills :many
+-- One role's skills, most-demanded first. The caller divides by the role's
+-- sample_size (GetInsightsRoleSkillSample), never by its open_count.
+SELECT skill, open_count
+FROM insights_role_skill_stats
+WHERE category = sqlc.arg('category')::text
+  AND seniority = sqlc.arg('seniority')::text
+ORDER BY open_count DESC, skill
+LIMIT sqlc.arg('lim')::int;
+
+-- name: GetInsightsRoleSkillSample :one
+-- One role's share denominator. A role with no skill-bearing postings has no row
+-- here, and the caller MUST read that as a sample of zero rather than as an error:
+-- it means the role exists and nothing in it was taggable, which is a real answer.
+SELECT sample_size
+FROM insights_role_skill_sample
+WHERE category = sqlc.arg('category')::text
+  AND seniority = sqlc.arg('seniority')::text;
 
 -- ---------------------------------------------------------------------------
 -- Skill demand

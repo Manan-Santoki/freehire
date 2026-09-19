@@ -7,7 +7,7 @@
   import { ROLE_PLACEHOLDER } from '$lib/placeholderRoles';
   import HeaderMenu from './HeaderMenu.svelte';
   import BrandMark from './BrandMark.svelte';
-  import { isWideHeaderRoute } from '$lib/shellLayout';
+  import { isApiReferenceRoute, isWideHeaderRoute } from '$lib/shellLayout';
   import { HEADER_LINKS } from '$lib/siteNav';
 
   // The header is three slots — logo | search | menu — identical on every
@@ -44,8 +44,17 @@
   // reference hydrates. HeaderSearch binds those same global hotkeys for job search
   // (see its own `onWindowKeydown`), so leaving it mounted here would not just be a
   // search box with nothing to search — it would fight Scalar's for the very keys that
-  // are supposed to open it.
-  const docsApiHeader = $derived(page.url.pathname === '/docs/api');
+  // are supposed to open it. The site nav fills the slot instead, the same as the
+  // homepage — see showSiteNav below, which ties the two together.
+  const docsApiHeader = $derived(isApiReferenceRoute(page.url.pathname));
+
+  // Wherever the middle slot has no search box, the row has the room for both the nav
+  // AND the wordmark on a phone (see the wordmark's own comment below) — today that is
+  // bareHeader and docsApiHeader. Named once so the wordmark's visibility and the nav's
+  // own render condition can never drift apart the way they did before this existed: the
+  // nav gained docsApiHeader in one change, the wordmark's identical "is there room"
+  // condition did not, and phones showed the nav beside a bare logo glyph with no name.
+  const showSiteNav = $derived(bareHeader || docsApiHeader);
 
   /** How many of HEADER_LINKS the bare header carries below `lg`, taken from the FRONT of
    *  that list — so its order is the contract, and reordering it changes what a narrow
@@ -115,10 +124,11 @@
       >
         <BrandMark />
         <!-- Dropped on a phone to leave the middle slot its width for the search box —
-             except on the homepage, which puts no box there (its own hero is the box) and
-             so has the room. What the row spends that room on instead is the nav below,
-             and the two budgets are the same 358px: they are set together. -->
-        <span class={bareHeader ? 'inline' : 'hidden sm:inline'} aria-hidden="true">freehire</span>
+             except wherever showSiteNav puts no box there (the homepage's own hero is the
+             box; the API reference's is Scalar's), which has the room. What the row spends
+             that room on instead is the nav below, and the two budgets are the same 358px:
+             they are set together. -->
+        <span class={showSiteNav ? 'inline' : 'hidden sm:inline'} aria-hidden="true">freehire</span>
       </a>
     </div>
 
@@ -127,13 +137,14 @@
          a 48rem basis so it lands at that width instead of an even third of the row; the
          cap then hands the rest back to the side slots, which keeps it on the axis. -->
     <div class={['flex min-w-0 flex-1', wideHeader && 'max-w-3xl basis-3xl']}>
-      {#if bareHeader}
+      {#if showSiteNav}
         <!-- All five do not fit beside the brand and the burger on a phone, but the row
-             they share is otherwise EMPTY on this route — the homepage's search box is its
-             hero, not this slot — so the front of the list rides along and the rest wait
-             for `lg` (see LINKS_BELOW_LG). The cut is by width, not by rank; the burger a
-             thumb away still lists all five with the same glyph and a full label, which is
-             also why bare icons here would trade a legible row for guesses. -->
+             they share is otherwise EMPTY on these routes — the homepage's search box is
+             its hero, not this slot, and the API reference's own search is Scalar's — so
+             the front of the list rides along and the rest wait for `lg` (see
+             LINKS_BELOW_LG). The cut is by width, not by rank; the burger a thumb away
+             still lists all five with the same glyph and a full label, which is also why
+             bare icons here would trade a legible row for guesses. -->
         <nav aria-label="Site" class="flex items-center gap-3 sm:gap-5 lg:gap-6">
           <!-- Divides the nav from the wordmark, the same rule the search box draws
                between its Location scope and the field. Without it the first link sat
@@ -156,7 +167,7 @@
             </a>
           {/each}
         </nav>
-      {:else if !docsApiHeader}
+      {:else}
         <HeaderSearch {...searchWording} />
       {/if}
     </div>

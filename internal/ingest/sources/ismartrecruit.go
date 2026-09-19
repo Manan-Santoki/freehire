@@ -101,10 +101,10 @@ func ismartRecruitCards(root *html.Node) []ismartRecruitCard {
 	var cards []ismartRecruitCard
 	seen := map[string]struct{}{}
 	walk(root, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || n.Data != "a" || !hasClass(n, "jobListing_Data") {
+		if n.Type != html.ElementNode || n.Data != "a" || !HasClass(n, "jobListing_Data") {
 			return true
 		}
-		href := attr(n, "href")
+		href := Attr(n, "href")
 		id := ismartRecruitExternalID(href)
 		if id == "" {
 			return false

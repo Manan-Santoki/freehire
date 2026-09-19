@@ -143,7 +143,7 @@ func hrmdirectPostings(base *url.URL, root *html.Node) []hrmdirectPosting {
 		if n.Type != html.ElementNode || n.Data != "a" {
 			return true
 		}
-		req, loc, ok := hrmdirectRef(attr(n, "href"))
+		req, loc, ok := hrmdirectRef(Attr(n, "href"))
 		if !ok {
 			return true
 		}
@@ -251,7 +251,7 @@ func hrmdirectField(posting *html.Node, label string) string {
 		if value != "" {
 			return false
 		}
-		if n.Type != html.ElementNode || n.Data != "td" || !hasClass(n, "viewFieldName") {
+		if n.Type != html.ElementNode || n.Data != "td" || !HasClass(n, "viewFieldName") {
 			return true
 		}
 		if strings.TrimSuffix(strings.TrimSpace(textContent(n)), ":") != label {
@@ -263,7 +263,7 @@ func hrmdirectField(posting *html.Node, label string) string {
 			if sib.Type != html.ElementNode {
 				continue
 			}
-			if hasClass(sib, "viewFieldValue") {
+			if HasClass(sib, "viewFieldValue") {
 				value = textContent(sib)
 			}
 			break

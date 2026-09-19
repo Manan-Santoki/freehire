@@ -193,6 +193,30 @@ func TestPacedSmartRecruitersGetter_SharesOneMeasuredBucket(t *testing.T) {
 	}
 }
 
+// A single unpaced run against 31 Dover boards drew 22 HTTP 429s within ~2s (2026-09-19,
+// production incident) — each board's resolve+list+detail requests firing independently. One
+// limiter shared by every board of a run is what bounds it, the same fix
+// pacedSmartRecruitersGetter applies for the same failure shape.
+func TestPacedDoverGetter_SharesOneBucket(t *testing.T) {
+	g, ok := pacedDoverGetter(&recordingJSONGetter{}).(rateLimitedJSONGetter)
+	if !ok {
+		t.Fatal("pacedDoverGetter should wrap the getter in a rate limiter")
+	}
+	if g.limiter == nil {
+		t.Fatal("no limiter on the wrapped getter")
+	}
+	// No clean ceiling has been measured for Dover (see doverRequestInterval's comment) — this
+	// only guards against a well-meaning edit turning the deliberately slow default back into
+	// an effectively unpaced burst.
+	perSec := float64(time.Second) / float64(doverRequestInterval)
+	if perSec >= 5 || perSec < 1 {
+		t.Errorf("rate = %.2f req/s, want a conservative 1-5 req/s until a real ceiling is measured", perSec)
+	}
+	if doverRequestBurst < 1 || doverRequestBurst > 2 {
+		t.Errorf("burst = %d, want a small one", doverRequestBurst)
+	}
+}
+
 func TestConcurrencyLimitedJSONGetter_CancelledContextShortCircuits(t *testing.T) {
 	inner := &recordingJSONGetter{}
 	sem := make(chan struct{}, 1)

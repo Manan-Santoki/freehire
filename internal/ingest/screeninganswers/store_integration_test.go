@@ -10,6 +10,7 @@ package screeninganswers_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,7 +34,7 @@ func TestStore_GetReturnsNotFoundForAUserWithNoRecord(t *testing.T) {
 	pool := testdb.Pool(t)
 	queries := db.New(pool)
 	userID := insertScreeningAnswersIntegrationUser(t, pool, "screening-notfound@example.test")
-	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries))
+	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries, pool))
 
 	_, err := store.Get(context.Background(), userID)
 	if err != screeninganswers.ErrNotFound {
@@ -45,7 +46,7 @@ func TestStore_UpdateCreatesThenPartiallyMergesOverARealDatabase(t *testing.T) {
 	pool := testdb.Pool(t)
 	queries := db.New(pool)
 	userID := insertScreeningAnswersIntegrationUser(t, pool, "screening-merge@example.test")
-	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries))
+	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries, pool))
 	ctx := context.Background()
 
 	days := 30
@@ -98,7 +99,7 @@ func TestStore_AuthorizedCountriesRoundTripThroughPostgresTextArray(t *testing.T
 	pool := testdb.Pool(t)
 	queries := db.New(pool)
 	userID := insertScreeningAnswersIntegrationUser(t, pool, "screening-countries@example.test")
-	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries))
+	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries, pool))
 	ctx := context.Background()
 
 	got, err := store.Update(ctx, userID, screeninganswers.Answers{
@@ -115,5 +116,98 @@ func TestStore_AuthorizedCountriesRoundTripThroughPostgresTextArray(t *testing.T
 		if got.AuthorizedCountries[i] != c {
 			t.Errorf("AuthorizedCountries[%d] = %q, want %q", i, got.AuthorizedCountries[i], c)
 		}
+	}
+}
+
+// TestStore_ConcurrentUpdatesForTheSameUserDoNotLoseEachOthersFields reproduces the two
+// concurrent writers the AGENTS.md documents (the manual-edit handler and the assistant's
+// screening_answers_set tool, both calling this same Store.Update): eight goroutines each
+// set one distinct field of the same user's record at once, racing real overlapping
+// transactions against the real database rather than a fake Repository. Before
+// UpdateLocked's row lock, a Store.Update that read the "existing" record and wrote back
+// its merge as two separate, unlocked statements could have the read of one goroutine's
+// transaction land before another's write committed, so that write's field would be
+// merged away when the reader wrote back — a lost update. With every read-merge-write
+// serialized on the row lock, every goroutine's write is either fully visible to every
+// later one's read or has not started yet, so none can be lost: all eight fields must
+// survive regardless of scheduling.
+func TestStore_ConcurrentUpdatesForTheSameUserDoNotLoseEachOthersFields(t *testing.T) {
+	pool := testdb.Pool(t)
+	queries := db.New(pool)
+	userID := insertScreeningAnswersIntegrationUser(t, pool, "screening-concurrent@example.test")
+	store := screeninganswers.New(screeninganswers.NewQueriesRepository(queries, pool))
+	ctx := context.Background()
+
+	days := 30
+	amount := 120000
+	currency := "USD"
+	period := "year"
+	relocate := true
+	visa := false
+	adult := true
+	updates := []screeninganswers.Answers{
+		{AuthorizedCountries: []string{"us", "de"}},
+		{VisaSponsorshipNeeded: &visa},
+		{DesiredSalaryAmount: &amount},
+		{DesiredSalaryCurrency: &currency},
+		{DesiredSalaryPeriod: &period},
+		{NoticePeriodDays: &days},
+		{WillingToRelocate: &relocate},
+		{Age18OrOlder: &adult},
+	}
+
+	// A closed start channel released after every goroutine is parked on it lines up their
+	// first UpdateLocked calls as tightly as a real scheduler allows, maximizing the chance
+	// an unserialized implementation would overlap two transactions' read and write.
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(len(updates))
+	done.Add(len(updates))
+	errs := make([]error, len(updates))
+	for i, u := range updates {
+		go func(i int, u screeninganswers.Answers) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			_, errs[i] = store.Update(ctx, userID, u)
+		}(i, u)
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Update #%d: %v", i, err)
+		}
+	}
+
+	got, err := store.Get(ctx, userID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.AuthorizedCountries) != 2 {
+		t.Errorf("AuthorizedCountries = %v, want [us de]", got.AuthorizedCountries)
+	}
+	if got.VisaSponsorshipNeeded == nil || *got.VisaSponsorshipNeeded != visa {
+		t.Errorf("VisaSponsorshipNeeded = %v, want %v", got.VisaSponsorshipNeeded, visa)
+	}
+	if got.DesiredSalaryAmount == nil || *got.DesiredSalaryAmount != amount {
+		t.Errorf("DesiredSalaryAmount = %v, want %v", got.DesiredSalaryAmount, amount)
+	}
+	if got.DesiredSalaryCurrency == nil || *got.DesiredSalaryCurrency != currency {
+		t.Errorf("DesiredSalaryCurrency = %v, want %v", got.DesiredSalaryCurrency, currency)
+	}
+	if got.DesiredSalaryPeriod == nil || *got.DesiredSalaryPeriod != period {
+		t.Errorf("DesiredSalaryPeriod = %v, want %v", got.DesiredSalaryPeriod, period)
+	}
+	if got.NoticePeriodDays == nil || *got.NoticePeriodDays != days {
+		t.Errorf("NoticePeriodDays = %v, want %v", got.NoticePeriodDays, days)
+	}
+	if got.WillingToRelocate == nil || *got.WillingToRelocate != relocate {
+		t.Errorf("WillingToRelocate = %v, want %v", got.WillingToRelocate, relocate)
+	}
+	if got.Age18OrOlder == nil || *got.Age18OrOlder != adult {
+		t.Errorf("Age18OrOlder = %v, want %v", got.Age18OrOlder, adult)
 	}
 }

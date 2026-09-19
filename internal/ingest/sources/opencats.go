@@ -259,9 +259,9 @@ func opencatsListings(base *url.URL, root *html.Node) []opencatsListing {
 // the same routing invariant; only the carrier differs.
 func opencatsRouteCarrier(n *html.Node) (loc, title string) {
 	if n.Data == "a" {
-		return attr(n, "href"), strings.TrimSpace(textContent(n))
+		return Attr(n, "href"), strings.TrimSpace(textContent(n))
 	}
-	if target := opencatsClickTarget(attr(n, "onclick")); target != "" {
+	if target := opencatsClickTarget(Attr(n, "onclick")); target != "" {
 		return target, strings.TrimSpace(nodeText(firstElementChild(n)))
 	}
 	return "", ""

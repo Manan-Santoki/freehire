@@ -103,6 +103,14 @@ const (
 	// board-only host a parameter is a weak signal, and inventing a board is the expensive
 	// direction.
 	modeQueryPair = "querypair"
+	// allowedfirstsegment: board = the segment right AFTER one of a small ALLOWED set of leading
+	// path segments (see allowedFirstSegments) — the inverse of reservedSegments' deny list. It
+	// exists for a host that is a platform's WHOLE product surface rather than a dedicated boards
+	// subdomain: Dover serves its dashboard, marketing pages, and sign-in from the same
+	// app.dover.com a board's /apply/<slug>/<jobId> and /jobs/<slug> also live on, so reading every
+	// unrecognized leading segment as a tenant (the ordinary path mode) would mint a board out of
+	// "/pricing" or "/login". Any first segment not on the allow list is declined outright.
+	modeAllowedFirstSegment = "allowedfirstsegment"
 )
 
 // atsBoards lists the supported multi-tenant ATS: a host (exact or subdomain-suffix match) →
@@ -291,6 +299,11 @@ var atsBoards = []struct{ host, source, mode string }{
 	{"mykronos.com", "ukgready", modeHostCareers},
 	{"workforceready.com.au", "ukgready", modeHostCareers},
 	{"workforceready.eu", "ukgready", modeHostCareers},
+
+	// --- allowedfirstsegment: board = the segment after an ALLOWED leading segment (see
+	// allowedFirstSegments) — app.dover.com is Dover's whole product SPA, not a dedicated
+	// boards host, so a deny-list mode would mint a board out of every unrelated page it serves.
+	{"app.dover.com", "dover", modeAllowedFirstSegment},
 }
 
 // queryBoards holds, per matched host entry in modeQuery, the query parameter that names the
@@ -424,6 +437,15 @@ var noBoardFirstSegments = map[string][]string{
 	// segment along, not decline it. Two unrelated employers resolving to the same board is what
 	// surfaced it (2026-09-08).
 	"greenhouse.io": {"ai_opt_out_request"},
+}
+
+// allowedFirstSegments lists, per matched host entry in modeAllowedFirstSegment, the ONLY leading
+// path segments that carry a board behind them — the inverse of reservedSegments: everything NOT
+// in this list is declined outright rather than skipped to reach a tenant. Dover's job board and
+// apply pages are the only two path shapes this covers; every other app.dover.com page (the
+// dashboard, /crm, /docs/api, sign-in) leads with something else and is correctly declined.
+var allowedFirstSegments = map[string][]string{
+	"app.dover.com": {"apply", "jobs"},
 }
 
 var reservedSegments = map[string][]string{
@@ -648,6 +670,22 @@ func Recognize(rawURL string) (source, board, canonical string, ok bool) {
 		}
 		u.RawQuery, u.Fragment = "", ""
 		u.Path = "/" + board
+		return src, board, u.String(), true
+
+	case modeAllowedFirstSegment:
+		// Dover: board = the segment right after an ALLOWED leading segment ("apply"/"jobs").
+		// Any other leading segment — or a leading segment with nothing behind it — carries no
+		// board and is declined, rather than being read as a tenant the way the deny-list path
+		// mode would.
+		segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(segs) < 2 || segs[0] == "" || segs[1] == "" || !slices.Contains(allowedFirstSegments[apex], segs[0]) {
+			return "", "", "", false
+		}
+		board = segs[1]
+		u.RawQuery, u.Fragment = "", ""
+		// The canonical collapses to the board's own listing page, so an apply link and the
+		// listing itself map to one board — the same collapse every other mode makes.
+		u.Path = "/jobs/" + board
 		return src, board, u.String(), true
 
 	case modePath, modePathNumeric:

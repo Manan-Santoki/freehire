@@ -10,6 +10,10 @@ import {
   rolesIntro,
   MIN_CATEGORY_OPEN,
   seniorityLabel,
+  rankedQualifyingRoles,
+  roleAddressExists,
+  roleQualifies,
+  roleSkillsIntro,
 } from './insights';
 
 const role = (category: string, seniority: string, open_count: number): InsightRole => ({
@@ -121,5 +125,93 @@ describe('seniorityLabel', () => {
   it('resolves a real seniority token through the shared vocabulary', () => {
     expect(seniorityLabel('c_level')).toBe('C-level');
     expect(seniorityLabel('senior')).toBe('Senior');
+  });
+});
+
+describe('roleQualifies / rankedQualifyingRoles', () => {
+  it('lists in the SITEMAP only a real seniority in a covered category with enough demand', () => {
+    const roles = [
+      role('backend', 'senior', MIN_CATEGORY_OPEN),
+      // Same covered category, but this level alone is too thin for its own page.
+      role('backend', 'junior', MIN_CATEGORY_OPEN - 1),
+      // The category-wide band is not a seniority, so it never gets a leaf.
+      role('backend', '', MIN_CATEGORY_OPEN),
+      // A category that does not clear the gate takes its levels with it.
+      role('qa', 'lead', MIN_CATEGORY_OPEN - 1),
+    ];
+
+    expect(rankedQualifyingRoles(roles).map((r) => [r.category, r.seniority])).toEqual([
+      ['backend', 'senior'],
+    ]);
+
+    // But the thin one is still a real ADDRESS, so the route serves it (noindex) rather
+    // than refusing it — the job page links there without knowing the role's size.
+    expect(roleAddressExists('backend', 'junior')).toBe(true);
+    // And so is a role in a category too small to be COVERED. The job page links from a
+    // posting knowing only its two facets, so a coverage requirement here would send a
+    // real posting's real role to a 404.
+    expect(roleAddressExists('qa', 'lead')).toBe(true);
+  });
+
+  it('asks about the role handed to it, not about its rank in the list', () => {
+    // The gate list is capped at 200 by the endpoint while production carries ~349 roles
+    // over the floor. A role absent from the ranking must still qualify on its own
+    // numbers — reading qualification off the list is what 404'd 149 real pages.
+    const ranking = [role('backend', 'senior', 5000)];
+
+    expect(roleQualifies(ranking, 'backend', 'middle', MIN_CATEGORY_OPEN)).toBe(true);
+    expect(rankedQualifyingRoles(ranking).map((r) => r.seniority)).toEqual(['senior']);
+  });
+
+  it('answers whether an address exists without needing the role\'s size', () => {
+    // Takes no ranking on purpose — the job page links here knowing only a posting's two
+    // facets. It must also be answerable BEFORE the API is asked: the endpoint answers an
+    // invented level with a 400 and a load turns that into a 500, so a mistyped URL would
+    // say "we broke" instead of "no such page".
+    expect(roleAddressExists('backend', 'senior')).toBe(true);
+    // A real address that is merely thin still EXISTS — the demand check is separate.
+    expect(roleAddressExists('backend', 'junior')).toBe(true);
+    expect(roleAddressExists('backend', 'archmage')).toBe(false);
+    expect(roleAddressExists('not_a_category', 'senior')).toBe(false);
+    // `other` is a real vocabulary value and not a role anybody hires for.
+    expect(roleAddressExists('other', 'senior')).toBe(false);
+  });
+
+  it('refuses a thin role, an invented level, and an uncovered category', () => {
+    const roles = [role('backend', 'senior', MIN_CATEGORY_OPEN)];
+
+    expect(roleQualifies(roles, 'backend', 'senior', MIN_CATEGORY_OPEN)).toBe(true);
+    expect(roleQualifies(roles, 'backend', 'junior', MIN_CATEGORY_OPEN - 1)).toBe(false);
+    // An invented level is a wrong address, not a thin page.
+    expect(roleQualifies(roles, 'backend', 'archmage', 5000)).toBe(false);
+    expect(roleQualifies(roles, 'qa', 'senior', 5000)).toBe(false);
+  });
+});
+
+describe('roleSkillsIntro', () => {
+  it('says what the figures are measured over, never that they describe the market', () => {
+    const intro = roleSkillsIntro({
+      ...role('backend', 'senior', 4000),
+      sample_size: 3000,
+      skills: [
+        { skill: 'docker', open_count: 2100, share: 0.7 },
+        { skill: 'kubernetes', open_count: 1800, share: 0.6 },
+        { skill: 'aws', open_count: 1500, share: 0.5 },
+        { skill: 'go', open_count: 900, share: 0.3 },
+      ],
+    });
+
+    // The sample, not the open count: only 39% of open technical postings state a
+    // seniority, so the wider figure would claim a population this does not cover.
+    expect(intro).toContain('3,000');
+    expect(intro).not.toContain('4,000');
+    expect(intro).toContain('docker, kubernetes, aws');
+    expect(intro).not.toContain('go');
+  });
+
+  it('says so plainly when nothing cleared the floor', () => {
+    const intro = roleSkillsIntro({ ...role('backend', 'senior', 40), sample_size: 0, skills: [] });
+
+    expect(intro).toContain('Not enough');
   });
 });

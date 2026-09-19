@@ -147,13 +147,21 @@
       <ul class="list-disc pl-5">
         <li>Your discipline and seniority, and how many years you have worked</li>
         <li>Your skills, and the technologies in each role</li>
+        <!-- Stated here because it is the one thing published in the candidate's own words,
+             and because a title that names an employer therefore names it in public. Saying
+             so before the decision is what the rest of the projection buys the right to be
+             silent about. -->
+        <li>
+          The title of each role, exactly as you wrote it — so if a title names your
+          employer, that name is shown
+        </li>
         <li>Your city and timezone</li>
       </ul>
       <p class="font-medium text-foreground">What is never shown</p>
       <ul class="list-disc pl-5">
         <li>Your name, photo, email or phone number</li>
-        <li>Any employer you have worked for — current or past</li>
-        <li>Anything you wrote in your CV in your own words</li>
+        <li>Your employers, as a company name of their own</li>
+        <li>Your summary, achievements, projects or anything else you wrote in prose</li>
       </ul>
     </div>
 

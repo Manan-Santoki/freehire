@@ -73,6 +73,16 @@ func (h *boardHealth) RecordSuccess(ctx context.Context, provider, board, region
 // RecordFailure bumps the failure count (the query returns the new count), then applies
 // the Go-owned backoff policy: it sets a cooldown only once the count crosses the
 // threshold.
+//
+// SetBoardCooldown is guarded by the same failures value the cooldown was just computed
+// from (a CAS on consecutive_failures), because the pipeline's worker pool can process the
+// same board twice in one run: two concurrent RecordFailure calls can each read a failure
+// count from RecordBoardFailure and then race on the UPDATE below. Without the guard,
+// whichever SetBoardCooldown lands last would win regardless of which failure count is
+// newer — it could apply a stale, shorter cooldown over a fresher, longer one, or clobber a
+// cooldown a concurrent RecordSuccess/ClearProviderCooldowns just cleared. Zero rows
+// affected means a newer writer already moved consecutive_failures past this one's
+// snapshot — expected under the race, not an error, so it is only logged, not returned.
 func (h *boardHealth) RecordFailure(ctx context.Context, provider, board, region, errMsg string) error {
 	failures, err := h.q.RecordBoardFailure(ctx, db.RecordBoardFailureParams{
 		Provider:  provider,
@@ -87,12 +97,21 @@ func (h *boardHealth) RecordFailure(ctx context.Context, provider, board, region
 	if !cool {
 		return nil
 	}
-	return h.q.SetBoardCooldown(ctx, db.SetBoardCooldownParams{
-		Provider:      provider,
-		Board:         board,
-		Region:        region,
-		CooldownUntil: pgtype.Timestamptz{Time: time.Now().Add(d), Valid: true},
+	rows, err := h.q.SetBoardCooldown(ctx, db.SetBoardCooldownParams{
+		Provider:            provider,
+		Board:               board,
+		Region:              region,
+		CooldownUntil:       pgtype.Timestamptz{Time: time.Now().Add(d), Valid: true},
+		ConsecutiveFailures: failures,
 	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		log.Printf("ingest health: %s/%s/%s cooldown not applied (consecutive_failures moved past %d) — a concurrent writer already superseded it",
+			provider, board, region, failures)
+	}
+	return nil
 }
 
 // CooledBoards returns up to limit (board, region) pairs of the provider currently in an

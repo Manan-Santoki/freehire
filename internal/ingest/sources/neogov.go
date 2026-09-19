@@ -133,10 +133,10 @@ func neogovParseListing(fragment, domain, agency string) ([]Job, error) {
 	base := "https://www." + domain
 	var jobs []Job
 	walk(root, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || n.Data != "li" || !hasClass(n, "list-item") {
+		if n.Type != html.ElementNode || n.Data != "li" || !HasClass(n, "list-item") {
 			return true
 		}
-		id := attr(n, "data-job-id")
+		id := Attr(n, "data-job-id")
 		if id == "" {
 			return true // e.g. a "no results" placeholder card
 		}
@@ -151,7 +151,7 @@ func neogovParseListing(fragment, domain, agency string) ([]Job, error) {
 		jobs = append(jobs, Job{
 			ExternalID:  id,
 			Title:       textContent(link),
-			URL:         base + attr(link, "href"),
+			URL:         base + Attr(link, "href"),
 			Location:    neogovFirstMeta(n),
 			Description: desc,
 		})

@@ -25,8 +25,10 @@ func walk(n *html.Node, visit func(*html.Node) bool) {
 	}
 }
 
-// attr returns the value of the named attribute, or "".
-func attr(n *html.Node, name string) string {
+// Attr returns the value of the named attribute, or "". Exported for sibling ingest
+// packages (internal/ingest/telegram, internal/ingest/applyform) that parse
+// server-rendered HTML the same way this package's adapters do.
+func Attr(n *html.Node, name string) string {
 	for _, a := range n.Attr {
 		if a.Key == name {
 			return a.Val
@@ -54,7 +56,7 @@ func scriptTextByID(root *html.Node, id string) string {
 		if found != nil {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == "script" && attr(n, "id") == id {
+		if n.Type == html.ElementNode && n.Data == "script" && Attr(n, "id") == id {
 			found = n
 			return false
 		}
@@ -80,7 +82,7 @@ func innerHTML(n *html.Node) string {
 func findItemprops(root *html.Node, prop string) []*html.Node {
 	var out []*html.Node
 	walk(root, func(n *html.Node) bool {
-		if n.Type == html.ElementNode && attr(n, "itemprop") == prop {
+		if n.Type == html.ElementNode && Attr(n, "itemprop") == prop {
 			out = append(out, n)
 		}
 		return true
@@ -131,8 +133,8 @@ func elementAttr(root *html.Node, tag, class, name string) string {
 		if found != "" {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == tag && hasClass(n, class) {
-			found = attr(n, name)
+		if n.Type == html.ElementNode && n.Data == tag && HasClass(n, class) {
+			found = Attr(n, name)
 			return false
 		}
 		return true
@@ -147,7 +149,7 @@ func firstByID(root *html.Node, id string) *html.Node {
 		if found != nil {
 			return false
 		}
-		if n.Type == html.ElementNode && attr(n, "id") == id {
+		if n.Type == html.ElementNode && Attr(n, "id") == id {
 			found = n
 			return false
 		}
@@ -179,7 +181,7 @@ func firstByClass(root *html.Node, class string) *html.Node {
 		if found != nil {
 			return false
 		}
-		if n.Type == html.ElementNode && hasClass(n, class) {
+		if n.Type == html.ElementNode && HasClass(n, class) {
 			found = n
 			return false
 		}
@@ -205,13 +207,13 @@ func titleText(root *html.Node) string {
 	return t
 }
 
-// hasClass reports whether n's space-separated class attribute contains class; an empty
-// class matches any element.
-func hasClass(n *html.Node, class string) bool {
+// HasClass reports whether n's space-separated class attribute contains class; an empty
+// class matches any element. Exported alongside Attr, for the same sibling packages.
+func HasClass(n *html.Node, class string) bool {
 	if class == "" {
 		return true
 	}
-	for _, c := range strings.Fields(attr(n, "class")) {
+	for _, c := range strings.Fields(Attr(n, "class")) {
 		if c == class {
 			return true
 		}
@@ -230,7 +232,7 @@ func jobLinks(base *url.URL, root *html.Node, isJob func(href string) bool) []st
 		if n.Type != html.ElementNode || n.Data != "a" {
 			return true
 		}
-		href := attr(n, "href")
+		href := Attr(n, "href")
 		if href == "" || !isJob(href) {
 			return true
 		}
@@ -256,8 +258,8 @@ func metaProperty(root *html.Node, property string) string {
 			return false
 		}
 		if n.Type == html.ElementNode && n.Data == "meta" &&
-			attr(n, "property") == property {
-			found = attr(n, "content")
+			Attr(n, "property") == property {
+			found = Attr(n, "content")
 			return false
 		}
 		return true

@@ -47,10 +47,14 @@
     return `${from} — ${to}`;
   }
 
-  // A title the dictionary could not place still gets a row, under a neutral label:
-  // dropping it would make a work history look shorter than it is.
+  // The candidate's own words when the card carries them — the one field it publishes
+  // verbatim, and the reason this section reads as a career rather than as a column of
+  // "Senior · Backend". The dictionary label is the fallback, not the default: a title is
+  // absent only when the extraction found none, or when it was blanked upstream for
+  // carrying a redaction placeholder. A row with neither still gets a neutral label,
+  // because dropping it would make a work history look shorter than it is.
   function roleHeading(role: (typeof card.roles)[number]): string {
-    return talentHeading(role.seniority, role.category, 'Role');
+    return role.title?.trim() || talentHeading(role.seniority, role.category, 'Role');
   }
 
   /** An education entry's chip text: "Bachelor's degree · 2019", or just the level
@@ -194,11 +198,11 @@
         </p>
       {/if}
 
-      <p class="text-xs text-muted-foreground">
-        Names, employers and contact details are never shown here — the profile is published
-        anonymously by the candidate's own choice. A photo, if uploaded, is shown heavily
-        blurred and cannot be recovered in its original form.
-      </p>
+      <!-- There used to be a disclaimer here, restating what the projection withholds and
+           what it publishes verbatim. It was addressed to the wrong reader: a visitor has
+           no decision to make about it, and the person who does — the candidate — is told
+           in full on /my/talent-network, before joining. Keeping a second copy on a page
+           nobody acts from bought nothing and was one more string to keep true. -->
     </div>
 
     {#if card.skills.length}

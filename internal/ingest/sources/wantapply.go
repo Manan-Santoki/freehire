@@ -259,7 +259,7 @@ func wantapplyDescription(root *html.Node) string {
 		if body != "" {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == "div" && hasClass(n, "Description") {
+		if n.Type == html.ElementNode && n.Data == "div" && HasClass(n, "Description") {
 			body = innerHTML(n)
 			return false
 		}

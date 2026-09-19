@@ -13,7 +13,8 @@ SELECT b.provider,
        s.enabled,
        s.disabled_reason,
        s.notes,
-       s.managed
+       s.managed,
+       s.heavy
 FROM (SELECT DISTINCT provider FROM boards WHERE status IN ('pending', 'active')) b
 LEFT JOIN ingest_schedule s ON s.provider = b.provider
 ORDER BY b.provider;
@@ -56,24 +57,31 @@ DELETE FROM ingest_run_state
 WHERE provider <> ALL (sqlc.arg(providers)::text[])
   AND claimed_at IS NULL;
 
--- name: ClaimDueRuns :many
--- Take up to max_runs due runs, exactly once each.
+-- name: ClaimDueHeavyRuns :many
+-- Take up to max_runs due runs, exactly once each, from the HEAVY pool only. See
+-- ClaimDueLightRuns for the sibling that claims from the other pool: the scheduler calls
+-- both every tick, each against its own budget (ingestsched.DefaultHeavyCap /
+-- ingestsched.DefaultCap - DefaultHeavyCap), so a burst of long sharded crawls can never
+-- crowd the short tail out of the fleet the way freehire-ops' scripts/host2/ingest-slot.sh's own HEAVY_SLOTS
+-- split exists to prevent for the flock semaphore this scheduler replaces.
 --
--- The CTE resolves each candidate's cadence and timeout through the same LEFT JOIN and
--- defaults as the listing above, so a claim can never use different numbers from the
--- report. FOR UPDATE ... SKIP LOCKED is what makes two overlapping scheduler ticks safe:
--- the second skips the rows the first holds rather than blocking on them or double-claiming.
--- `OF rs` names only the run-state table, since FOR UPDATE may not be applied to the
--- nullable side of an outer join.
+-- A provider is heavy when it is explicitly flagged (ingest_schedule.heavy) or SHARDED —
+-- more than one row in ingest_run_state for it. The two are ORed here exactly as
+-- ingestsched.Settings.IsHeavy ORs them in Go: every sharded family (workday, eightfold,
+-- oracle, paylocity, join, dayforce, workstream, adp, adpmyjobs) is heavy through the shard
+-- arm alone, and the flag exists for a curator to place a future single-shard-but-costly
+-- provider in this pool without sharding it.
 --
--- A row is claimable when it is due and unclaimed, or when its claim has outlived that
--- provider's own timeout plus the grace window — a scheduler killed between claiming and
--- launching, and a run systemd killed at its timeout, both recover through that second arm
--- with no operator.
---
--- next_due_at advances to now() + cadence, not to next_due_at + cadence. Advancing at
--- claim stops a 40-minute crawl from halving its own frequency; advancing from now() caps
--- catch-up at ONE run, so a six-hour outage does not owe six.
+-- Otherwise identical to ClaimDueLightRuns and to the single query both replace: the CTE
+-- resolves cadence/timeout through the same LEFT JOIN and defaults the listing uses, so a
+-- claim can never disagree with the report; FOR UPDATE ... SKIP LOCKED is what makes two
+-- overlapping scheduler ticks safe, `OF rs` naming only the run-state table since FOR
+-- UPDATE may not apply to the nullable side of an outer join; a row is claimable when due
+-- and unclaimed, or when its claim has outlived the provider's timeout plus grace — a
+-- scheduler killed between claiming and launching, and a run systemd killed at its
+-- timeout, both recover through that arm with no operator; and next_due_at advances to
+-- now() + cadence, not to next_due_at + cadence, so a 40-minute crawl cannot halve its own
+-- frequency and a six-hour outage owes exactly one run rather than a stampede of six.
 WITH candidate AS (
     SELECT rs.provider,
            rs.shard,
@@ -100,6 +108,45 @@ WITH candidate AS (
     -- owns it. COALESCE to false: while the column exists, a provider nobody has handed
     -- over is still the static timer's.
     AND COALESCE(s.managed, false)
+    -- The heavy-pool gate. See the query's header for what "heavy" means and why it is
+    -- read the same way in Go and SQL.
+    AND (COALESCE(s.heavy, false)
+         OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
+    ORDER BY rs.next_due_at
+    LIMIT sqlc.arg(max_runs)
+    FOR UPDATE OF rs SKIP LOCKED
+)
+UPDATE ingest_run_state rs
+SET claimed_at      = now(),
+    last_started_at = now(),
+    next_due_at     = now() + make_interval(secs => c.cadence_sec)
+FROM candidate c
+WHERE rs.provider = c.provider AND rs.shard = c.shard
+RETURNING rs.provider, rs.shard, c.shards, c.timeout_sec;
+
+-- name: ClaimDueLightRuns :many
+-- The LIGHT pool's half of ClaimDueHeavyRuns: identical query, opposite gate. See that
+-- query's header for the reasoning shared by both — the predicate, the reclaim arm, the
+-- heavy/light split's purpose — and for why sqlc leaves the two written out in full rather
+-- than shared.
+WITH candidate AS (
+    SELECT rs.provider,
+           rs.shard,
+           (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
+           COALESCE(s.cadence_sec, sqlc.arg(default_cadence_sec)::int) AS cadence_sec,
+           COALESCE(s.timeout_sec, sqlc.arg(default_timeout_sec)::int) AS timeout_sec
+    FROM ingest_run_state rs
+    LEFT JOIN ingest_schedule s ON s.provider = rs.provider
+    WHERE ((rs.claimed_at IS NULL AND rs.next_due_at <= now())
+        OR (rs.claimed_at IS NOT NULL
+            AND rs.claimed_at < now() - make_interval(
+                    secs => COALESCE(s.timeout_sec, sqlc.arg(default_timeout_sec)::int)
+                            + sqlc.arg(grace_sec)::int)))
+    AND COALESCE(s.managed, false)
+    -- The light-pool gate: the negation of ClaimDueHeavyRuns's heavy gate, so every due,
+    -- managed row is claimed by exactly one of the two queries and never by both.
+    AND NOT (COALESCE(s.heavy, false)
+             OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
     ORDER BY rs.next_due_at
     LIMIT sqlc.arg(max_runs)
     FOR UPDATE OF rs SKIP LOCKED
@@ -123,17 +170,21 @@ SET claimed_at       = NULL,
     last_error       = NULLIF(sqlc.arg(last_error)::text, '')
 WHERE provider = sqlc.arg(provider) AND shard = sqlc.arg(shard)::int;
 
--- name: ListInFlightRuns :many
--- Every claimed run, with what the scheduler needs to ask the service manager about it.
+-- name: ListInFlightHeavyRuns :many
+-- Every claimed HEAVY-pool run, with what the scheduler needs to ask the service manager
+-- about it. See ListInFlightLightRuns for the other pool, and ClaimDueHeavyRuns for what
+-- "heavy" means and why the two pools are counted apart: the budget each pool claims
+-- against next tick is that pool's own cap minus how many of ITS runs are still going, so a
+-- heavy provider running long must never shrink the light tail's own budget, and vice versa.
 --
 -- Rows, not a count. A transient unit finishes and tells nobody, so claimed_at is set at
 -- claim and cleared by nothing until the scheduler reaps: a plain count would include every
 -- run that ever succeeded, and the fleet's concurrency cap would fill permanently after
 -- Cap launches with every check still green.
 --
--- This is what replaces ingest-slot.sh's flock semaphore. 279 independent timers could not
--- see each other, so the ceiling had to live in a wrapper script; one scheduler can count —
--- but only if it also notices when a run has ended.
+-- This is what replaces ingest-slot.sh's flock semaphore, HEAVY_SLOTS split included. 279
+-- independent timers could not see each other, so the ceiling had to live in a wrapper
+-- script; one scheduler can count — but only if it also notices when a run has ended.
 SELECT rs.provider,
        rs.shard,
        (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
@@ -141,15 +192,32 @@ SELECT rs.provider,
 FROM ingest_run_state rs
 LEFT JOIN ingest_schedule s ON s.provider = rs.provider
 WHERE rs.claimed_at IS NOT NULL
+  AND (COALESCE(s.heavy, false)
+       OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
 ORDER BY rs.claimed_at;
 
--- name: PreviewDueRuns :many
--- What ClaimDueRuns WOULD take, without taking it. Shadow mode's read: the first
--- deployment lands underneath a fleet still driven by the static timers, so a tick that
--- advanced a due time would desynchronise state the real timers know nothing about.
+-- name: ListInFlightLightRuns :many
+-- The LIGHT pool's half of ListInFlightHeavyRuns: identical query, opposite gate. See that
+-- query's header for why the fleet's claimed runs are counted apart by pool.
+SELECT rs.provider,
+       rs.shard,
+       (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
+       COALESCE(s.timeout_sec, sqlc.arg(default_timeout_sec)::int) AS timeout_sec
+FROM ingest_run_state rs
+LEFT JOIN ingest_schedule s ON s.provider = rs.provider
+WHERE rs.claimed_at IS NOT NULL
+  AND NOT (COALESCE(s.heavy, false)
+           OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
+ORDER BY rs.claimed_at;
+
+-- name: PreviewDueHeavyRuns :many
+-- What ClaimDueHeavyRuns WOULD take from the heavy pool, without taking it. Shadow mode's
+-- read: the first deployment lands underneath a fleet still driven by the static timers, so
+-- a tick that advanced a due time would desynchronise state the real timers know nothing
+-- about. See PreviewDueLightRuns for the other pool.
 --
--- The predicate is copied from ClaimDueRuns rather than shared, because sqlc has no way to
--- share one. A divergence between the two would make the shadow run a measurement of
+-- The predicate is copied from ClaimDueHeavyRuns rather than shared, because sqlc has no
+-- way to share one. A divergence between the two would make the shadow run a measurement of
 -- something other than what apply mode does, so they are asserted equivalent by an
 -- integration test rather than by inspection.
 SELECT rs.provider,
@@ -170,6 +238,28 @@ WHERE ((rs.claimed_at IS NULL AND rs.next_due_at <= now())
     -- owns it. COALESCE to false: while the column exists, a provider nobody has handed
     -- over is still the static timer's.
     AND COALESCE(s.managed, false)
+    AND (COALESCE(s.heavy, false)
+         OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
+ORDER BY rs.next_due_at
+LIMIT sqlc.arg(max_runs);
+
+-- name: PreviewDueLightRuns :many
+-- The LIGHT pool's half of PreviewDueHeavyRuns: identical query, opposite gate, mirroring
+-- ClaimDueLightRuns the same way PreviewDueHeavyRuns mirrors ClaimDueHeavyRuns.
+SELECT rs.provider,
+       rs.shard,
+       (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
+       COALESCE(s.timeout_sec, sqlc.arg(default_timeout_sec)::int) AS timeout_sec
+FROM ingest_run_state rs
+LEFT JOIN ingest_schedule s ON s.provider = rs.provider
+WHERE ((rs.claimed_at IS NULL AND rs.next_due_at <= now())
+    OR (rs.claimed_at IS NOT NULL
+        AND rs.claimed_at < now() - make_interval(
+                secs => COALESCE(s.timeout_sec, sqlc.arg(default_timeout_sec)::int)
+                        + sqlc.arg(grace_sec)::int)))
+    AND COALESCE(s.managed, false)
+    AND NOT (COALESCE(s.heavy, false)
+             OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
 ORDER BY rs.next_due_at
 LIMIT sqlc.arg(max_runs);
 
@@ -180,8 +270,9 @@ LIMIT sqlc.arg(max_runs);
 -- paylocity rows would bury the answer.
 --
 -- shards_in_state is counted from run state rather than read from the override, for the
--- same reason ClaimDueRuns counts it: the rows ARE the shard count, and a report that read
--- the intended number instead would show a healthy 24 while 12 rows existed.
+-- same reason ClaimDueHeavyRuns/ClaimDueLightRuns count it: the rows ARE the shard count,
+-- and a report that read the intended number instead would show a healthy 24 while 12 rows
+-- existed.
 SELECT b.provider,
        s.shards,
        s.cadence_sec,
@@ -190,6 +281,7 @@ SELECT b.provider,
        s.disabled_reason,
        s.notes,
        s.managed,
+       s.heavy,
        COALESCE(rs.shards_in_state, 0)::int AS shards_in_state,
        COALESCE(rs.in_flight, 0)::int       AS in_flight,
        rs.next_due_at,
@@ -225,7 +317,7 @@ ORDER BY b.provider;
 -- leaves the column defaults for hand-written psql only, where the schema test pins them to
 -- the same constants.
 INSERT INTO ingest_schedule (provider, shards, cadence_sec, timeout_sec,
-                             enabled, disabled_reason, notes, managed)
+                             enabled, disabled_reason, notes, managed, heavy)
 VALUES (sqlc.arg(provider),
         COALESCE(sqlc.narg(shards)::int, sqlc.arg(default_shards)::int),
         COALESCE(sqlc.narg(cadence_sec)::int, sqlc.arg(default_cadence_sec)::int),
@@ -233,7 +325,10 @@ VALUES (sqlc.arg(provider),
         COALESCE(sqlc.narg(enabled)::boolean, true),
         sqlc.narg(disabled_reason)::text,
         sqlc.narg(notes)::text,
-        COALESCE(sqlc.narg(managed)::boolean, false))
+        COALESCE(sqlc.narg(managed)::boolean, false),
+        -- No DefaultHeavy argument: unlike shards/cadence/timeout, false IS the documented
+        -- default (ingestsched.Settings{} zero value), not a fact duplicated from Go.
+        COALESCE(sqlc.narg(heavy)::boolean, false))
 ON CONFLICT (provider) DO UPDATE SET
     shards          = COALESCE(sqlc.narg(shards)::int, ingest_schedule.shards),
     cadence_sec     = COALESCE(sqlc.narg(cadence_sec)::int, ingest_schedule.cadence_sec),
@@ -242,4 +337,5 @@ ON CONFLICT (provider) DO UPDATE SET
     disabled_reason = COALESCE(sqlc.narg(disabled_reason)::text, ingest_schedule.disabled_reason),
     notes           = COALESCE(sqlc.narg(notes)::text, ingest_schedule.notes),
     managed         = COALESCE(sqlc.narg(managed)::boolean, ingest_schedule.managed),
+    heavy           = COALESCE(sqlc.narg(heavy)::boolean, ingest_schedule.heavy),
     updated_at      = now();

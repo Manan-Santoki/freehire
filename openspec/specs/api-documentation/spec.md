@@ -3,25 +3,53 @@
 ## Purpose
 
 Provide a public, accurate reference for the freehire HTTP API — generated from a
-single typed source so the rendered website page and the repo `docs/API.md`
-cannot drift — covering every public endpoint, the response envelope, and the
-job-search filter vocabulary, with a focus on querying jobs by filters.
+single typed source so the rendered website pages and the repo `docs/API.md`/
+`docs/API.internal.md` cannot drift — covering every endpoint, the response
+envelope, and the job-search filter vocabulary, with a focus on querying jobs by
+filters.
+
+The API has two audiences with different reach: endpoints a caller outside the
+browser can reach (no auth, or a personal API key) versus endpoints that require
+the browser's own session cookie (including moderator- and browser-extension-only
+ones) and so are unreachable by any external client or agent regardless of
+credential. The documentation is split along exactly that line into an external
+reference (`/docs/api`) and an internal one (`/docs/api/internal`), generated
+from the same source so the two can never disagree about which endpoint belongs
+where.
 ## Requirements
 ### Requirement: Single typed source of truth for API docs
 
-The system SHALL describe the public API as typed data in a single module
-(`web/src/lib/docs/api-spec.ts`) from which the rendered page, a generated
-OpenAPI document, and the `docs/API.md` file are all produced, so the three
-representations cannot drift.
+The system SHALL describe the whole API as typed data in a single module
+(`web/src/lib/docs/api-spec.ts`) from which both rendered pages, both generated
+OpenAPI documents, and both `docs/API.md`/`docs/API.internal.md` files are
+produced, so the six representations cannot drift. Each endpoint's declared
+`auth` level SHALL be the sole input deciding which of the two documents it
+appears in: `none` and `cookie-or-key` (reachable from outside the browser) go
+to the external document; `cookie`, `moderator`, and `extension` (reachable only
+with the browser's own session cookie) go to the internal one. A group left
+with no endpoints for a given audience SHALL NOT appear in that audience's
+document.
 
-#### Scenario: One source feeds both outputs
+#### Scenario: One source feeds all outputs
 
 - **WHEN** an endpoint or parameter is added or edited in `api-spec.ts`
-- **THEN** the generated OpenAPI document reflects it on next generation, the
-  rendered `/docs/api` page (which renders that generated OpenAPI document)
-  reflects it once regenerated, and re-running the docs generator updates
-  `docs/API.md` from the same data — with no separate hand-edit of any of
-  the three
+- **THEN** both generated OpenAPI documents reflect it on next generation, both
+  rendered pages (which render those generated OpenAPI documents) reflect it
+  once regenerated, and re-running the docs generators updates both
+  `docs/API.md` and `docs/API.internal.md` from the same data — with no
+  separate hand-edit of any of the six
+
+#### Scenario: An endpoint's auth level decides its document
+
+- **WHEN** an endpoint is added to `api-spec.ts` with `auth: 'none'` or
+  `auth: 'cookie-or-key'`
+- **THEN** it appears only in the external document (`/docs/api`,
+  `docs/API.md`) and never in the internal one
+
+- **WHEN** an endpoint is added with `auth: 'cookie'`, `auth: 'moderator'`, or
+  `auth: 'extension'`
+- **THEN** it appears only in the internal document (`/docs/api/internal`,
+  `docs/API.internal.md`) and never in the external one
 
 #### Scenario: Filter vocabulary derives from generated contracts
 
@@ -33,7 +61,9 @@ representations cannot drift.
 ### Requirement: Public API documentation page
 
 The system SHALL serve a server-rendered documentation page at `/docs/api` that
-is publicly accessible (no authentication) and documents the public HTTP API.
+is publicly accessible (no authentication) and documents every endpoint
+reachable from outside the browser (`auth: 'none'` and `auth: 'cookie-or-key'`).
+It SHALL be indexable and linked from navigation.
 
 #### Scenario: Page is reachable and rendered server-side
 
@@ -47,10 +77,39 @@ is publicly accessible (no authentication) and documents the public HTTP API.
 - **THEN** an "API" link points to `/docs/api`, and the CLI and API-keys pages
   cross-link to it as the full API reference
 
+### Requirement: Internal (session-only) API documentation page
+
+The system SHALL serve a server-rendered documentation page at
+`/docs/api/internal` that documents every endpoint reachable only with the
+browser's own session cookie (`auth: 'cookie'`, `auth: 'moderator'`, and
+`auth: 'extension'`) — none of which a personal API key or an anonymous request
+can call. The page SHALL be reachable by direct link but SHALL NOT be indexed
+by search engines and SHALL NOT be linked from site navigation, the footer, or
+any agent-facing landing page, since nothing documented there is callable by an
+external client or agent.
+
+#### Scenario: Page is reachable but not indexed
+
+- **WHEN** a visitor requests `/docs/api/internal`
+- **THEN** the server returns a fully rendered HTML page with the documentation
+  content, carrying a `noindex` robots directive
+
+#### Scenario: Page is not promoted to an external audience
+
+- **WHEN** a visitor views the top navigation, the footer, or an agent-facing
+  landing page (CLI, ChatGPT Actions, "for agents")
+- **THEN** none of them link to `/docs/api/internal`
+
+#### Scenario: Each document cross-links to the other
+
+- **WHEN** a reader views either `/docs/api` or `/docs/api/internal`
+- **THEN** its overview states which endpoints are documented there and links
+  to the other document for the rest
+
 ### Requirement: Documented API coverage
 
-The documentation SHALL cover the whole public API surface: the base URL, the
-response envelope and pagination conventions, the public job reads
+Between the two documents, the whole API surface SHALL be covered: the base
+URL, the response envelope and pagination conventions, the public job reads
 (`/jobs`, `/jobs/search`, `/jobs/facets`, `/jobs/:slug`, `/jobs/:slug/similar`),
 companies, authentication, per-user job interactions, submissions,
 reports, and saved searches/subscriptions. Each endpoint SHALL state its method,
@@ -118,19 +177,22 @@ state that either bound excludes postings that state no requirement.
 ### Requirement: Generated Markdown reference
 
 The system SHALL provide a generator script (run via a `gen:api-docs` npm
-script) that writes `docs/API.md` from the typed spec data. The generated file
-SHALL carry a header marking it as generated and not to be hand-edited.
+script) that writes both `docs/API.md` (external) and `docs/API.internal.md`
+(internal) from the typed spec data. Each generated file SHALL carry a header
+marking it as generated and not to be hand-edited.
 
-#### Scenario: Generator produces the Markdown file
+#### Scenario: Generator produces both Markdown files
 
 - **WHEN** `gen:api-docs` is run
-- **THEN** `docs/API.md` is written from `api-spec.ts` and begins with a
-  "generated — do not edit" header
+- **THEN** `docs/API.md` and `docs/API.internal.md` are each written from
+  `api-spec.ts`, each split per the endpoint `auth` rule above, and each
+  begins with a "generated — do not edit" header
 
 #### Scenario: Regeneration is idempotent
 
 - **WHEN** `gen:api-docs` is run twice with no source change in between
-- **THEN** the second run produces a `docs/API.md` byte-identical to the first
+- **THEN** the second run produces a `docs/API.md` and a `docs/API.internal.md`
+  each byte-identical to their first run's output
 
 ### Requirement: Published client identification convention
 
@@ -180,13 +242,14 @@ path to `/docs/api` with an HTTP 301, rather than returning a 404.
 
 ### Requirement: The embedded reference matches the site's theme
 
-The embedded API reference SHALL use the design system's color tokens for its
-theme rather than a default preset theme, so it is visually consistent with
-the rest of the site in both light and dark mode.
+Both embedded API references SHALL use the design system's color tokens for
+their theme rather than a default preset theme, so each is visually consistent
+with the rest of the site in both light and dark mode.
 
 #### Scenario: Reference matches site theme
 
-- **WHEN** a visitor views `/docs/api` in either light or dark mode
+- **WHEN** a visitor views `/docs/api` or `/docs/api/internal` in either light
+  or dark mode
 - **THEN** the embedded reference's colors are drawn from the same
   design-system tokens the rest of the site uses, not a Scalar built-in
   preset palette

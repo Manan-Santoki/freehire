@@ -146,7 +146,7 @@ func elementInnerHTMLByClass(root *html.Node, tag, class string) string {
 		if found {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == tag && hasClass(n, class) {
+		if n.Type == html.ElementNode && n.Data == tag && HasClass(n, class) {
 			out = innerHTML(n)
 			found = true
 			return false
@@ -162,7 +162,7 @@ func elementInnerHTMLByClass(root *html.Node, tag, class string) string {
 func metadataRows(root *html.Node) []string {
 	var rows []string
 	walk(root, func(n *html.Node) bool {
-		if n.Type == html.ElementNode && n.Data == "li" && hasClass(n, "border-gray-50") {
+		if n.Type == html.ElementNode && n.Data == "li" && HasClass(n, "border-gray-50") {
 			rows = append(rows, textContent(n))
 		}
 		return true

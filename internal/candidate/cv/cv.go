@@ -359,6 +359,15 @@ func limit[T any](s []T, n int) []T {
 	return s
 }
 
+// mostRecent returns at most n elements of s, keeping the LAST n rather than the first
+// — see Seed's own use for why a seeded bullet list is capped this way.
+func mostRecent[T any](s []T, n int) []T {
+	if len(s) > n {
+		return s[len(s)-n:]
+	}
+	return s
+}
+
 // mapEntries applies fn to each entry, keeping only those fn marks as non-empty.
 func mapEntries[T any](in []T, fn func(T) (T, bool)) []T {
 	var out []T

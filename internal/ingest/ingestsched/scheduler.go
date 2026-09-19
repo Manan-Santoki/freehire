@@ -13,15 +13,27 @@ import (
 // — a LIMIT instead of a flock semaphore — rather than quietly re-tuning throughput at the
 // same time.
 //
-// SEAM, measured 2026-09-07 and not built here: one flat cap is not enough, and the
-// script this replaces now splits it. The fleet's problem was never total work — a full
-// sweep costs ~11 slot-hours against 10 of capacity — but RESIDENCY: four of the ten were
-// permanently held by 25-65 minute crawls, and the ~130 short runs an hour, worth 0.4
-// slot-hours together, could not get in edgewise. 42% of cycles were skipped while
-// average utilisation sat near half, and skipping the cheap ones relieved nothing.
-// ingest-slot.sh reserves 4 of the 10 for a named heavy roster; whoever finishes this
-// cutover needs the equivalent here, or the tail starves again the day the script goes.
+// Measured 2026-09-07: one flat cap is not enough. The fleet's problem was never total
+// work — a full sweep costs ~11 slot-hours against 10 of capacity — but RESIDENCY: four of
+// the ten were permanently held by 25-65 minute crawls, and the ~130 short runs an hour,
+// worth 0.4 slot-hours together, could not get in edgewise. 42% of cycles were skipped
+// while average utilisation sat near half, and skipping the cheap ones relieved nothing.
+// ingest-slot.sh answers this with its HEAVY_SLOTS split (freehire-ops' scripts/host2/ingest-slot.sh); the
+// reservation is implemented HERE now too, as HeavyCap/DefaultHeavyCap below, rather than
+// only in the script this scheduler is cutting over from.
 const DefaultCap = 10
+
+// DefaultHeavyCap is how many of DefaultCap's slots are reserved for the heavy pool —
+// every provider Settings.IsHeavy reports true for. It mirrors ingest-slot.sh's
+// HEAVY_SLOTS, currently 5 there (raised from 4 on 2026-09-15, measured against a fleet
+// that had grown to ~26 slot-hours per sweep with six providers no roster named becoming
+// permanently resident in the shared pool — see that script's own comments for the
+// arithmetic). The light pool gets what is left, Cap - HeavyCap, carved OUT of the total
+// rather than added beside it, for the same reason ingest-slot.sh's own split works that
+// way: a reservation added on top would raise real concurrency by however many slots it
+// holds, silently, on a host where the crawl fleet — not this process — is the scarce
+// resource being protected.
+const DefaultHeavyCap = 5
 
 // DefaultGrace is how long past its own timeout a claim may live before it is treated as
 // dead. It covers systemd's teardown of a run it killed at TimeoutStartSec, so a run being
@@ -42,6 +54,11 @@ type Scheduler struct {
 	Cap   int
 	Grace time.Duration
 
+	// HeavyCap bounds how many of Cap's slots the heavy pool (Settings.IsHeavy) may hold
+	// at once; 0 means "use DefaultHeavyCap", the same convention Cap itself uses. The
+	// light pool gets whatever is left of Cap, never Cap plus this — see DefaultHeavyCap.
+	HeavyCap int
+
 	// Apply false is SHADOW MODE, and it is the default. The scheduler resolves, reports
 	// and launches nothing, so a first deployment cannot disturb a fleet still driven by
 	// the static timers.
@@ -54,6 +71,18 @@ type Scheduler struct {
 type Skipped struct {
 	Provider string
 	Reason   string
+}
+
+// PoolResult is what one concurrency pool — heavy or light — did during a tick. The two
+// pools are budgeted independently (see Scheduler.HeavyCap), so a burst of long sharded
+// crawls filling the heavy pool can never shrink the light pool's own budget, and this is
+// where that split is reported: Cap/InFlight/Launched/WouldLaunch below stay the FLEET-WIDE
+// totals across both pools, unchanged in meaning from before the split existed.
+type PoolResult struct {
+	Cap         int
+	InFlight    int
+	Launched    int
+	WouldLaunch int
 }
 
 // TickResult is what one tick decided. It is returned rather than only logged so the
@@ -72,6 +101,11 @@ type TickResult struct {
 
 	Launched    []Run
 	WouldLaunch []Run
+
+	// Heavy and Light break the totals above down by pool. Heavy.Cap + Light.Cap == Cap;
+	// Heavy.InFlight + Light.InFlight == InFlight; and so on for Launched/WouldLaunch.
+	Heavy PoolResult
+	Light PoolResult
 
 	// Disabled is a curator's decision, each with the reason the schema insists on.
 	Disabled []Skipped
@@ -157,33 +191,78 @@ func (s Scheduler) Tick(ctx context.Context) (TickResult, error) {
 	// It runs in shadow mode too. That is the mode the fleet sits in for a full day, and a
 	// shadow run whose in-flight count only ever grows measures a saturation that is not
 	// real.
-	inFlight, err := s.reap(ctx, &result)
+	//
+	// Reaped and counted SEPARATELY by pool: the two pools are budgeted independently
+	// below, and a heavy provider running long must never eat into the light tail's own
+	// budget, nor the reverse.
+	runningHeavy, runningLight, err := s.reap(ctx, &result)
 	if err != nil {
 		return result, err
 	}
-	result.InFlight = inFlight
+	result.InFlight = runningHeavy + runningLight
+	result.Heavy.InFlight = runningHeavy
+	result.Light.InFlight = runningLight
 
-	budget := s.cap() - inFlight
-	if budget <= 0 {
-		// Claim nothing, so every due row stays claimable for the next tick. Advancing a
-		// due time here would silently skip a cycle rather than defer it.
+	// The light pool's cap is what is LEFT of Cap after the heavy reservation — carved OUT
+	// of the total, never added beside it, so this split cannot raise real fleet
+	// concurrency past Cap. heavyCap itself is clamped to Cap first: maxRuns below is a
+	// sanity ceiling (1000), not the fleet's real cap, so a misconfigured HeavyCap > Cap
+	// would otherwise let the heavy pool alone claim past Cap while lightCap merely floors
+	// at zero — the split existing to PROTECT the fleet cap must not become a way around it.
+	heavyCap := clamp(s.heavyCap(), 0, s.cap())
+	lightCap := clamp(s.cap()-heavyCap, 0, maxRuns)
+	result.Heavy.Cap = heavyCap
+	result.Light.Cap = lightCap
+
+	heavyBudget := clamp(heavyCap-runningHeavy, 0, maxRuns)
+	lightBudget := clamp(lightCap-runningLight, 0, maxRuns)
+
+	if heavyBudget <= 0 && lightBudget <= 0 {
+		// Claim nothing from either pool, so every due row stays claimable for the next
+		// tick. Advancing a due time here would silently skip a cycle rather than defer
+		// it. A single pool being full is NOT fleet saturation — that pool simply claims
+		// zero this tick while the other pool, if it has room, still gets its own runs;
+		// that is the whole point of the split.
 		result.Saturated = true
 		return result, nil
 	}
 
 	if !s.Apply {
-		result.WouldLaunch, err = s.Repo.PreviewDue(ctx, budget, s.grace())
+		heavyPreview, err := s.Repo.PreviewDue(ctx, true, heavyBudget, s.grace())
 		if err != nil {
-			return result, fmt.Errorf("preview due runs: %w", err)
+			return result, fmt.Errorf("preview due heavy runs: %w", err)
 		}
+		lightPreview, err := s.Repo.PreviewDue(ctx, false, lightBudget, s.grace())
+		if err != nil {
+			return result, fmt.Errorf("preview due light runs: %w", err)
+		}
+		result.Heavy.WouldLaunch = len(heavyPreview)
+		result.Light.WouldLaunch = len(lightPreview)
+		result.WouldLaunch = append(result.WouldLaunch, heavyPreview...)
+		result.WouldLaunch = append(result.WouldLaunch, lightPreview...)
 		return result, nil
 	}
 
-	runs, err := s.Repo.Claim(ctx, budget, s.grace())
+	heavyRuns, err := s.Repo.Claim(ctx, true, heavyBudget, s.grace())
 	if err != nil {
-		return result, fmt.Errorf("claim due runs: %w", err)
+		return result, fmt.Errorf("claim due heavy runs: %w", err)
+	}
+	lightRuns, err := s.Repo.Claim(ctx, false, lightBudget, s.grace())
+	if err != nil {
+		return result, fmt.Errorf("claim due light runs: %w", err)
 	}
 
+	result.Heavy.Launched = s.launch(ctx, heavyRuns, &result)
+	result.Light.Launched = s.launch(ctx, lightRuns, &result)
+	return result, nil
+}
+
+// launch starts every one of runs and returns how many launched successfully. A failure is
+// recorded and its claim released at once rather than left to idle for the whole reclaim
+// window, and does not stop the rest — the per-provider timers this replaces had that
+// isolation for free.
+func (s Scheduler) launch(ctx context.Context, runs []Run, result *TickResult) int {
+	launched := 0
 	for _, run := range runs {
 		if err := s.Launcher.Launch(ctx, run); err != nil {
 			result.Failed = append(result.Failed, Skipped{run.Provider, err.Error()})
@@ -196,22 +275,35 @@ func (s Scheduler) Tick(ctx context.Context) (TickResult, error) {
 			continue
 		}
 		result.Launched = append(result.Launched, run)
+		launched++
 	}
-	return result, nil
+	return launched
 }
 
-// reap asks the service manager about every claimed run, records the ones that have ended,
-// and returns how many are genuinely still executing.
+// reap asks the service manager about every claimed run in BOTH pools, records the ones
+// that have ended, and returns how many are genuinely still executing in each — heavy and
+// light are budgeted independently, so the counts that feed those two budgets must be
+// counted independently too.
 //
 // One unreadable unit must not cost the whole tick: it is reported and its claim left
 // alone, which the reclaim window then handles on its own timescale. Stopping here would
 // turn one odd unit into a stopped fleet.
-func (s Scheduler) reap(ctx context.Context, result *TickResult) (int, error) {
-	claimed, err := s.Repo.InFlightRuns(ctx)
+func (s Scheduler) reap(ctx context.Context, result *TickResult) (runningHeavy, runningLight int, err error) {
+	heavyClaimed, err := s.Repo.InFlightRuns(ctx, true)
 	if err != nil {
-		return 0, fmt.Errorf("list in-flight runs: %w", err)
+		return 0, 0, fmt.Errorf("list in-flight heavy runs: %w", err)
+	}
+	lightClaimed, err := s.Repo.InFlightRuns(ctx, false)
+	if err != nil {
+		return 0, 0, fmt.Errorf("list in-flight light runs: %w", err)
 	}
 
+	return s.reapPool(ctx, heavyClaimed, result), s.reapPool(ctx, lightClaimed, result), nil
+}
+
+// reapPool is one pool's half of reap: ask the service manager about every run in claimed,
+// record the ones that ended, and return how many are still running.
+func (s Scheduler) reapPool(ctx context.Context, claimed []Run, result *TickResult) int {
 	running := 0
 	for _, run := range claimed {
 		outcome, err := s.Launcher.Finished(ctx, run)
@@ -231,7 +323,7 @@ func (s Scheduler) reap(ctx context.Context, result *TickResult) (int, error) {
 		}
 		result.Reaped++
 	}
-	return running, nil
+	return running
 }
 
 // launchFailedExitCode marks a run that never started, so last_exit_code distinguishes it
@@ -244,6 +336,13 @@ func (s Scheduler) cap() int {
 		return s.Cap
 	}
 	return DefaultCap
+}
+
+func (s Scheduler) heavyCap() int {
+	if s.HeavyCap > 0 {
+		return s.HeavyCap
+	}
+	return DefaultHeavyCap
 }
 
 func (s Scheduler) grace() time.Duration {

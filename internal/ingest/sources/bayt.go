@@ -151,7 +151,7 @@ func baytListingLinks(root *html.Node) []string {
 	var hrefs []string
 	walk(root, func(n *html.Node) bool {
 		if n.Type == html.ElementNode && n.Data == "a" {
-			if href := attr(n, "href"); href != "" {
+			if href := Attr(n, "href"); href != "" {
 				hrefs = append(hrefs, href)
 			}
 		}

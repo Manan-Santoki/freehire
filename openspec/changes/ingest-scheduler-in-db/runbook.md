@@ -59,7 +59,7 @@ runs** — check it before releasing:
 grep -c ingest-scheduler /opt/freehire/bin/release.sh   # must be 1
 ```
 
-Then install the scheduler's unit and timer from `deploy/systemd/`, `daemon-reload`, and
+Then install the scheduler's unit and timer from `freehire-ops' provision/host2/systemd/`, `daemon-reload`, and
 start the timer. `INGEST_SCHEDULER_APPLY` stays UNSET — shadow is the default, and a
 scheduler that launched on install would double-crawl every provider at once.
 
@@ -94,6 +94,10 @@ schedule-board --provider=eightfold  --shards=4  --cadence=4h  --apply \
 schedule-board --provider=dayforce   --shards=4  --cadence=4h  --timeout=4500s --apply
 schedule-board --provider=workstream --shards=2  --cadence=6h  --timeout=4500s --apply \
   --notes="paced ~0.5 req/s by origin; first crawl hydrates everything, ~2h, will time out twice"
+schedule-board --provider=adp        --shards=8  --cadence=24h --timeout=4500s --apply \
+  --notes="7,890 boards, 8.6 jobs/board; ~3s/board under the 5 req/s pacer, 986 boards/shard"
+schedule-board --provider=adpmyjobs  --shards=8  --cadence=24h --timeout=4500s --apply \
+  --notes="498 boards, 161 jobs/board; ~58s/board of paced detail fan-out, 62 boards/shard"
 ```
 
 The twelve 3h providers — measured 2026-07-31 at ≥25 min/run and together 65% of all ingest
@@ -213,7 +217,7 @@ systemctl daemon-reload
 Delete the same files from `deploy/systemd` and `deploy/bin` in git, then:
 
 ```
-./deploy/check-drift.sh     # from a checkout; must exit 0
+`freehire-ops`' scripts/host2/drift-check.sh     # from a checkout; must exit 0
 systemctl start freehire-autodeploy.timer
 ```
 

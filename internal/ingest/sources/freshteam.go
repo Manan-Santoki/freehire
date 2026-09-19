@@ -51,9 +51,11 @@ func (f freshteam) Fetch(ctx context.Context, e CompanyEntry) ([]Job, error) {
 	}), nil
 }
 
-// detail fetches one job page and maps its JobPosting ld+json to a Job, returning ok=false
-// when the page fetch fails, carries no JobPosting, or has no parseable id, so the caller
-// skips just that posting.
+// detail fetches one job page for its JobPosting ld+json block, mapping it to a Job. A page
+// the platform reports gone (404/410) is dropped, as is a link carrying no parseable id; any
+// other read failure — including a 200 carrying no JobPosting block — comes back as an
+// unreadableDetail marker, since the page is the posting's only source and a dropped posting
+// would be indistinguishable from one taken down.
 func (f freshteam) detail(ctx context.Context, e CompanyEntry, jobURL string) (Job, bool) {
 	id := ftJobID(jobURL)
 	if id == "" {
@@ -61,11 +63,14 @@ func (f freshteam) detail(ctx context.Context, e CompanyEntry, jobURL string) (J
 	}
 	root, err := f.http.GetHTML(ctx, jobURL)
 	if err != nil {
+		if detailUnreadable(err) {
+			return unreadableDetail(id, jobURL, e.Company), true
+		}
 		return Job{}, false
 	}
 	var p ftPosting
 	if !ldJobPosting(root, &p) {
-		return Job{}, false
+		return unreadableDetail(id, jobURL, e.Company), true
 	}
 
 	location := p.JobLocation.Address.Location()

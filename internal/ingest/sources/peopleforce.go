@@ -157,7 +157,7 @@ func peopleforceListings(base *url.URL, root *html.Node) []peopleforceListing {
 		if n.Type != html.ElementNode || n.Data != "a" {
 			return true
 		}
-		href := attr(n, "href")
+		href := Attr(n, "href")
 		if peopleforceJobID(href) == "" {
 			return true
 		}

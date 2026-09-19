@@ -18,6 +18,7 @@ import type {
   Answers,
   CatalogueMember,
   Display,
+  JobMatch,
   Responses as SurveyAnswers,
   RevisionView,
 } from '$lib/generated/contracts';
@@ -194,6 +195,28 @@ export interface InsightRole {
   seniority: string;
   open_count: number;
   growth: number;
+  /** The three below are present only when a SINGLE role was named (both category
+   *  and seniority). Absent on the ranked list, so `skills === undefined` means "this
+   *  answer carries no distribution" while `skills: []` means "this role's every skill
+   *  fell below the sample floor" — two different facts. */
+  sample_size?: number;
+  skills?: InsightRoleSkill[];
+  /** Present only for a signed-in caller. Zeroed rather than absent when they hold no
+   *  skills, so it can be told apart from being signed out.
+   *
+   *  The GENERATED JobMatch, not a local copy: the handler serialises
+   *  internal/candidate/jobmatch.JobMatch verbatim, and cmd/gen-contracts already emits
+   *  it. A hand-written twin would drift the moment the Go type gained a field, and
+   *  nothing would report it. */
+  coverage?: JobMatch;
+}
+/** One skill inside a role's distribution. `share` divides by the role's `sample_size`
+ *  (its postings carrying any tagged skill), NEVER by `open_count`. Reached through
+ *  InsightRole rather than exported by name, so there is one way in. */
+interface InsightRoleSkill {
+  skill: string;
+  open_count: number;
+  share: number;
 }
 export interface InsightSkill {
   skill: string;
@@ -1030,12 +1053,14 @@ export function createApi(
 
   function insightsQuery(opts: {
     category?: string;
+    seniority?: string;
     country?: string;
     sort?: 'open' | 'growth';
     limit?: number;
   }): string {
     const q = new URLSearchParams();
     if (opts.category) q.set('category', opts.category);
+    if (opts.seniority) q.set('seniority', opts.seniority);
     if (opts.country) q.set('country', opts.country);
     if (opts.sort) q.set('sort', opts.sort);
     if (opts.limit != null) q.set('limit', String(opts.limit));
@@ -1048,6 +1073,16 @@ export function createApi(
     opts: { category?: string; country?: string; sort?: 'open' | 'growth'; limit?: number } = {},
   ): Promise<InsightRole[]> {
     return requestData<InsightRole[]>(`/api/v1/insights/roles?${insightsQuery(opts)}`);
+  }
+
+  /** One role's skill distribution, plus the signed-in caller's coverage of it when
+   *  the request carries a session. Returns null when the role has no rollup row —
+   *  the route renders that as a 404 rather than as an empty page. */
+  async function insightsRole(category: string, seniority: string): Promise<InsightRole | null> {
+    const rows = await requestData<InsightRole[]>(
+      `/api/v1/insights/roles?${insightsQuery({ category, seniority })}`,
+    );
+    return rows[0] ?? null;
   }
 
   /** Ranked skills, optionally scoped by category or country (not both). */
@@ -2595,20 +2630,21 @@ export function createApi(
     );
   }
 
-  /** Rebuild this tailored CV (and the base) from the current résumé seed. Cookie-only.
+  /** Rebuild this tailored CV (and the base) from the current seed — the experience bank
+   *  first, the résumé's own extract only for what the bank doesn't track. Cookie-only.
    *  Same id and agent session; presentation preserved. 409 when the CV is not tailored or
    *  there is nothing to seed from. */
-  async function resetCvFromResume(id: string): Promise<CvRecord> {
+  async function reseedCv(id: string): Promise<CvRecord> {
     return requestData<CvRecord>(
-      `/api/v1/me/cvs/${encodeURIComponent(id)}/reset-from-resume`,
+      `/api/v1/me/cvs/${encodeURIComponent(id)}/reseed`,
       jsonBody('POST', {}),
     );
   }
 
-  /** Rebuild the base CV from the current résumé seed. Cookie-only. Does not touch
+  /** Rebuild the base CV from the current seed. Cookie-only. Does not touch
    *  tailored copies. 409 when there is nothing to seed from. */
-  async function resetBaseCvFromResume(): Promise<CvRecord> {
-    return requestData<CvRecord>('/api/v1/me/cvs/base/reset-from-resume', jsonBody('POST', {}));
+  async function reseedBaseCv(): Promise<CvRecord> {
+    return requestData<CvRecord>('/api/v1/me/cvs/base/reseed', jsonBody('POST', {}));
   }
 
   async function getCvAtsDelta(id: string): Promise<CvAtsDelta> {
@@ -2914,6 +2950,7 @@ export function createApi(
     decideMentorProfile,
     searchCities,
     insightsRoles,
+    insightsRole,
     insightsSkills,
     insightsSalaryByCategory,
     insightsSalaryByCategoryInCountry,
@@ -3114,8 +3151,8 @@ export function createApi(
     openCoverLetterStream,
     undoCvRevision,
     undoCvRevisionRun,
-    resetCvFromResume,
-    resetBaseCvFromResume,
+    reseedCv,
+    reseedBaseCv,
     tailorCv,
     startTailorSession,
     resolveJd,

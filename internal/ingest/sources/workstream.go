@@ -334,7 +334,7 @@ func workstreamDescription(root *html.Node) string {
 func workstreamListing(root *html.Node) []workstreamPosting {
 	var out []workstreamPosting
 	walk(root, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || !hasClass(n, "position-card") {
+		if n.Type != html.ElementNode || !HasClass(n, "position-card") {
 			return true
 		}
 		if p, ok := workstreamCard(n); ok {
@@ -355,15 +355,15 @@ func workstreamCard(card *html.Node) (workstreamPosting, bool) {
 		}
 		switch {
 		case n.Data == "a" && p.id == "":
-			if id := workstreamPostingID(attr(n, "href")); id != "" {
-				p.id, p.url = id, workstreamCanonicalURL(attr(n, "href"))
+			if id := workstreamPostingID(Attr(n, "href")); id != "" {
+				p.id, p.url = id, workstreamCanonicalURL(Attr(n, "href"))
 				p.title = workstreamText(n)
 			}
-		case hasClass(n, "position-address"):
+		case HasClass(n, "position-address"):
 			p.location = workstreamText(n)
-		case hasClass(n, "tag"):
+		case HasClass(n, "tag"):
 			tags = append(tags, workstreamText(n))
-		case n.Data == "img" && attr(n, "data-icon") == "rate-of-pay":
+		case n.Data == "img" && Attr(n, "data-icon") == "rate-of-pay":
 			// The pay line is the sibling of its icon, so the icon's parent holds both.
 			p.pay = workstreamText(n.Parent)
 		}

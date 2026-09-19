@@ -128,7 +128,7 @@ func loxoDescription(root *html.Node) string {
 		if desc != "" {
 			return false
 		}
-		if n.Type == html.ElementNode && n.Data == "script" && attr(n, "type") == "application/json" {
+		if n.Type == html.ElementNode && n.Data == "script" && Attr(n, "type") == "application/json" {
 			var p struct {
 				Description string `json:"description"`
 			}

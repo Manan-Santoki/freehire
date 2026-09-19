@@ -22,7 +22,7 @@
 
 ## 2. The release path
 
-- [x] 2.1 Call the check from `deploy/bin/release.sh` in the existing Sentry block,
+- [x] 2.1 Call the check from `freehire-ops' scripts/host2/release.sh` in the existing Sentry block,
       BEFORE web's `pnpm run build`, so a bad credential costs seconds rather than the
       full web build.
 - [x] 2.2 Make the existing claim true: it printed "source maps will be uploaded to Sentry"
@@ -39,7 +39,7 @@
 - [x] 2.5 Run the check as `freehire`, like everything else this script executes out of the
       checkout, and pass `SENTRY_URL` through to the build as well as the check so the two
       cannot disagree about which Sentry they mean. Found in review.
-- [x] 2.6 `shellcheck deploy/bin/release.sh` clean (the `artifacts` CI job covers every
+- [x] 2.6 `shellcheck freehire-ops' scripts/host2/release.sh` clean (the `artifacts` CI job covers every
       tracked `*.sh`).
 
 ## 3. The prose that was wrong
@@ -69,7 +69,7 @@ first was safe.
 - [ ] 4.3 **Revoke the old token.** It was read out of `journald`, so this is a rotation,
       not a swap — see design's Risks.
 - [ ] 4.4 Copy the changed `release.sh` to the host: `deploy/` does not deploy itself
-      (`deploy/AGENTS.md`). Confirm with `./deploy/check-drift.sh` exiting 0.
+      (`freehire-ops' provision/host2/AGENTS.md`). Confirm with ``freehire-ops`' scripts/host2/drift-check.sh` exiting 0.
 
 ## 5. Verify it actually worked
 

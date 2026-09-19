@@ -1,5 +1,5 @@
 // Command schedule-board is how a curator reads and edits the ingest schedule — the
-// database-backed replacement for editing the constants in deploy/bin/gen-ingest-timers.sh
+// database-backed replacement for editing the constants in freehire-ops' provision/host2/gen-ingest-timers.sh
 // and re-running it over ssh.
 //
 // It reports by default and writes only under --apply, like cmd/add-board.
@@ -19,6 +19,7 @@
 //	go run ./cmd/schedule-board --provider=bayt --disable \
 //	    --reason="fingerprint client has no proxy support" --apply
 //	go run ./cmd/schedule-board --provider=greenhouse --manage --apply
+//	go run ./cmd/schedule-board --provider=apploi --heavy --apply
 package main
 
 import (
@@ -54,6 +55,8 @@ func run() int {
 	reason := flag.String("reason", "", "why the provider is disabled (required with --disable)")
 	manage := flag.Bool("manage", false, "hand this provider to the scheduler (rollout only)")
 	unmanage := flag.Bool("unmanage", false, "hand this provider back to its static timer (rollout only)")
+	heavy := flag.Bool("heavy", false, "reserve this provider a heavy-pool slot without sharding it")
+	notHeavy := flag.Bool("not-heavy", false, "release this provider back to the light pool (sharded providers stay heavy regardless)")
 	flag.Parse()
 
 	ctx, _, pool, cleanup, err := worker.Bootstrap(context.Background())
@@ -73,6 +76,7 @@ func run() int {
 		shards: *shards, cadence: *cadence, timeout: *timeout, notes: *notes,
 		disable: *disable, enable: *enable, reason: *reason,
 		manage: *manage, unmanage: *unmanage,
+		heavy: *heavy, notHeavy: *notHeavy,
 	})
 	if err != nil {
 		log.Printf("schedule-board: %v", err)
@@ -100,6 +104,7 @@ type editFlags struct {
 	disable, enable  bool
 	reason           string
 	manage, unmanage bool
+	heavy, notHeavy  bool
 }
 
 // edit turns the flags into a partial override. It is split from run so it can be tested
@@ -118,6 +123,9 @@ func edit(provider string, f editFlags) (ingestsched.OverrideInput, error) {
 	}
 	if f.manage && f.unmanage {
 		return in, fmt.Errorf("--manage and --unmanage are contradictory")
+	}
+	if f.heavy && f.notHeavy {
+		return in, fmt.Errorf("--heavy and --not-heavy are contradictory")
 	}
 	if f.disable && strings.TrimSpace(f.reason) == "" {
 		return in, fmt.Errorf("--disable requires --reason: an unexplained disable is the silence this table exists to remove")
@@ -161,6 +169,14 @@ func edit(provider string, f editFlags) (ingestsched.OverrideInput, error) {
 		off := false
 		in.Managed = &off
 	}
+	switch {
+	case f.heavy:
+		on := true
+		in.Heavy = &on
+	case f.notHeavy:
+		off := false
+		in.Heavy = &off
+	}
 	return in, nil
 }
 
@@ -180,6 +196,9 @@ func describe(in ingestsched.OverrideInput) {
 	}
 	if in.Managed != nil {
 		parts = append(parts, fmt.Sprintf("managed=%t", *in.Managed))
+	}
+	if in.Heavy != nil {
+		parts = append(parts, fmt.Sprintf("heavy=%t", *in.Heavy))
 	}
 	if in.DisabledReason != nil {
 		parts = append(parts, "reason="+*in.DisabledReason)
@@ -204,10 +223,10 @@ func report(ctx context.Context, repo *ingestsched.QueriesRepository) int {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	// A tabwriter buffers until Flush, so these writes cannot fail on their own; the
 	// Flush below is where a real write error surfaces, and it IS checked.
-	_, _ = fmt.Fprintln(w, "PROVIDER\tSOURCE\tSHARDS\tCADENCE\tTIMEOUT\tSTATE\tDUE\tLAST RUN\tNOTE")
+	_, _ = fmt.Fprintln(w, "PROVIDER\tSOURCE\tSHARDS\tPOOL\tCADENCE\tTIMEOUT\tSTATE\tDUE\tLAST RUN\tNOTE")
 	for _, r := range rows {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Provider, source(r), shardsColumn(r), r.Cadence, r.RunTimeout,
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Provider, source(r), shardsColumn(r), poolColumn(r), r.Cadence, r.RunTimeout,
 			state(r), when(r.NextDueAt), when(r.LastFinishedAt), note(r))
 	}
 	if err := w.Flush(); err != nil {
@@ -235,6 +254,17 @@ func shardsColumn(r ingestsched.ProviderReport) string {
 		return fmt.Sprintf("%d", r.Shards)
 	}
 	return fmt.Sprintf("%d (state:%d)", r.Shards, r.ShardsInState)
+}
+
+// poolColumn shows which of the scheduler's two concurrency pools a provider draws from —
+// ingestsched.Settings.IsHeavy is otherwise invisible here, the exact gap that let it ship
+// with no way for a curator to see or set the explicit half of the decision. Named apart
+// from run's own local pgx `pool` variable to avoid a shadowing lookalike.
+func poolColumn(r ingestsched.ProviderReport) string {
+	if r.IsHeavy() {
+		return "heavy"
+	}
+	return "light"
 }
 
 func state(r ingestsched.ProviderReport) string {

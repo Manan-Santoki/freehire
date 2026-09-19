@@ -710,7 +710,7 @@ func (unreadableSeeder) Structured(context.Context, int64) (resumeextract.Struct
 // answered 201 with an empty skeleton to someone whose CV we hold, and there is no way back
 // from it: the client opens the editor on a blank document and the candidate's only clue is
 // that their history is missing. Every neighbouring caller of this same seed propagates
-// (cv_reset.go), and so must this one.
+// (cv_reseed.go), and so must this one.
 func TestCVCreate_SeedFailureIsNotAnEmptyCV(t *testing.T) {
 	pool := startPostgres(t)
 	queries := db.New(pool)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isFullBleedRoute, isWideHeaderRoute } from './shellLayout';
+import { isApiReferenceRoute, isFullBleedRoute, isWideHeaderRoute } from './shellLayout';
 
 describe('isFullBleedRoute', () => {
   it('covers the agent, with and without a session id', () => {
@@ -29,6 +29,21 @@ describe('isFullBleedRoute', () => {
   });
 });
 
+describe('isApiReferenceRoute', () => {
+  it('covers both the external and internal API references', () => {
+    expect(isApiReferenceRoute('/docs/api')).toBe(true);
+    expect(isApiReferenceRoute('/docs/api/internal')).toBe(true);
+  });
+
+  it('does not catch a sub-path of the API reference', () => {
+    expect(isApiReferenceRoute('/docs/api/jobs')).toBe(false);
+  });
+
+  it('leaves unrelated routes alone', () => {
+    expect(isApiReferenceRoute('/my')).toBe(false);
+  });
+});
+
 describe('isWideHeaderRoute', () => {
   it('covers everything isFullBleedRoute does', () => {
     expect(isWideHeaderRoute('/my/assistant')).toBe(true);
@@ -37,6 +52,10 @@ describe('isWideHeaderRoute', () => {
 
   it('covers the API reference', () => {
     expect(isWideHeaderRoute('/docs/api')).toBe(true);
+  });
+
+  it('covers the internal API reference too', () => {
+    expect(isWideHeaderRoute('/docs/api/internal')).toBe(true);
   });
 
   it('does not catch a sub-path of the API reference', () => {

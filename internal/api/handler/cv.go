@@ -213,10 +213,10 @@ func (h *cvHandlers) register(api fiber.Router, mw middleware) {
 	api.Post("/me/cvs/tailor", mw.key, h.TailorCV)
 	api.Post("/me/cvs/:id/tailor-session", mw.cookie, h.StartTailorSession)
 	// Literal `/base/` before `:id` — otherwise Fiber treats "base" as a CV uuid.
-	api.Post("/me/cvs/base/reset-from-resume", mw.cookie, h.ResetBaseCVFromResume)
-	// Rebuild this tailored CV (and the base) from the current résumé seed. Cookie-only:
+	api.Post("/me/cvs/base/reseed", mw.cookie, h.ReseedBaseCV)
+	// Rebuild this tailored CV (and the base) from the current seed. Cookie-only:
 	// destructive whole-document replace; the browser is where the candidate confirms it.
-	api.Post("/me/cvs/:id/reset-from-resume", mw.cookie, h.ResetCVFromResume)
+	api.Post("/me/cvs/:id/reseed", mw.cookie, h.ReseedCV)
 	api.Patch("/me/cvs/:id", mw.key, h.PatchCV)
 	api.Put("/me/cvs/:id/session", mw.key, h.SetCVSession)
 	api.Get("/me/cvs/:id/tailor-context", mw.key, h.TailorContext)
@@ -393,7 +393,7 @@ func (h *cvHandlers) CreateCV(c *fiber.Ctx) error {
 		// A read that failed is not a candidate with nothing to seed from. Collapsing the
 		// two answered 201 with an empty skeleton for someone whose CV we hold, and the
 		// only way back is to notice and start again. Every other caller of this seed
-		// propagates (cv_reset.go).
+		// propagates (cv_reseed.go).
 		st, ok, err := h.seedSource().Structured(c.Context(), userID)
 		if err != nil {
 			return err

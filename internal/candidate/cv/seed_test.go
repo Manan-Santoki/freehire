@@ -1,6 +1,7 @@
 package cv
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -119,5 +120,61 @@ func TestSeedEmptyStructureIsValidSkeleton(t *testing.T) {
 	doc.Sanitize()
 	if !equalDocument(before, doc) {
 		t.Errorf("seed of empty structure is not sanitize-stable")
+	}
+}
+
+// The bug this pinned: an experience-bank employment (or the bank's placeless bucket)
+// accumulating more highlights than MaxBullets over years of real use built a seed that
+// was already over cvedit's write-gate ceiling — and since reseeding rebuilds this exact
+// seed from the bank every time, the refusal was permanent. Capping HERE, not only at the
+// bank-projection layer, is what keeps every OTHER reader of the bank (WorkHistory /
+// Professional — fit-analysis scoring, /me/profile) seeing every highlight uncapped: see
+// internal/candidate/experience/professional.go, which deliberately does not cap.
+func TestSeedCapsExperienceHighlightsAtMaxBullets(t *testing.T) {
+	const extra = 5
+	total := MaxBullets + extra
+	highlights := make([]string, total)
+	for i := range highlights {
+		// Oldest first, matching how the bank's ListExperienceAtoms orders atoms.
+		highlights[i] = fmt.Sprintf("claim %d", i)
+	}
+
+	doc := Seed(resumeextract.Structured{
+		Experience: []resumeextract.Experience{{Company: "Acme", Highlights: highlights}},
+	})
+
+	if len(doc.Experience) != 1 {
+		t.Fatalf("experience = %+v, want one row", doc.Experience)
+	}
+	bullets := doc.Experience[0].Bullets
+	if len(bullets) != MaxBullets {
+		t.Fatalf("bullets = %d, want capped at %d", len(bullets), MaxBullets)
+	}
+	if bullets[0] != fmt.Sprintf("claim %d", extra) {
+		t.Errorf("first surviving bullet = %q, want the oldest dropped — kept ones should start at claim %d", bullets[0], extra)
+	}
+	if last := bullets[len(bullets)-1]; last != fmt.Sprintf("claim %d", total-1) {
+		t.Errorf("last surviving bullet = %q, want the most recently added claim", last)
+	}
+}
+
+// A project's highlights need the same cap as an experience entry's — the write gate
+// enforces MaxBullets on both (cv.MaxBullets is "per experience (and per project)").
+func TestSeedCapsProjectHighlightsAtMaxBullets(t *testing.T) {
+	total := MaxBullets + 3
+	highlights := make([]string, total)
+	for i := range highlights {
+		highlights[i] = fmt.Sprintf("claim %d", i)
+	}
+
+	doc := Seed(resumeextract.Structured{
+		Projects: []resumeextract.Project{{Name: "opensched", Highlights: highlights}},
+	})
+
+	if len(doc.Projects) != 1 {
+		t.Fatalf("projects = %+v, want one row", doc.Projects)
+	}
+	if len(doc.Projects[0].Bullets) != MaxBullets {
+		t.Fatalf("bullets = %d, want capped at %d", len(doc.Projects[0].Bullets), MaxBullets)
 	}
 }

@@ -35,16 +35,21 @@ type Repository interface {
 	// that could not be reconciled comes back in the returned slice rather than failing
 	// the call — one bad row must not stop the fleet.
 	Reconcile(ctx context.Context, settings []Settings) ([]Skipped, error)
-	// InFlightRuns lists the claimed runs. The scheduler asks the service manager about
-	// each before counting it, because a transient unit that finished tells nobody — a
-	// plain count would include every run that ever succeeded, and the fleet would
-	// saturate permanently.
-	InFlightRuns(ctx context.Context) ([]Run, error)
-	// Claim takes up to limit due runs and marks them started. A claim older than its
-	// provider's timeout plus grace is treated as dead and may be taken again.
-	Claim(ctx context.Context, limit int, grace time.Duration) ([]Run, error)
-	// PreviewDue reports what Claim WOULD take, without taking it. Shadow mode's read.
-	PreviewDue(ctx context.Context, limit int, grace time.Duration) ([]Run, error)
+	// InFlightRuns lists the claimed runs of ONE pool — heavy or light. The scheduler asks
+	// the service manager about each before counting it, because a transient unit that
+	// finished tells nobody — a plain count would include every run that ever succeeded,
+	// and that pool would saturate permanently. Split by pool (rather than returned whole
+	// and classified by the caller) because a provider's heavy status can rest on
+	// ingest_schedule.heavy, which only the query can see without a second round trip.
+	InFlightRuns(ctx context.Context, heavy bool) ([]Run, error)
+	// Claim takes up to limit due runs from ONE pool — heavy or light — and marks them
+	// started. The two pools are budgeted independently, so the scheduler calls this twice
+	// a tick with two different limits; a claim older than its provider's timeout plus
+	// grace is treated as dead and may be taken again.
+	Claim(ctx context.Context, heavy bool, limit int, grace time.Duration) ([]Run, error)
+	// PreviewDue reports what Claim WOULD take from one pool, without taking it. Shadow
+	// mode's read.
+	PreviewDue(ctx context.Context, heavy bool, limit int, grace time.Duration) ([]Run, error)
 	// RecordFinish stores a run's outcome and releases its claim.
 	RecordFinish(ctx context.Context, provider string, shard, exitCode int, runErr string) error
 }
@@ -141,6 +146,7 @@ func overrideFrom(row db.ListSchedulableProvidersRow) *Override {
 		DisabledReason: row.DisabledReason.String,
 		Notes:          row.Notes.String,
 		Managed:        row.Managed.Bool,
+		Heavy:          row.Heavy.Bool,
 	}
 }
 
@@ -187,21 +193,42 @@ func (r *QueriesRepository) reconcileOne(ctx context.Context, s Settings) error 
 	return nil
 }
 
-func (r *QueriesRepository) Claim(ctx context.Context, limit int, grace time.Duration) ([]Run, error) {
+func (r *QueriesRepository) Claim(ctx context.Context, heavy bool, limit int, grace time.Duration) ([]Run, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
-	rows, err := r.q.ClaimDueRuns(ctx, db.ClaimDueRunsParams{
+	if heavy {
+		rows, err := r.q.ClaimDueHeavyRuns(ctx, db.ClaimDueHeavyRunsParams{
+			DefaultCadenceSec: seconds(DefaultCadence),
+			DefaultTimeoutSec: seconds(DefaultRunTimeout),
+			GraceSec:          seconds(grace),
+			MaxRuns:           toInt32(limit, 0, maxRuns),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("claim due heavy runs: %w", err)
+		}
+		out := make([]Run, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, Run{
+				Provider:   row.Provider,
+				Shard:      int(row.Shard),
+				Shards:     int(row.Shards),
+				RunTimeout: time.Duration(row.TimeoutSec) * time.Second,
+			})
+		}
+		return out, nil
+	}
+
+	rows, err := r.q.ClaimDueLightRuns(ctx, db.ClaimDueLightRunsParams{
 		DefaultCadenceSec: seconds(DefaultCadence),
 		DefaultTimeoutSec: seconds(DefaultRunTimeout),
 		GraceSec:          seconds(grace),
 		MaxRuns:           toInt32(limit, 0, maxRuns),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("claim due runs: %w", err)
+		return nil, fmt.Errorf("claim due light runs: %w", err)
 	}
-
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, Run{
@@ -214,12 +241,28 @@ func (r *QueriesRepository) Claim(ctx context.Context, limit int, grace time.Dur
 	return out, nil
 }
 
-func (r *QueriesRepository) InFlightRuns(ctx context.Context) ([]Run, error) {
-	rows, err := r.q.ListInFlightRuns(ctx, seconds(DefaultRunTimeout))
+func (r *QueriesRepository) InFlightRuns(ctx context.Context, heavy bool) ([]Run, error) {
+	if heavy {
+		rows, err := r.q.ListInFlightHeavyRuns(ctx, seconds(DefaultRunTimeout))
+		if err != nil {
+			return nil, fmt.Errorf("list in-flight heavy runs: %w", err)
+		}
+		out := make([]Run, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, Run{
+				Provider:   row.Provider,
+				Shard:      int(row.Shard),
+				Shards:     int(row.Shards),
+				RunTimeout: time.Duration(row.TimeoutSec) * time.Second,
+			})
+		}
+		return out, nil
+	}
+
+	rows, err := r.q.ListInFlightLightRuns(ctx, seconds(DefaultRunTimeout))
 	if err != nil {
-		return nil, fmt.Errorf("list in-flight runs: %w", err)
+		return nil, fmt.Errorf("list in-flight light runs: %w", err)
 	}
-
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, Run{
@@ -232,20 +275,40 @@ func (r *QueriesRepository) InFlightRuns(ctx context.Context) ([]Run, error) {
 	return out, nil
 }
 
-func (r *QueriesRepository) PreviewDue(ctx context.Context, limit int, grace time.Duration) ([]Run, error) {
+func (r *QueriesRepository) PreviewDue(ctx context.Context, heavy bool, limit int, grace time.Duration) ([]Run, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
-	rows, err := r.q.PreviewDueRuns(ctx, db.PreviewDueRunsParams{
+	if heavy {
+		rows, err := r.q.PreviewDueHeavyRuns(ctx, db.PreviewDueHeavyRunsParams{
+			DefaultTimeoutSec: seconds(DefaultRunTimeout),
+			GraceSec:          seconds(grace),
+			MaxRuns:           toInt32(limit, 0, maxRuns),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("preview due heavy runs: %w", err)
+		}
+		out := make([]Run, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, Run{
+				Provider:   row.Provider,
+				Shard:      int(row.Shard),
+				Shards:     int(row.Shards),
+				RunTimeout: time.Duration(row.TimeoutSec) * time.Second,
+			})
+		}
+		return out, nil
+	}
+
+	rows, err := r.q.PreviewDueLightRuns(ctx, db.PreviewDueLightRunsParams{
 		DefaultTimeoutSec: seconds(DefaultRunTimeout),
 		GraceSec:          seconds(grace),
 		MaxRuns:           toInt32(limit, 0, maxRuns),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("preview due runs: %w", err)
+		return nil, fmt.Errorf("preview due light runs: %w", err)
 	}
-
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, Run{

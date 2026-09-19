@@ -142,7 +142,7 @@ Telegram, and mobile push), each with its own small `Notifier`/`Router` pair:
   they shipped until 2026-09-01 while every run exited 0 with `failed=0`. 244 of them piled
   up across 43 people. The health signal for these workers is therefore **`soft_skips` in
   the run log, not the exit code**: a steady non-zero count against `delivered=0` is a dead
-  channel, not an absence of recipients. See [deploy/AGENTS.md](../../deploy/AGENTS.md) for
+  channel, not an absence of recipients. See `freehire-ops`' `provision/host2/AGENTS.md` for
   which units must read both files.
 - **A blocked Telegram bot unlinks the chat; it does not fail the delivery.** Every 403 the
   Bot API answers a send with means the chat is permanently closed (blocked, deactivated,
@@ -203,6 +203,20 @@ Telegram, and mobile push), each with its own small `Notifier`/`Router` pair:
   direction — the digest goes out with `NotificationID` zero and each channel's tail falls back
   to `/my/notifications`. `internal/engage/reminder` and `internal/engage/nudge` still record after delivery
   and discard the returned id.
+- **The history holds one row per EVENT, not per channel — and that is enforced by a key,
+  not by the shape of the loop.** `subscriptions` is keyed `(saved_search_id, channel)`, so
+  `deliverOne` runs once per enabled channel; the row it writes was always meant to be
+  channel-agnostic (migration 0090 says so in its opening line) and for three years was not.
+  One saved search with Telegram, email and push left three indistinguishable
+  `My profile — 1 new job` entries for one match (freehire#3020 — measured on prod
+  2026-09-18: 322 of 27,207 digest rows were a redundant second copy, 1.2% overall and 100%
+  of the history of anyone with a second channel). `notify.digestDedupKey` names the event
+  — the saved search plus the sorted set of job ids, hashed — and migration 0174's partial
+  unique index on `(user_id, dedup_key)` is what makes the first channel's write win and
+  every later one return no row. **Only the channel that CREATED the row may withdraw it**:
+  `recordNotification` returns that as `created`, and without it a third channel's failed
+  send would delete the history of the two digests that did arrive. The engines that already
+  record once per event pass a NULL key and are outside the index entirely.
 - **`user_notifications.jobs` is one shape owned by one package.** `notify.SnapshotJob`
   (`{title, company, slug}`, migration 0091) is what all three engines write and what the
   single `/my/notifications/:id/jobs` page reads. A group of MORE than one fills `jobs`

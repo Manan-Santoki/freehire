@@ -15,6 +15,7 @@ import (
 
 	"github.com/strelov1/freehire/internal/ingest/moderation"
 	"github.com/strelov1/freehire/internal/job/job"
+	"github.com/strelov1/freehire/internal/platform/htmltext"
 )
 
 // Sentinel errors mapped to HTTP statuses by the handler.
@@ -50,7 +51,11 @@ type Submission struct {
 	Status       string
 	ReviewReason string
 	ReviewedAt   *time.Time
-	CreatedAt    *time.Time
+	// JobID is the minted job's id once the submission is approved (nil otherwise, and
+	// still nil for the brief window between ClaimForApproval and AttachJob — see
+	// Service.Approve's resume branch).
+	JobID     *int64
+	CreatedAt *time.Time
 
 	// The structured facets the submitter stated, retained so the moderator sees them
 	// and Approve can carry them onto the minted job (see the Approve mint below).
@@ -95,7 +100,14 @@ type Repository interface {
 	Get(ctx context.Context, id int64) (Submission, error)
 	ListPending(ctx context.Context) ([]PendingSubmission, error)
 	ListByUser(ctx context.Context, userID int64) ([]UserSubmission, error)
-	MarkApproved(ctx context.Context, id, reviewerID, jobID int64) (Submission, error)
+	// ClaimForApproval atomically flips a pending submission to approved, recording the
+	// reviewing moderator; job_id stays unset until AttachJob records the mint. Scoped to
+	// status='pending', so this is the guarded transition a concurrent Reject always loses
+	// (see Service.Approve).
+	ClaimForApproval(ctx context.Context, id, reviewerID int64) (Submission, error)
+	// AttachJob records the minted job on a submission ClaimForApproval already claimed.
+	// Scoped to status='approved'.
+	AttachJob(ctx context.Context, id, jobID int64) (Submission, error)
 	MarkRejected(ctx context.Context, id, reviewerID int64, reason string) (Submission, error)
 	// IsHostBlocked reports whether a normalized host (see normalizeHost) is on the
 	// submission-domain blocklist.
@@ -123,6 +135,13 @@ func New(repo Repository, minter Minter) *Service {
 // written), and otherwise stores it as a pending submission owned by the given user. A
 // second submission of a URL already pending surfaces ErrDuplicatePending (the repository
 // maps the unique violation).
+//
+// The description is sanitized to the same allowlist moderation.Service.Create uses, before
+// it is ever persisted — a pending or rejected submission is never re-sanitized, and the
+// review UI already renders it with {@html}, so waiting for approval would leave raw HTML in
+// the database (stored XSS). Sanitizing here rather than re-sanitizing is also idempotent:
+// Approve carries this already-clean value into moderation.CreateInput, and
+// htmltext.Sanitize is safe to run twice.
 func (s *Service) Submit(ctx context.Context, submittedBy int64, in moderation.CreateInput) (Submission, error) {
 	if err := in.Validate(); err != nil {
 		return Submission{}, err
@@ -134,6 +153,7 @@ func (s *Service) Submit(ctx context.Context, submittedBy int64, in moderation.C
 	if blocked {
 		return Submission{}, ErrBlockedDomain
 	}
+	in.Description = htmltext.Sanitize(in.Description)
 	return s.repo.Create(ctx, submittedBy, in)
 }
 
@@ -148,17 +168,38 @@ func (s *Service) ListPending(ctx context.Context) ([]PendingSubmission, error) 
 	return s.repo.ListPending(ctx)
 }
 
-// Approve mints a live vacancy from a pending submission's fields (attributed to the
-// submitter) and marks the submission approved, recording the reviewing moderator and the
-// minted job. A missing submission is ErrSubmissionNotFound; one that is no longer pending
-// is ErrAlreadyDecided. The mint runs before the mark; because the moderation upsert is
-// idempotent on the URL, a failure between the two is safe to retry.
+// Approve claims a pending submission, mints a live vacancy from its fields (attributed to
+// the submitter), and attaches the minted job to the now-approved submission. A missing
+// submission is ErrSubmissionNotFound; one that is no longer pending (and not a resumable
+// claim — see below) is ErrAlreadyDecided.
+//
+// The claim runs BEFORE the mint, not after: it atomically flips the status to 'approved'
+// under the same status='pending' guard Reject's own mark uses, so whichever call reaches
+// its guarded update first wins the row and the other gets ErrAlreadyDecided on its own
+// side. That closes the race the previous mint-then-mark order left open, where a
+// concurrent Reject could flip the status between the mint and the mark: the job would
+// exist live while the submission stayed 'rejected' with no job_id pointing at it.
+//
+// A submission already claimed but not yet attached (status='approved', JobID nil) is a
+// resumed attempt — the process died between the claim and the attach on an earlier call —
+// and is minted and attached without claiming again, since the claim is not repeatable
+// (its own status='pending' guard would no longer match). Because the moderation upsert is
+// idempotent on the URL, re-minting on resume is safe.
 func (s *Service) Approve(ctx context.Context, reviewerID, id int64) (Submission, error) {
 	sub, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return Submission{}, err
 	}
-	if sub.Status != statusPending {
+	switch {
+	case sub.Status == statusPending:
+		sub, err = s.repo.ClaimForApproval(ctx, id, reviewerID)
+		if err != nil {
+			return Submission{}, err
+		}
+	case sub.Status == statusApproved && sub.JobID == nil:
+		// Resume: already claimed by an earlier, interrupted call. Mint and attach below
+		// without claiming again.
+	default:
 		return Submission{}, ErrAlreadyDecided
 	}
 	mintedJob, _, err := s.minter.Create(ctx, sub.SubmittedBy, moderation.CreateInput{
@@ -184,7 +225,7 @@ func (s *Service) Approve(ctx context.Context, reviewerID, id int64) (Submission
 	if err != nil {
 		return Submission{}, err
 	}
-	return s.repo.MarkApproved(ctx, id, reviewerID, mintedJob.Fields().ID)
+	return s.repo.AttachJob(ctx, id, mintedJob.Fields().ID)
 }
 
 // Reject marks a pending submission rejected with an optional reason, recording the
@@ -209,9 +250,13 @@ func (s *Service) Reject(ctx context.Context, reviewerID, id int64, reason strin
 	return s.repo.MarkRejected(ctx, id, reviewerID, reason)
 }
 
-// statusPending is the only status that can be approved or rejected; the closed vocabulary
+// statusPending is the only status that can be approved or rejected; statusApproved is the
+// claimed-but-maybe-not-yet-attached state Approve resumes from. The closed vocabulary
 // lives in the migration's CHECK.
-const statusPending = "pending"
+const (
+	statusPending  = "pending"
+	statusApproved = "approved"
+)
 
 // hostOf extracts the normalized host from a URL already known to parse (Validate, or a
 // stored submission's own URL, guarantees this). A parse failure — unreachable in practice

@@ -264,7 +264,7 @@ func hackernewsLink(fragment string) string {
 			return false
 		}
 		if n.Type == html.ElementNode && n.Data == "a" {
-			if href := strings.TrimSpace(attr(n, "href")); strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+			if href := strings.TrimSpace(Attr(n, "href")); strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
 				link = href
 				return false
 			}

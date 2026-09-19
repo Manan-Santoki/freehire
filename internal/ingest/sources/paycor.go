@@ -114,7 +114,7 @@ func paycorPostingIDs(root *html.Node, board string) []string {
 		if n.Type != html.ElementNode || n.Data != "a" {
 			return true
 		}
-		id := paycorPostingID(attr(n, "href"), board)
+		id := paycorPostingID(Attr(n, "href"), board)
 		if id == "" || seen[id] {
 			return true
 		}

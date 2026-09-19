@@ -64,7 +64,7 @@ func run() int {
 	queries := db.New(pool)
 	cvStore := cv.NewStore(cv.NewQueriesRepository(queries))
 	resumeStore := resume.New(blobStore, resume.NewQueriesRepository(queries))
-	screeningAnswersSvc := screeninganswers.New(screeninganswers.NewQueriesRepository(queries))
+	screeningAnswersSvc := screeninganswers.New(screeninganswers.NewQueriesRepository(queries, pool))
 	// The candidate's accumulating bank of screening-question answers — the same store
 	// internal/api/handler wires into its own assembler, so a banked answer reaches a form
 	// field here, the worker that actually fills and submits forms, and not only the UI's

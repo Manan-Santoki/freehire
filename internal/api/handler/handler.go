@@ -504,7 +504,7 @@ func Register(app *fiber.App, cfg Config) {
 	// The candidate's own screening answers (visa, salary, notice period, relocation, …) —
 	// a distinct singleton from profileSvc above (search/targeting preferences, a
 	// different lifecycle; see internal/ingest/screeninganswers/AGENTS.md).
-	screeningAnswersSvc := screeninganswers.New(screeninganswers.NewQueriesRepository(queries))
+	screeningAnswersSvc := screeninganswers.New(screeninganswers.NewQueriesRepository(queries, cfg.Pool))
 	screeningAnswersH := newScreeningAnswersHandlers(screeningAnswersSvc)
 	// The candidate's accumulating bank of screening-question answers (internal/candidate/
 	// answerbank) — a third, distinct store from screeningAnswersSvc's six typed facts: this
@@ -669,6 +669,11 @@ func Register(app *fiber.App, cfg Config) {
 	// above rather than holding its own: an agent's question and a browser's must reach the
 	// same catalogue, or the two answers drift.
 	ojcpH := newOJCPHandlers(jobSearch, queries, cfg.FrontendOrigin, atsapply.SubmittableProviders())
+	// The ChatGPT app's MCP surface. A SECOND MCP server beside the OJCP one, over the same
+	// search backend and the same store: that one renders a foreign schema for agents which
+	// branch on error codes, this one renders ours for a language model reading prose. They
+	// share everything below the projection, so they cannot disagree about the catalogue.
+	mcpappH := newMCPAppHandlers(jobSearch, companySearch, queries, cfg.FrontendOrigin)
 	// The completion dictionary. Left nil when search is unconfigured — same reason as
 	// jobSearch above: a nil *suggest.Service wrapped in the interface would be a
 	// non-nil interface, and the handler's "not configured" check would pass straight
@@ -891,6 +896,7 @@ func Register(app *fiber.App, cfg Config) {
 	// Before jobsH for the same reason searchH is: /ojcp/v1/jobs/:slug is a literal path,
 	// not a slug.
 	ojcpH.register(api, mw)
+	mcpappH.register(api, mw)
 	jobsH.register(api, mw)
 	companiesH.register(api, mw)
 	geoH.register(api, mw)
@@ -903,7 +909,7 @@ func Register(app *fiber.App, cfg Config) {
 
 	// Public catalogue-activity, member-growth, engagement, facet-snapshot, and
 	// ingest-status reads (see statsHandlers).
-	statsH.register(api)
+	statsH.register(api, optionalAuth)
 	// The homepage's live "recently added jobs" SSE feed (see recentFeedHandlers).
 	recentFeedH.register(api)
 	// The /open and /about pages' OG preview cards (see ogHandlers) — reads the

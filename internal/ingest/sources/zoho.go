@@ -48,7 +48,7 @@ func (z zoho) Fetch(ctx context.Context, e CompanyEntry) ([]Job, error) {
 	// so the id alone locates the input.
 	raw := ""
 	if n := firstByID(root, "jobs"); n != nil {
-		raw = attr(n, "value")
+		raw = Attr(n, "value")
 	}
 	if raw == "" {
 		return nil, fmt.Errorf("zoho: %s: no #jobs data", e.Board)

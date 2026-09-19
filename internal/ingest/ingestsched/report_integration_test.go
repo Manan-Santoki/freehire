@@ -163,7 +163,7 @@ func TestReportCarriesTheLastRunOutcome(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	if _, err := repo.Claim(ctx, 1, time.Minute); err != nil {
+	if _, err := repo.Claim(ctx, false, 1, time.Minute); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
 	if got := reportFor(t, repo, "greenhouse"); got.InFlight != 1 {

@@ -280,8 +280,8 @@ func htRecordProps(root *html.Node) string {
 		if props != "" {
 			return false
 		}
-		if n.Type == html.ElementNode && attr(n, "data-react-class") == htReactClass {
-			props = attr(n, "data-react-props")
+		if n.Type == html.ElementNode && Attr(n, "data-react-class") == htReactClass {
+			props = Attr(n, "data-react-props")
 			return false
 		}
 		return true

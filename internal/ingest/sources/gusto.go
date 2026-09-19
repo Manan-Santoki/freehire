@@ -231,7 +231,7 @@ func gustoListing(root *html.Node) []gustoPosting {
 		if n.Type != html.ElementNode || n.Data != "a" {
 			return true
 		}
-		href := attr(n, "href")
+		href := Attr(n, "href")
 		id := gustoPostingID(href)
 		if id == "" {
 			return true

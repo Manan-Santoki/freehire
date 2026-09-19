@@ -12,7 +12,6 @@ package boardresolve
 import (
 	"context"
 	"net/url"
-	"regexp"
 
 	"github.com/strelov1/freehire/internal/ingest/atsboard"
 	"github.com/strelov1/freehire/internal/ingest/atsdetect"
@@ -53,10 +52,6 @@ type Resolver struct {
 // New builds a Resolver over the default SSRF-guarded sources client.
 func New() *Resolver { return &Resolver{http: sources.NewClient()} }
 
-// absURLRe extracts absolute http(s) URLs from markup (href/src or bare URLs in inline JSON),
-// stopping at the first quote, angle bracket, or whitespace.
-var absURLRe = regexp.MustCompile(`https?://[^\s"'<>)\\]+`)
-
 // Resolve fetches rawURL and finds the ATS board it belongs to, returning the catalogue
 // (source, board) and a canonical URL to store. It looks two ways:
 //  1. the Greenhouse embed shape (script for=<board>) via atsdetect — which the URL recognizer
@@ -80,7 +75,7 @@ func (r *Resolver) Resolve(ctx context.Context, rawURL string) (source, board, c
 	}
 
 	// 2. Any supported ATS URL in the page, via the full recognizer. First recognized wins.
-	for _, u := range absURLRe.FindAllString(html, -1) {
+	for _, u := range atsdetect.AbsURLRe.FindAllString(html, -1) {
 		if s, b, _, matched := atsboard.Recognize(u); matched {
 			return s, b, stripTails(rawURL), true
 		}

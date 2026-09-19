@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -154,21 +155,56 @@ func TestFreshteamPaginatesUntilNoNewLinks(t *testing.T) {
 	}
 }
 
-func TestFreshteamDropsUnfetchableDetail(t *testing.T) {
-	// A detail page that 404s drops just that posting; the rest of the board still ingests.
+// A detail request the crawl could not READ must not look like a posting that is not there.
+// The detail page is freshteam's only source for a posting, and it is re-fetched on every
+// run, so a dropped one leaves the posting missing from a crawl that reported no failure at
+// all — and the stale-job sweep closes a live vacancy once the grace window elapses.
+func TestFreshteamUnreadableDetailIsMarkedNotDropped(t *testing.T) {
 	d := ftDetailHTML("Role", "&lt;p&gt;x&lt;/p&gt;", "2026-06-17 20:44:40 UTC", "Oslo", "Norway", false)
 	fake := (&routedHTTP{}).
 		route("page=1", ftListingHTML(
 			"https://b.freshteam.com/jobs/aaaaaaaaaaaa",
 			"https://b.freshteam.com/jobs/bbbbbbbbbbbb")).
 		route("page=2", ftListingHTML()).
-		route("/jobs/aaaaaaaaaaaa", d) // no route for bbbb → GetHTML errors → drops
+		route("/jobs/aaaaaaaaaaaa", d).
+		routeErr("/jobs/bbbbbbbbbbbb", errors.New("connection reset by peer"))
 
 	jobs, err := NewFreshteam(fake).Fetch(context.Background(), CompanyEntry{Company: "B", Board: "b"})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if len(jobs) != 1 {
-		t.Fatalf("got %d jobs, want 1 (one detail dropped)", len(jobs))
+	read := readPostings(jobs)
+	if len(read) != 1 || read[0].ExternalID != "aaaaaaaaaaaa" {
+		t.Fatalf("read = %v, want only the posting whose detail answered", read)
+	}
+	markers := unreadableMarkers(jobs)
+	if len(markers) != 1 || markers[0].ExternalID != "bbbbbbbbbbbb" {
+		t.Fatalf("unreadable markers = %v, want one for the posting whose detail did not", markers)
+	}
+	if markers[0].Company != "B" {
+		t.Errorf("marker Company = %q, want the board's employer", markers[0].Company)
+	}
+}
+
+// The other half of the distinction: 404 is the platform's own answer that the posting is
+// gone, so the crawl drops it and the board's evidence stays complete — otherwise a board
+// whose listing has gone stale could never retire anything.
+func TestFreshteamGoneDetailDropsThePosting(t *testing.T) {
+	d := ftDetailHTML("Role", "&lt;p&gt;x&lt;/p&gt;", "2026-06-17 20:44:40 UTC", "Oslo", "Norway", false)
+	gone := "https://b.freshteam.com/jobs/bbbbbbbbbbbb"
+	fake := (&routedHTTP{}).
+		route("page=1", ftListingHTML(
+			"https://b.freshteam.com/jobs/aaaaaaaaaaaa",
+			gone)).
+		route("page=2", ftListingHTML()).
+		route("/jobs/aaaaaaaaaaaa", d).
+		routeErr("/jobs/bbbbbbbbbbbb", &StatusError{Method: "GET", Code: 404, URL: gone})
+
+	jobs, err := NewFreshteam(fake).Fetch(context.Background(), CompanyEntry{Company: "B", Board: "b"})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].ExternalID != "aaaaaaaaaaaa" {
+		t.Fatalf("got %v, want only the kept posting — a 404 is evidence, not a hole", jobs)
 	}
 }

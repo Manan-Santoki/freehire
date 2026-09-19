@@ -89,10 +89,10 @@ func catsoneListings(base *url.URL, root *html.Node) []catsoneListing {
 	var out []catsoneListing
 	seen := map[string]struct{}{}
 	walk(root, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || n.Data != "a" || !hasClass(n, "table-row") {
+		if n.Type != html.ElementNode || n.Data != "a" || !HasClass(n, "table-row") {
 			return true
 		}
-		href := attr(n, "href")
+		href := Attr(n, "href")
 		if catsoneJobID(href) == "" {
 			return true
 		}
@@ -130,7 +130,7 @@ func firstByAttr(root *html.Node, key, val string) *html.Node {
 		if found != nil {
 			return false
 		}
-		if n.Type == html.ElementNode && attr(n, key) == val {
+		if n.Type == html.ElementNode && Attr(n, key) == val {
 			found = n
 			return false
 		}

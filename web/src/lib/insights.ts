@@ -9,7 +9,7 @@
 // seniority band, which is an /insights concept rather than a vocabulary value.
 
 import type { InsightRole, InsightSalaryBand, InsightSkill } from './api';
-import { SENIORITY_LABELS, categoryLabel, titleCase } from './labels';
+import { CATEGORY_LABELS, SENIORITY_LABELS, categoryLabel, titleCase } from './labels';
 
 /** A category is published only when its open-job demand clears this floor, so no
  *  thin page ships. Tunable; deliberately conservative. */
@@ -60,6 +60,81 @@ export function coveredCategories(roles: InsightRole[]): CoveredCategory[] {
 /** Whether a specific category clears the gate (drives the per-page 404). */
 export function isCovered(roles: InsightRole[], category: string): boolean {
   return coveredCategories(roles).some((c) => c.category === category);
+}
+
+/** Whether a path segment names a real seniority. Not exported: the gate below is the
+ *  only thing that should ask, so a caller cannot check the level and forget the rest of
+ *  the gate. An unrecognised level in a URL is a wrong address, not a bad request. */
+function isSeniority(seniority: string): boolean {
+  return (SENIORITY_ORDER as readonly string[]).includes(seniority);
+}
+
+/** Whether a (category, seniority) pair is even an ADDRESS: both halves named by the
+ *  vocabulary. Deliberately says nothing about DEMAND — how busy a role is decides
+ *  whether its page is worth indexing, not whether it exists — so this is answerable
+ *  from the two strings alone, with no ranking and no request.
+ *
+ *  That matters twice over. The API answers an invented level with a 400, which a
+ *  SvelteKit load turns into a 500, so a mistyped URL must be refused before it is
+ *  asked about. And the job page links here from any posting carrying both facets,
+ *  knowing nothing about how busy the role is — a coverage requirement here would send
+ *  a real posting's real role to a 404.
+ *
+ *  `other` is excluded: it is a real vocabulary value and not a role anybody hires for,
+ *  so "Other jobs" is a page with nothing to say. `coveredCategories` drops it for the
+ *  same reason. */
+export function roleAddressExists(category: string, seniority: string): boolean {
+  return category !== 'other' && category in CATEGORY_LABELS && isSeniority(seniority);
+}
+
+/** Whether a role deserves its own leaf page: a real address carrying enough open
+ *  postings that a distribution over them means something. Takes the role's OWN
+ *  open-count, so it can be asked of a single-role read as readily as of a ranking. */
+export function roleQualifies(
+  roles: InsightRole[],
+  category: string,
+  seniority: string,
+  openCount: number,
+): boolean {
+  return (
+    roleAddressExists(category, seniority) &&
+    isCovered(roles, category) &&
+    openCount >= MIN_CATEGORY_OPEN
+  );
+}
+
+/** The qualifying roles WITHIN a ranking — what the sitemap lists.
+ *
+ *  This is a SUBSET of what the route serves, and deliberately so. Its input is the
+ *  gate's ranked read, which the endpoint caps at 200 roles, while production carries
+ *  ~349 roles over the floor (measured 2026-09-18). Before this took the ranking's cap
+ *  seriously, the route read the same list and so 404'd every role below rank 200 —
+ *  the documented rule above was not what decided; "top 200 by demand" was.
+ *
+ *  Listing fewer pages than the route serves is the safe direction and the one the
+ *  sitemap convention requires: a listed URL must resolve. Listing MORE would be the
+ *  bug. Widening the list means paging the ranking, not raising insightsMaxLimit, which
+ *  bounds what an unauthenticated caller may ask for and exists for a different reason. */
+export function rankedQualifyingRoles(roles: InsightRole[]): InsightRole[] {
+  return roles.filter((r) => roleQualifies(roles, r.category, r.seniority, r.open_count));
+}
+
+/** The intro line for a role's leaf page. It says what the figures ARE measured over
+ *  — the postings that STATE this level and carry a tagged skill — because only 39%
+ *  of open technical postings name a seniority at all, so wording this as "the market
+ *  for senior backend" would claim a population the data does not cover. */
+export function roleSkillsIntro(role: InsightRole): string {
+  const name = `${seniorityLabel(role.seniority)} ${categoryLabel(role.category)}`;
+  const sample = role.sample_size ?? 0;
+  const skills = role.skills ?? [];
+  if (sample === 0 || skills.length === 0) {
+    return `Open ${name} postings on freehire. Not enough of them list skills yet to rank what they ask for.`;
+  }
+  const top = skills
+    .slice(0, 3)
+    .map((s) => s.skill)
+    .join(', ');
+  return `Across ${sample.toLocaleString('en-US')} open ${name} postings that list skills, the ones mentioned most often are ${top}.`;
 }
 
 /** Sort salary bands into seniority order (category-wide '' band last). */

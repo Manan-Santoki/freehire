@@ -26,7 +26,7 @@ func ldJobPosting(root *html.Node, v any) bool {
 			return false
 		}
 		if n.Type == html.ElementNode && n.Data == "script" &&
-			attr(n, "type") == "application/ld+json" {
+			Attr(n, "type") == "application/ld+json" {
 			if msg, ok := jobPostingNode(flexjson.SanitizeControlChars([]byte(textContent(n)))); ok &&
 				json.Unmarshal(msg, v) == nil {
 				found = true
@@ -46,7 +46,7 @@ func LDJobPostings(root *html.Node) []json.RawMessage {
 	var out []json.RawMessage
 	walk(root, func(n *html.Node) bool {
 		if n.Type == html.ElementNode && n.Data == "script" &&
-			attr(n, "type") == "application/ld+json" {
+			Attr(n, "type") == "application/ld+json" {
 			out = append(out, jobPostingNodes(flexjson.SanitizeControlChars([]byte(textContent(n))))...)
 		}
 		return true

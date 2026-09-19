@@ -23,7 +23,21 @@ const (
 	// ruleUnknown: a job no dictionary could place, at a company that has shown no
 	// technical signal of any kind, not even a tagged skill.
 	ruleUnknown = "unknown_at_empty_company"
+	// ruleMisattributed: the source filed this posting under the wrong employer and the
+	// right one was never stored, so the row cannot be repaired — only removed. The
+	// closure already recorded that verdict in closed_reason; this rule acts on it.
+	//
+	// Unlike the three above it asks nothing about the POSTING. Those decide whether a
+	// job belongs on an IT board; this one knows the row is wrong about who is hiring,
+	// whatever the job is.
+	ruleMisattributed = "source_misattributed"
 )
+
+// misattributedReason is the closed_reason cmd/close-apploi-misattributed stamps. It is a
+// label of its own precisely so a row closed because its ATTRIBUTION was wrong can be told
+// apart, later, from one closed for an ordinary reason — which is what makes this rule
+// possible at all.
+const misattributedReason = "source_misattributed"
 
 // candidate is the part of a job the rule reads. Everything here is a stored column;
 // the rule derives its own signals from them rather than trusting a stored is_tech,
@@ -37,6 +51,10 @@ type candidate struct {
 	// (nil) from "a dictionary placed it as non-technical" (false). The positive case
 	// is re-derived, never read from here.
 	IsTech *bool
+	// ClosedReason is why the lifecycle closed this row, empty while it is open. Only
+	// misattributedReason is acted on: every other closure leaves a row that is still
+	// correctly attributed and simply no longer live.
+	ClosedReason string
 }
 
 // evidence is what a company has ever shown, across its entire history.
@@ -48,8 +66,11 @@ type evidence struct {
 // matchRule reports which rule makes a job a deletion target, if any. The empty result
 // means keep.
 //
-// Two booleans carry the safety design. knownProvider gates everything: a source with
-// no boards at all is written outside the ingest pipeline and no crawl restores it.
+// Two booleans carry the safety design. knownProvider gates everything EXCEPT the
+// misattribution rule: a source with no boards at all is written outside the ingest
+// pipeline and no crawl restores it — which is the right caution for a rule judging a
+// posting, and exactly backwards for one acting on a provider that was retired because
+// its attribution was broken.
 // boardCrawled — whether the posting's board is still in the source files — is then read
 // in OPPOSITE directions by the two families of rule.
 //
@@ -69,6 +90,22 @@ func matchRule(c candidate, ev evidence, knownProvider, boardCrawled bool) (stri
 	// A source that is not a crawled board platform is out of reach of every rule. It
 	// would otherwise pass the company-scoped rules for free: they ask for an absent
 	// board, and a source with no boards has nothing but absent ones.
+	// FIRST, ahead of knownProvider and of every gate below it.
+	//
+	// Those gates all decide whether a POSTING belongs here, and they protect deletions
+	// that a later crawl could undo. None of that applies to a row we already know is
+	// filed under the wrong employer, with the right one unrecoverable.
+	//
+	// knownProvider in particular would make this rule dead on arrival, and did: it asks
+	// whether the source still has LIVE boards, and the campaign that labelled these rows
+	// retired all 5,833 of that provider's boards in the same step. Measured on production
+	// 2026-09-18, with the check below knownProvider, a full scan refused 1,596,766 rows
+	// and matched none of them — the rule never fired once on the rows it was written for.
+	if c.ClosedReason == misattributedReason {
+		return ruleMisattributed, true
+	}
+
+	// A source that is not a crawled board platform is out of reach of every rule below.
 	if !knownProvider {
 		return "", false
 	}

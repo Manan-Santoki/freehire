@@ -19,7 +19,7 @@
         // succeeds — the banner sits above the bank and nothing else would ever drop it.
         actionError = null;
         try {
-          await api.resetBaseCvFromResume();
+          await api.reseedBaseCv();
         } catch (e) {
           actionError = errorMessage(
             e,

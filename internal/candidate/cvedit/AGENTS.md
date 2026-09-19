@@ -163,20 +163,33 @@ documents on the table behind every CV page.
 
 `cv.MaxBullets` (default 20, override with `CV_MAX_BULLETS`) is enforced by `Sanitize`,
 which keeps the first N and drops the rest. Both `Commit` (an ops batch — cv_edit, template
-picks) and `CommitDocument` (a whole-document save — the editor's PUT autosave, Reset from
-résumé) refuse that class of loss up front (`ErrListCap` / `bullet_cap`) so neither an
-agent's insert into a full list nor a pasted/seeded document that is itself over the cap can
-look like a successful write while content vanishes. The guard is on by default;
-`Editor.SetRefuseListCap(false)` (env `CV_EDIT_ALLOW_BULLET_TRUNCATION=true` on the server)
-restores the old sanitize-and-drop behaviour without a code change, for both paths.
+picks) and `CommitDocument` (a whole-document save — the editor's PUT autosave, Reseed —
+formerly "Reset from résumé") refuse that class of loss up front (`ErrListCap` / `bullet_cap`)
+so neither an agent's insert into a full list nor a pasted/seeded document that is itself
+over the cap can look like a successful write while content vanishes. The guard is on by
+default; `Editor.SetRefuseListCap(false)` (env `CV_EDIT_ALLOW_BULLET_TRUNCATION=true` on the
+server) restores the old sanitize-and-drop behaviour without a code change, for both paths.
 
 `CommitDocument` checks the RAW incoming document, before its own pre-diff `Sanitize()` call
 — that Sanitize existed first (so the diff is against what will actually be stored) and would
 otherwise erase the overflow before the guard ever saw it, making the refuse a no-op for
 every whole-document save. Get this ordering backwards again and the guard silently stops
-protecting PUT /me/cvs/:id and Reset from résumé while still working for cv_edit —
+protecting PUT /me/cvs/:id and Reseed while still working for cv_edit —
 `TestCommitDocumentRefusesAWholeDocumentSaveOverTheCap` and
 `TestUpdateCV_RefusesAWholeDocumentSaveOverTheBulletCap` pin it.
+
+**A bank-sourced seed can no longer trigger this guard.** It used to: a bank bucket (one
+employment's banked achievements, or the placeless bucket for evidence with no employment)
+had no cap of its own, so a role banked past 20 achievements over years of real use built a
+seed that was already over the ceiling — and since Reseed rebuilds that SAME seed on every
+call, the refusal was permanent, with no self-service recovery. `cv.Seed`
+(`internal/candidate/cv/seed.go`) now caps every `Bullets` list at `cv.MaxBullets` before a
+`Document` is ever built, keeping the most recently banked evidence — deliberately not in
+`internal/candidate/experience`'s own bank projection, whose other reader (`WorkHistory` /
+`Professional` — fit-analysis scoring, `/me/profile`) must keep seeing every highlight. The
+guard above is still correct and still fires for other over-cap documents (a pasted document,
+or one grown past the cap through `cv_edit` inserts) — this only closes the one path that had
+no way out.
 
 Sibling Sanitize `limit()`s — experience/education/skills/languages/projects/certifications
 counts, skill items, links — still drop trailing entries silently. Extending refuse to those

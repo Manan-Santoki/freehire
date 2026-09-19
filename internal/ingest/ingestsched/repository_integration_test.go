@@ -52,6 +52,20 @@ func manage(t *testing.T, pool *pgxpool.Pool, provider string) {
 	}
 }
 
+// markHeavy flags a provider heavy directly on its ingest_schedule row — the column the
+// claim queries actually join against — rather than through a Go-level Settings value, so a
+// test using it proves the SQL join sees the flag rather than trusting Effective's mapping
+// of it.
+func markHeavy(t *testing.T, pool *pgxpool.Pool, provider string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO ingest_schedule (provider, heavy) VALUES ($1, true)
+		 ON CONFLICT (provider) DO UPDATE SET heavy = true`, provider)
+	if err != nil {
+		t.Fatalf("mark %s heavy: %v", provider, err)
+	}
+}
+
 func settingsFor(t *testing.T, repo *QueriesRepository, provider string) Settings {
 	t.Helper()
 	all, err := repo.Eligible(context.Background())
@@ -237,7 +251,7 @@ func TestClaimTakesOnlyDueRunsAndAdvancesFromNow(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	claimed, err := repo.Claim(ctx, 10, time.Minute)
+	claimed, err := repo.Claim(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
@@ -253,7 +267,7 @@ func TestClaimTakesOnlyDueRunsAndAdvancesFromNow(t *testing.T) {
 
 	// The second tick must find nothing: the row is claimed and its next due time is an
 	// hour out.
-	again, err := repo.Claim(ctx, 10, time.Minute)
+	again, err := repo.Claim(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("second Claim: %v", err)
 	}
@@ -278,7 +292,7 @@ func TestClaimAdvancesFromNowNotFromTheMissedDueTime(t *testing.T) {
 		t.Fatalf("backdate: %v", err)
 	}
 
-	if _, err := repo.Claim(ctx, 10, time.Minute); err != nil {
+	if _, err := repo.Claim(ctx, false, 10, time.Minute); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
 
@@ -296,7 +310,7 @@ func TestClaimReclaimsARunThatOutlivedItsTimeoutPlusGrace(t *testing.T) {
 	if _, err := repo.Reconcile(ctx, []Settings{Effective("greenhouse", nil)}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if _, err := repo.Claim(ctx, 10, time.Minute); err != nil {
+	if _, err := repo.Claim(ctx, false, 10, time.Minute); err != nil {
 		t.Fatalf("first Claim: %v", err)
 	}
 
@@ -306,7 +320,7 @@ func TestClaimReclaimsARunThatOutlivedItsTimeoutPlusGrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("age the claim: %v", err)
 	}
-	live, err := repo.Claim(ctx, 10, time.Minute)
+	live, err := repo.Claim(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("Claim inside window: %v", err)
 	}
@@ -320,7 +334,7 @@ func TestClaimReclaimsARunThatOutlivedItsTimeoutPlusGrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("age the claim further: %v", err)
 	}
-	dead, err := repo.Claim(ctx, 10, time.Minute)
+	dead, err := repo.Claim(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("Claim past window: %v", err)
 	}
@@ -342,7 +356,7 @@ func TestClaimRespectsItsLimit(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	claimed, err := repo.Claim(ctx, 3, time.Minute)
+	claimed, err := repo.Claim(ctx, true, 3, time.Minute)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
@@ -382,7 +396,7 @@ func TestConcurrentClaimsNeverTakeTheSameRunTwice(t *testing.T) {
 	for range racers {
 		go func() {
 			defer wg.Done()
-			claimed, err := repo.Claim(ctx, 10, time.Minute)
+			claimed, err := repo.Claim(ctx, false, 10, time.Minute)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -441,7 +455,7 @@ func TestADisabledProviderIsNotScheduledAndItsStateIsDropped(t *testing.T) {
 		t.Errorf("run state = %v after disabling, want none", got)
 	}
 
-	claimed, err := repo.Claim(ctx, 10, time.Minute)
+	claimed, err := repo.Claim(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
@@ -475,18 +489,30 @@ func TestPreviewSeesExactlyWhatAClaimWouldTake(t *testing.T) {
 		t.Fatalf("age a claim: %v", err)
 	}
 
-	preview, err := repo.PreviewDue(ctx, 10, time.Minute)
+	// paylocity (5 shards) is heavy and greenhouse is light, so both pools are exercised —
+	// this asserts the equivalence holds across the split, not just within one pool.
+	previewHeavy, err := repo.PreviewDue(ctx, true, 10, time.Minute)
 	if err != nil {
-		t.Fatalf("PreviewDue: %v", err)
+		t.Fatalf("PreviewDue heavy: %v", err)
 	}
+	previewLight, err := repo.PreviewDue(ctx, false, 10, time.Minute)
+	if err != nil {
+		t.Fatalf("PreviewDue light: %v", err)
+	}
+	preview := append(previewHeavy, previewLight...)
 	if len(preview) == 0 {
 		t.Fatal("preview saw nothing; the test premise is broken")
 	}
 
-	claimed, err := repo.Claim(ctx, 10, time.Minute)
+	claimedHeavy, err := repo.Claim(ctx, true, 10, time.Minute)
 	if err != nil {
-		t.Fatalf("Claim: %v", err)
+		t.Fatalf("Claim heavy: %v", err)
 	}
+	claimedLight, err := repo.Claim(ctx, false, 10, time.Minute)
+	if err != nil {
+		t.Fatalf("Claim light: %v", err)
+	}
+	claimed := append(claimedHeavy, claimedLight...)
 
 	if len(preview) != len(claimed) {
 		t.Fatalf("preview saw %d runs, claim took %d", len(preview), len(claimed))
@@ -530,7 +556,7 @@ func TestAnUnmanagedProviderIsTrackedButNeverClaimed(t *testing.T) {
 		t.Errorf("unmanaged provider has %v run state, want one row — it must still be tracked", got)
 	}
 
-	claimed, err := repo.Claim(ctx, 10, time.Minute)
+	claimed, err := repo.Claim(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
@@ -540,7 +566,7 @@ func TestAnUnmanagedProviderIsTrackedButNeverClaimed(t *testing.T) {
 
 	// The preview must agree, or the shadow run would report launches the apply run would
 	// never make.
-	preview, err := repo.PreviewDue(ctx, 10, time.Minute)
+	preview, err := repo.PreviewDue(ctx, false, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("PreviewDue: %v", err)
 	}
@@ -563,19 +589,23 @@ func TestPreviewMutatesNothing(t *testing.T) {
 	}
 
 	before := dueAt(t, pool, "greenhouse", 1)
-	if _, err := repo.PreviewDue(ctx, 10, time.Minute); err != nil {
+	if _, err := repo.PreviewDue(ctx, false, 10, time.Minute); err != nil {
 		t.Fatalf("PreviewDue: %v", err)
 	}
 
 	if after := dueAt(t, pool, "greenhouse", 1); !after.Equal(before) {
 		t.Errorf("preview moved next_due_at from %v to %v", before, after)
 	}
-	inFlight, err := repo.InFlightRuns(ctx)
+	lightInFlight, err := repo.InFlightRuns(ctx, false)
 	if err != nil {
-		t.Fatalf("InFlightRuns: %v", err)
+		t.Fatalf("InFlightRuns light: %v", err)
 	}
-	if len(inFlight) != 0 {
-		t.Errorf("preview claimed %d runs; want none", len(inFlight))
+	heavyInFlight, err := repo.InFlightRuns(ctx, true)
+	if err != nil {
+		t.Fatalf("InFlightRuns heavy: %v", err)
+	}
+	if len(lightInFlight)+len(heavyInFlight) != 0 {
+		t.Errorf("preview claimed %d runs; want none", len(lightInFlight)+len(heavyInFlight))
 	}
 }
 
@@ -592,19 +622,19 @@ func TestInFlightCountsClaimedRuns(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	if n, err := repo.InFlightRuns(ctx); err != nil || len(n) != 0 {
+	if n, err := repo.InFlightRuns(ctx, true); err != nil || len(n) != 0 {
 		t.Fatalf("InFlightRuns before any claim = %d (%v), want 0", len(n), err)
 	}
-	if _, err := repo.Claim(ctx, 3, time.Minute); err != nil {
+	if _, err := repo.Claim(ctx, true, 3, time.Minute); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if n, err := repo.InFlightRuns(ctx); err != nil || len(n) != 3 {
+	if n, err := repo.InFlightRuns(ctx, true); err != nil || len(n) != 3 {
 		t.Fatalf("InFlightRuns after claiming 3 = %d (%v), want 3", len(n), err)
 	}
 	if err := repo.RecordFinish(ctx, "paylocity", 1, 0, ""); err != nil {
 		t.Fatalf("RecordFinish: %v", err)
 	}
-	if n, err := repo.InFlightRuns(ctx); err != nil || len(n) != 2 {
+	if n, err := repo.InFlightRuns(ctx, true); err != nil || len(n) != 2 {
 		t.Fatalf("InFlightRuns after one finish = %d (%v), want 2", len(n), err)
 	}
 }
@@ -617,7 +647,7 @@ func TestRecordFinishClearsTheClaimAndStoresTheOutcome(t *testing.T) {
 	if _, err := repo.Reconcile(ctx, []Settings{Effective("greenhouse", nil)}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if _, err := repo.Claim(ctx, 10, time.Minute); err != nil {
+	if _, err := repo.Claim(ctx, false, 10, time.Minute); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
 
@@ -645,6 +675,70 @@ func TestRecordFinishClearsTheClaimAndStoresTheOutcome(t *testing.T) {
 	}
 	if exitCode == nil || *exitCode != 0 {
 		t.Errorf("last_exit_code = %v, want 0", exitCode)
+	}
+}
+
+// THE reservation this package's scheduler was missing, proven end to end through
+// Scheduler.Tick against real SQL rather than only against the fake repository
+// scheduler_test.go uses. Three heavy providers (flagged via ingest_schedule.heavy — the
+// unsharded arm of IsHeavy, not the shard-count one every other test in this file already
+// exercises) and three light ones are all due at once. With HeavyCap=1 and Cap=3 (so the
+// light pool gets Cap-HeavyCap=2), exactly one heavy run and exactly two light runs must be
+// claimed in a single tick — never fewer of one pool because the other pool is full, and
+// never more of either than its own budget allows.
+func TestSchedulerClaimsIndependentBudgetsPerPool(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+
+	heavyProviders := []string{"paylocity", "workday", "oracle"}
+	lightProviders := []string{"greenhouse", "lever", "ashby"}
+
+	var settings []Settings
+	for _, p := range heavyProviders {
+		addBoard(t, pool, p, "acme")
+		manage(t, pool, p)
+		markHeavy(t, pool, p)
+		settings = append(settings, Effective(p, nil))
+	}
+	for _, p := range lightProviders {
+		addBoard(t, pool, p, "acme")
+		manage(t, pool, p)
+		settings = append(settings, Effective(p, nil))
+	}
+	if _, err := repo.Reconcile(ctx, settings); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	sched := Scheduler{Repo: repo, Launcher: &fakeLauncher{}, Cap: 3, HeavyCap: 1, Grace: time.Minute, Apply: true}
+	got, err := sched.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if got.Heavy.Launched != 1 {
+		t.Errorf("Heavy.Launched = %d, want 1 (HeavyCap)", got.Heavy.Launched)
+	}
+	if got.Light.Launched != 2 {
+		t.Errorf("Light.Launched = %d, want 2 (Cap 3 - HeavyCap 1)", got.Light.Launched)
+	}
+	if len(got.Launched) != 3 {
+		t.Fatalf("Launched = %v, want exactly 3 runs total", got.Launched)
+	}
+
+	heavySet := map[string]bool{"paylocity": true, "workday": true, "oracle": true}
+	heavyLaunched, lightLaunched := 0, 0
+	for _, r := range got.Launched {
+		if heavySet[r.Provider] {
+			heavyLaunched++
+		} else {
+			lightLaunched++
+		}
+	}
+	if heavyLaunched != 1 {
+		t.Errorf("launched %d heavy runs, want exactly 1", heavyLaunched)
+	}
+	if lightLaunched != 2 {
+		t.Errorf("launched %d light runs, want exactly 2 — one light provider must be left for the next tick", lightLaunched)
 	}
 }
 

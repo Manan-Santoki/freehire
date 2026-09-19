@@ -6,8 +6,8 @@ import ExperiencePage from './+page.svelte';
 // carries a specific, useful reason from the server — this page used to discard it and
 // always show one generic string instead. See openspec change cv-refresh-error-message.
 
-const { resetBaseCvFromResume, askCvRefresh } = vi.hoisted(() => ({
-  resetBaseCvFromResume: vi.fn(),
+const { reseedBaseCv, askCvRefresh } = vi.hoisted(() => ({
+  reseedBaseCv: vi.fn(),
   askCvRefresh: vi.fn(),
 }));
 
@@ -22,14 +22,14 @@ const { StubApiError } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('$lib/api', () => ({ api: { resetBaseCvFromResume }, ApiError: StubApiError }));
+vi.mock('$lib/api', () => ({ api: { reseedBaseCv }, ApiError: StubApiError }));
 vi.mock('$lib/cvRefreshDialog.svelte', () => ({ askCvRefresh }));
 vi.mock('$lib/components/ExperienceBankView.svelte', async () => ({
   default: (await import('./ExperienceBankViewStub.svelte')).default,
 }));
 
 beforeEach(() => {
-  resetBaseCvFromResume.mockReset();
+  reseedBaseCv.mockReset();
   askCvRefresh.mockReset().mockResolvedValue(true);
 });
 
@@ -39,7 +39,7 @@ async function triggerBankMutated() {
 
 describe('experience page: base-CV refresh error', () => {
   it('shows the server-specific refusal reason', async () => {
-    resetBaseCvFromResume.mockRejectedValue(
+    reseedBaseCv.mockRejectedValue(
       new StubApiError(
         409,
         'Staff Engineer at Contoso already has 20 bullets (the maximum). The edit was not applied and no existing bullets were deleted. Your existing bullets were kept.',
@@ -55,7 +55,7 @@ describe('experience page: base-CV refresh error', () => {
   });
 
   it('falls back to a generic message when the failure carries no useful message', async () => {
-    resetBaseCvFromResume.mockRejectedValue('boom');
+    reseedBaseCv.mockRejectedValue('boom');
     render(ExperiencePage);
 
     await triggerBankMutated();

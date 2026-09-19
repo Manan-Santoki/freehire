@@ -157,14 +157,25 @@ Three things that follow, and are easy to get backwards:
   tailored copy whose vacancy is gone is refused with "the vacancy … no longer exists". They are
   different situations, and `job_id == 0` alone cannot tell them apart.
 
-### Reset from résumé
+### Reseed (formerly "reset from résumé")
 
-`POST /me/cvs/:id/reset-from-resume` (cookie-only) rebuilds a **tailored** CV's content from the
-current résumé seed (`bankedSeeder`: experience bank + `resume_structured`) and refreshes the
-base CV from the same seed. Same tailored id and agent session; template/margins/style on each
-row are preserved. Upload alone does **not** write `cvs` — it only refreshes the seed source;
-this endpoint is the explicit apply. 409 when the target is not tailored, the seed is unusable,
-or the seed itself exceeds the bullet ceiling (see `internal/candidate/cvedit/AGENTS.md`).
+`POST /me/cvs/:id/reseed` (cookie-only, handler `ReseedCV`) rebuilds a **tailored** CV's content
+from the current seed (`bankedSeeder`: experience bank first, `resume_structured` only for what
+the bank does not track — see `internal/candidate/experience/AGENTS.md`) and refreshes the base
+CV from the same seed via `reseedBaseFromSeed` (`POST /me/cvs/base/reseed`, handler `ReseedBaseCV`,
+is the base-only variant). Same tailored id and agent session; template/margins/style on each row
+are preserved. Upload alone does **not** write `cvs` — it only refreshes the seed source; this
+endpoint is the explicit apply. Renamed from `reset-from-resume`: that name described what the
+route once did (rebuild purely from the uploaded résumé's own extraction) before the seeder was
+changed to prefer the bank — "reseed" says what happens now without implying a single source.
+409 when the target is not tailored or the seed is unusable; a bank bucket over the bullet
+ceiling no longer refuses — `Seed` (`seed.go`) caps every `Bullets` list at `MaxBullets`
+before a `Document` is ever built, keeping the most recently banked evidence, so what reaches
+`CommitDocument` is never over cap in the first place (see `internal/candidate/cvedit/AGENTS.md`
+for the write-side guard this keeps from ever firing on a reseed). Deliberately **not** capped
+in `internal/candidate/experience` itself: `WorkHistory`/`Professional` — fit-analysis scoring
+and `/me/profile` — read the same bank and must see every highlight, not a printable page's
+worth of the most recent ones.
 
 The tailored copy commits **before** the base refresh, not after: these are two separate
 `CommitDocument` calls, not one transaction, so ordering decides which one a mid-request

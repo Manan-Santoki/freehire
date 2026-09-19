@@ -11,6 +11,10 @@ import (
 // fakeRepo records what the scheduler asked for and hands back what a test staged. It
 // stands in for Postgres wherever the assertion is about the scheduler's DECISIONS —
 // the SQL itself is proven in repository_integration_test.go against a real database.
+//
+// It classifies a staged Run as heavy or light by Shards > 1 alone, the same shape every
+// sharded family (paylocity, workday, ...) gets from Settings.IsHeavy in production; no
+// fake test run here ever needs the explicit-override arm.
 type fakeRepo struct {
 	eligible     []Settings
 	due          []Run
@@ -18,10 +22,13 @@ type fakeRepo struct {
 
 	reconciled     []Settings
 	reconcileSkips []Skipped
-	claimLimit     int
-	claimed        bool
-	previewed      bool
-	finished       []finishCall
+	// heavyLimit/lightLimit record the limit passed to the most recent Claim/PreviewDue
+	// call against that pool, so a test can assert on the budget the scheduler computed.
+	heavyLimit int
+	lightLimit int
+	claimed    bool
+	previewed  bool
+	finished   []finishCall
 
 	claimErr error
 }
@@ -40,33 +47,59 @@ func (f *fakeRepo) Reconcile(_ context.Context, s []Settings) ([]Skipped, error)
 	return f.reconcileSkips, nil
 }
 
-func (f *fakeRepo) InFlightRuns(context.Context) ([]Run, error) { return f.inFlightRuns, nil }
+func (f *fakeRepo) InFlightRuns(_ context.Context, heavy bool) ([]Run, error) {
+	var out []Run
+	for _, r := range f.inFlightRuns {
+		if isHeavyRun(r) == heavy {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
 
-func (f *fakeRepo) Claim(_ context.Context, limit int, _ time.Duration) ([]Run, error) {
+func (f *fakeRepo) Claim(_ context.Context, heavy bool, limit int, _ time.Duration) ([]Run, error) {
 	f.claimed = true
-	f.claimLimit = limit
+	f.recordLimit(heavy, limit)
 	if f.claimErr != nil {
 		return nil, f.claimErr
 	}
-	return f.take(limit), nil
+	return f.take(heavy, limit), nil
 }
 
-func (f *fakeRepo) PreviewDue(_ context.Context, limit int, _ time.Duration) ([]Run, error) {
+func (f *fakeRepo) PreviewDue(_ context.Context, heavy bool, limit int, _ time.Duration) ([]Run, error) {
 	f.previewed = true
-	f.claimLimit = limit
-	return f.take(limit), nil
+	f.recordLimit(heavy, limit)
+	return f.take(heavy, limit), nil
 }
 
-func (f *fakeRepo) take(limit int) []Run {
-	if limit >= len(f.due) {
-		out := f.due
-		f.due = nil
-		return out
+func (f *fakeRepo) recordLimit(heavy bool, limit int) {
+	if heavy {
+		f.heavyLimit = limit
+	} else {
+		f.lightLimit = limit
 	}
-	out := f.due[:limit]
-	f.due = f.due[limit:]
-	return out
 }
+
+func (f *fakeRepo) take(heavy bool, limit int) []Run {
+	if limit <= 0 {
+		return nil
+	}
+	var matched, rest []Run
+	for _, r := range f.due {
+		if len(matched) < limit && isHeavyRun(r) == heavy {
+			matched = append(matched, r)
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	f.due = rest
+	return matched
+}
+
+// isHeavyRun mirrors Settings.IsHeavy's shard arm: a run is heavy when its provider is
+// sharded. Every fake-repo fixture in this file expresses "heavy" through Shards > 1 for
+// exactly that reason.
+func isHeavyRun(r Run) bool { return r.Shards > 1 }
 
 func (f *fakeRepo) RecordFinish(_ context.Context, provider string, shard, exitCode int, runErr string) error {
 	f.finished = append(f.finished, finishCall{provider, shard, exitCode, runErr})
@@ -169,6 +202,11 @@ func TestApplyTickClaimsAndLaunches(t *testing.T) {
 
 // The concurrency cap replaces ingest-slot.sh's flock semaphore. It exists because 279
 // independent timers could not see each other; one scheduler can simply count.
+//
+// The whole cap is reserved for the heavy pool here (HeavyCap == Cap), so this test
+// measures exactly what it always has — free capacity, undisturbed by the heavy/light
+// split. TestHeavyAndLightPoolsAreBudgetedIndependently below is what tests the split
+// itself.
 func TestTickLaunchesOnlyTheFreeCapacity(t *testing.T) {
 	repo := &fakeRepo{
 		eligible:     []Settings{managed("paylocity")},
@@ -181,13 +219,14 @@ func TestTickLaunchesOnlyTheFreeCapacity(t *testing.T) {
 		},
 	}
 	launcher := &fakeLauncher{}
+	sched := Scheduler{Repo: repo, Launcher: launcher, Cap: 10, HeavyCap: 10, Grace: time.Minute, Apply: true}
 
-	if _, err := newScheduler(repo, launcher, true).Tick(context.Background()); err != nil {
+	if _, err := sched.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	if repo.claimLimit != 3 {
-		t.Errorf("claim limit = %d, want 10 - 7 in flight = 3", repo.claimLimit)
+	if repo.heavyLimit != 3 {
+		t.Errorf("heavy claim limit = %d, want 10 - 7 in flight = 3", repo.heavyLimit)
 	}
 	if len(launcher.launched) != 3 {
 		t.Errorf("launched %d runs, want 3", len(launcher.launched))
@@ -197,6 +236,11 @@ func TestTickLaunchesOnlyTheFreeCapacity(t *testing.T) {
 // A saturated tick must be loud and must leave every due row claimable. A fleet that
 // quietly stops crawling looks identical to a healthy one — the reason ingest-slot.sh
 // logged its skips too.
+//
+// The whole cap is reserved for the heavy pool here (HeavyCap == Cap, so the light pool
+// gets none), which is what makes "everything running is heavy" the same thing as "the
+// fleet is saturated" for this test — see TestHeavyAndLightPoolsAreBudgetedIndependently
+// for the case this split exists to fix: a full heavy pool alone must NOT saturate light.
 func TestSaturatedTickLaunchesNothingAndSaysSo(t *testing.T) {
 	repo := &fakeRepo{
 		eligible:     []Settings{managed("greenhouse")},
@@ -204,8 +248,9 @@ func TestSaturatedTickLaunchesNothingAndSaysSo(t *testing.T) {
 		due:          []Run{{Provider: "greenhouse", Shard: 1, Shards: 1, RunTimeout: DefaultRunTimeout}},
 	}
 	launcher := &fakeLauncher{}
+	sched := Scheduler{Repo: repo, Launcher: launcher, Cap: 10, HeavyCap: 10, Grace: time.Minute, Apply: true}
 
-	got, err := newScheduler(repo, launcher, true).Tick(context.Background())
+	got, err := sched.Tick(context.Background())
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -216,8 +261,92 @@ func TestSaturatedTickLaunchesNothingAndSaysSo(t *testing.T) {
 	if len(launcher.launched) != 0 {
 		t.Errorf("a saturated tick launched %v", launcher.launched)
 	}
-	if repo.claimLimit != 0 {
-		t.Errorf("a saturated tick asked to claim %d; it must not claim at all", repo.claimLimit)
+	if repo.claimed {
+		t.Error("a saturated tick claimed from either pool; it must not claim at all")
+	}
+}
+
+// THE bug this whole change fixes: before the split, a burst of long sharded crawls could
+// fill the fleet's entire cap, and the short tail — most of the fleet's providers, none of
+// them individually expensive — would starve behind it. Here the heavy pool is completely
+// full (10 of 10 heavy slots) while the light pool has headroom, and a light provider must
+// still be claimed and launched despite the heavy pool having nothing free at all.
+func TestHeavyAndLightPoolsAreBudgetedIndependently(t *testing.T) {
+	repo := &fakeRepo{
+		eligible:     []Settings{managed("paylocity"), managed("greenhouse")},
+		inFlightRuns: stillRunning("paylocity", 10), // fills the heavy pool past its own cap
+		due:          []Run{{Provider: "greenhouse", Shard: 1, Shards: 1, RunTimeout: DefaultRunTimeout}},
+	}
+	launcher := &fakeLauncher{}
+	sched := Scheduler{Repo: repo, Launcher: launcher, Cap: 15, HeavyCap: 10, Grace: time.Minute, Apply: true}
+
+	got, err := sched.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if got.Saturated {
+		t.Error("Saturated = true; the light pool still had room, so the tick must not report the fleet as full")
+	}
+	if repo.heavyLimit != 0 {
+		t.Errorf("heavy claim limit = %d, want 0 — the heavy pool is already at its cap", repo.heavyLimit)
+	}
+	if len(launcher.launched) != 1 || launcher.launched[0].Provider != "greenhouse" {
+		t.Fatalf("launched %v, want the one light run despite the heavy pool being full", launcher.launched)
+	}
+	if got.Heavy.InFlight != 10 || got.Heavy.Cap != 10 {
+		t.Errorf("Heavy = %+v, want InFlight 10 / Cap 10", got.Heavy)
+	}
+	if got.Light.Launched != 1 || got.Light.Cap != 5 {
+		t.Errorf("Light = %+v, want Launched 1 / Cap 5 (Cap 15 - HeavyCap 10)", got.Light)
+	}
+}
+
+// A misconfigured HeavyCap greater than Cap must not let the heavy pool alone claim past
+// the fleet's real ceiling — the split exists to PROTECT Cap, not to open a second door
+// around it. maxRuns (the sqlc claim LIMIT's own sanity ceiling, 1000) is not a stand-in for
+// Cap, so heavyCap itself must be clamped, not just lightCap.
+func TestHeavyCapNeverClaimsPastTheFleetCap(t *testing.T) {
+	paylocity := managed("paylocity")
+	paylocity.Shards = 24 // sharded, so every one of its runs is heavy
+	repo := &fakeRepo{
+		eligible: []Settings{paylocity},
+		due: []Run{
+			{Provider: "paylocity", Shard: 1, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 2, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 3, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 4, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 5, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 6, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 7, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 8, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 9, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 10, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 11, Shards: 24, RunTimeout: DefaultRunTimeout},
+			{Provider: "paylocity", Shard: 12, Shards: 24, RunTimeout: DefaultRunTimeout},
+		},
+	}
+	launcher := &fakeLauncher{}
+	// HeavyCap (20) exceeds Cap (10) — an operator typo, or a HeavyCap left over from a
+	// larger fleet after Cap was lowered.
+	sched := Scheduler{Repo: repo, Launcher: launcher, Cap: 10, HeavyCap: 20, Grace: time.Minute, Apply: true}
+
+	got, err := sched.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if repo.heavyLimit > 10 {
+		t.Errorf("heavy claim limit = %d, want <= Cap (10) — a misconfigured HeavyCap must not raise real fleet concurrency past Cap", repo.heavyLimit)
+	}
+	if got.Heavy.Cap > 10 {
+		t.Errorf("Heavy.Cap = %d, want <= 10", got.Heavy.Cap)
+	}
+	if got.Light.Cap != 0 {
+		t.Errorf("Light.Cap = %d, want 0 (Cap 10 - clamped HeavyCap 10)", got.Light.Cap)
+	}
+	if len(launcher.launched) > 10 {
+		t.Errorf("launched %d runs, want at most Cap (10)", len(launcher.launched))
 	}
 }
 
@@ -418,8 +547,10 @@ func TestTickReapsBeforeItMeasuresFreeCapacity(t *testing.T) {
 	if got.Saturated {
 		t.Error("Saturated = true after reaping nine of ten runs; the reap must precede the budget")
 	}
-	if repo.claimLimit != 9 {
-		t.Errorf("claim limit = %d, want 10 - 1 still running = 9", repo.claimLimit)
+	// All ten runs are paylocity (Shards 24, heavy), so this exercises the heavy pool's
+	// own budget: DefaultHeavyCap 5 - the one still running = 4.
+	if repo.heavyLimit != 4 {
+		t.Errorf("heavy claim limit = %d, want DefaultHeavyCap 5 - 1 still running = 4", repo.heavyLimit)
 	}
 }
 

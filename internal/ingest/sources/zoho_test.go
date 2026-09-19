@@ -31,7 +31,7 @@ func TestZohoUnescape(t *testing.T) {
 func TestZohoJobsInputExtraction(t *testing.T) {
 	// The listing JSON is read off the hidden <input id="jobs"> via the shared firstByID+attr.
 	root := parseHTML(t, `<html><body><input id="other" value="x"><input id="jobs" value='[{"id":"1"}]'></body></html>`)
-	if n := firstByID(root, "jobs"); n == nil || attr(n, "value") != `[{"id":"1"}]` {
+	if n := firstByID(root, "jobs"); n == nil || Attr(n, "value") != `[{"id":"1"}]` {
 		t.Error("firstByID(jobs) did not yield the #jobs array value")
 	}
 	if n := firstByID(root, "missing"); n != nil {

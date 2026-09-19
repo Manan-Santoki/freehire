@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -9,9 +10,12 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/strelov1/freehire/internal/candidate/jobmatch"
 	"github.com/strelov1/freehire/internal/dict/vocab"
+	"github.com/strelov1/freehire/internal/identity/auth"
 	"github.com/strelov1/freehire/internal/platform/db"
 )
 
@@ -26,6 +30,12 @@ import (
 const (
 	insightsDefaultLimit = 20
 	insightsMaxLimit     = 200
+	// roleSkillTopN caps a single role's skill distribution. Separate from the `limit`
+	// above, which bounds how many ROLES a ranking returns: one knob serving both meant
+	// ?limit=1 silently asked for a one-skill distribution, and meta.limit could not tell
+	// the caller which of the two it had just set. Production roles publish 150-800
+	// skills each (measured 2026-09-18), so a cap is needed whatever the caller asks.
+	roleSkillTopN = 40
 	// companiesDefaultMinOpen floors the leaderboard's current open-count by default,
 	// so a company whose whole board just appeared/vanished (an ingest artifact) does
 	// not dominate the ranking. Callers can override with min_open.
@@ -41,12 +51,39 @@ type companyInsight struct {
 	Growth30d   int32  `json:"growth_30d"`
 }
 
-// roleInsight is one ranked role on the wire.
+// roleInsight is one ranked role on the wire. The last two fields are populated only
+// when the caller named a SINGLE role (both category and seniority); in the ranked-list
+// answer they are absent rather than empty, so a client can tell "this answer does not
+// carry a distribution" apart from "this role's distribution is empty".
+//
+// Both are pointers for that reason. `omitempty` alone could not express it: it omits an
+// empty slice as readily as a nil one, and a role whose every skill fell below the floor
+// must still answer with an empty `skills` array rather than with no array at all.
 type roleInsight struct {
-	Category  string `json:"category"`
-	Seniority string `json:"seniority"`
-	OpenCount int32  `json:"open_count"`
-	Growth    int32  `json:"growth"`
+	Category   string              `json:"category"`
+	Seniority  string              `json:"seniority"`
+	OpenCount  int32               `json:"open_count"`
+	Growth     int32               `json:"growth"`
+	SampleSize *int32              `json:"sample_size,omitempty"`
+	Skills     *[]roleSkillInsight `json:"skills,omitempty"`
+	// Coverage is the signed-in caller's own standing against those skills. Absent for
+	// an anonymous caller; present and reporting zero held for a signed-in one with no
+	// skills, so the two cases are distinguishable.
+	Coverage *jobmatch.JobMatch `json:"coverage,omitempty"`
+}
+
+// roleSkillInsight is one skill inside a single role's distribution.
+//
+// Share divides by the role's sample_size — its open postings carrying at least one
+// tagged skill — NEVER by its open_count. Measured 2026-09-18, 11% of the eligible
+// postings carry no tagged skill, so dividing by the open count would fold our own
+// tagging gap into every published share; and because that gap differs per role, two
+// roles' shares would stop being comparable, which is the one comparison the figure
+// exists to support.
+type roleSkillInsight struct {
+	Skill     string  `json:"skill"`
+	OpenCount int32   `json:"open_count"`
+	Share     float64 `json:"share"`
 }
 
 // skillInsight is one ranked skill on the wire.
@@ -219,8 +256,20 @@ func (h *statsHandlers) InsightsRoles(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	seniority, err := parseSeniority(c.Query("seniority"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	// A seniority spanning every category is not a role — "senior" alone names no
+	// population whose skill distribution means anything — so it is refused rather
+	// than silently answered with a ranking.
+	if seniority != "" && category == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "seniority requires category")
+	}
 
-	rows, err := h.queries.ListInsightsRoles(c.Context(), db.ListInsightsRolesParams{Country: country, Category: category, Sort: sort, Lim: limit})
+	rows, err := h.queries.ListInsightsRoles(c.Context(), db.ListInsightsRolesParams{
+		Country: country, Category: category, Seniority: seniority, Sort: sort, Lim: limit,
+	})
 	if err != nil {
 		return err
 	}
@@ -228,10 +277,121 @@ func (h *statsHandlers) InsightsRoles(c *fiber.Ctx) error {
 	for i, r := range rows {
 		data[i] = roleInsight{Category: r.Category, Seniority: r.Seniority, OpenCount: r.OpenCount, Growth: r.Growth}
 	}
-	return c.JSON(fiber.Map{
-		"data": data,
-		"meta": fiber.Map{"country": country, "category": category, "sort": sort, "limit": limit},
+
+	meta := fiber.Map{"country": country, "category": category, "seniority": seniority, "sort": sort, "limit": limit}
+	if seniority != "" {
+		// insights_role_stats is keyed by (category, seniority, country), so a named role
+		// matches at most one row. The loop is over "however many came back" rather than
+		// an assumption about that being one.
+		var carriesCoverage bool
+		for i := range data {
+			if err := h.attachRoleSkills(c, &data[i]); err != nil {
+				return err
+			}
+			if h.attachRoleCoverage(c, &data[i]) {
+				carriesCoverage = true
+			}
+		}
+		// A coverage overlay is one caller's own answer. The sibling insights routes are
+		// happily shared-cacheable and the SPA sets s-maxage on them, so this must say
+		// otherwise explicitly — a shared cache holding one visitor's coverage would
+		// serve it to the next.
+		//
+		// The condition is what the BODY carries, not whether the caller is signed in.
+		// Those two agree on the ordinary path and part company when the overlay is
+		// skipped (a failed profile read), where re-deriving from the session would mark
+		// a response private that holds nothing private.
+		if carriesCoverage {
+			c.Set(fiber.HeaderCacheControl, "private, no-store")
+		}
+		// The distribution is country-agnostic by design (the rollup does not cross a
+		// third axis), while open_count and growth above ARE country-scoped. Saying so
+		// is the difference between a caller reading a national figure and assuming one.
+		meta["skills_geography_scoped"] = false
+	}
+	return c.JSON(fiber.Map{"data": data, "meta": meta})
+}
+
+// attachRoleSkills fills one role's distribution and the denominator its shares divide
+// by. A role with no sample row has no skill-bearing postings, which is a real answer —
+// an empty distribution over a sample of zero — not an error, so the missing row is read
+// as zero rather than propagated.
+func (h *statsHandlers) attachRoleSkills(c *fiber.Ctx, role *roleInsight) error {
+	sample, err := h.queries.GetInsightsRoleSkillSample(c.Context(), db.GetInsightsRoleSkillSampleParams{
+		Category: role.Category, Seniority: role.Seniority,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		sample = 0
+	} else if err != nil {
+		return err
+	}
+
+	rows, err := h.queries.ListInsightsRoleSkills(c.Context(), db.ListInsightsRoleSkillsParams{
+		Category: role.Category, Seniority: role.Seniority, Lim: roleSkillTopN,
+	})
+	if err != nil {
+		return err
+	}
+	skills := make([]roleSkillInsight, len(rows))
+	for i, r := range rows {
+		skills[i] = roleSkillInsight{Skill: r.Skill, OpenCount: r.OpenCount, Share: skillShare(r.OpenCount, sample)}
+	}
+	role.SampleSize = &sample
+	role.Skills = &skills
+	return nil
+}
+
+// skillShare is the one place the denominator rule lives: a skill's count over the
+// role's SKILL-BEARING postings, never over its open count. Measured 2026-09-18, 11% of
+// the eligible postings carry no tagged skill, so dividing by the open count would fold
+// our own tagging gap into every published share — and because that gap differs per
+// role, two roles' shares would stop being comparable.
+//
+// A sample of zero yields zero rather than a division by it. That combination cannot
+// arise from real data (a skill counted implies a posting carrying it), so the guard is
+// against the rollups being out of step, not against a case the catalogue produces.
+func skillShare(count, sample int32) float64 {
+	if sample <= 0 {
+		return 0
+	}
+	return float64(count) / float64(sample)
+}
+
+// attachRoleCoverage overlays the signed-in caller's own coverage of the role's ranked
+// skills. Anonymous callers get nothing here and are never refused — the aggregate half
+// of this answer is public.
+//
+// It reuses internal/candidate/jobmatch unchanged rather than classifying the skills
+// again: a visitor will compare this page's coverage against a job page's, and two
+// matchers would eventually disagree about what counts as an adjacent skill.
+//
+// Best-effort, like the sibling signed-in overlays on the public job and company reads:
+// a profile lookup that fails leaves the coverage absent rather than failing a read that
+// is perfectly serviceable without it.
+//
+// Returns whether a section was attached, which is what the caller's Cache-Control
+// decision reads — so the header describes the body rather than re-deriving the same
+// answer from the session and disagreeing with it on the skipped path.
+func (h *statsHandlers) attachRoleCoverage(c *fiber.Ctx, role *roleInsight) bool {
+	userID, ok := auth.UserID(c)
+	if !ok || role.Skills == nil {
+		return false
+	}
+	profile, err := h.queries.GetUserProfile(c.Context(), userID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false
+	}
+	// A caller with no profile row, or one holding no skills, still gets a coverage
+	// section — reporting zero held. An ABSENT section means "not signed in", and a
+	// client cannot tell that apart from "signed in and holding nothing" if the two
+	// share a representation.
+	ranked := make([]string, len(*role.Skills))
+	for i, s := range *role.Skills {
+		ranked[i] = s.Skill
+	}
+	m := jobmatch.Compute(ranked, profile.Skills)
+	role.Coverage = &m
+	return true
 }
 
 // InsightsCompanies serves GET /api/v1/insights/companies: the hiring-signal

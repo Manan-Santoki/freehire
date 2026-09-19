@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimDueRuns = `-- name: ClaimDueRuns :many
+const claimDueHeavyRuns = `-- name: ClaimDueHeavyRuns :many
 WITH candidate AS (
     SELECT rs.provider,
            rs.shard,
@@ -38,6 +38,10 @@ WITH candidate AS (
     -- owns it. COALESCE to false: while the column exists, a provider nobody has handed
     -- over is still the static timer's.
     AND COALESCE(s.managed, false)
+    -- The heavy-pool gate. See the query's header for what "heavy" means and why it is
+    -- read the same way in Go and SQL.
+    AND (COALESCE(s.heavy, false)
+         OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
     ORDER BY rs.next_due_at
     LIMIT $4
     FOR UPDATE OF rs SKIP LOCKED
@@ -51,39 +55,46 @@ WHERE rs.provider = c.provider AND rs.shard = c.shard
 RETURNING rs.provider, rs.shard, c.shards, c.timeout_sec
 `
 
-type ClaimDueRunsParams struct {
+type ClaimDueHeavyRunsParams struct {
 	DefaultCadenceSec int32 `json:"default_cadence_sec"`
 	DefaultTimeoutSec int32 `json:"default_timeout_sec"`
 	GraceSec          int32 `json:"grace_sec"`
 	MaxRuns           int32 `json:"max_runs"`
 }
 
-type ClaimDueRunsRow struct {
+type ClaimDueHeavyRunsRow struct {
 	Provider   string `json:"provider"`
 	Shard      int32  `json:"shard"`
 	Shards     int32  `json:"shards"`
 	TimeoutSec int32  `json:"timeout_sec"`
 }
 
-// Take up to max_runs due runs, exactly once each.
+// Take up to max_runs due runs, exactly once each, from the HEAVY pool only. See
+// ClaimDueLightRuns for the sibling that claims from the other pool: the scheduler calls
+// both every tick, each against its own budget (ingestsched.DefaultHeavyCap /
+// ingestsched.DefaultCap - DefaultHeavyCap), so a burst of long sharded crawls can never
+// crowd the short tail out of the fleet the way freehire-ops' scripts/host2/ingest-slot.sh's own HEAVY_SLOTS
+// split exists to prevent for the flock semaphore this scheduler replaces.
 //
-// The CTE resolves each candidate's cadence and timeout through the same LEFT JOIN and
-// defaults as the listing above, so a claim can never use different numbers from the
-// report. FOR UPDATE ... SKIP LOCKED is what makes two overlapping scheduler ticks safe:
-// the second skips the rows the first holds rather than blocking on them or double-claiming.
-// `OF rs` names only the run-state table, since FOR UPDATE may not be applied to the
-// nullable side of an outer join.
+// A provider is heavy when it is explicitly flagged (ingest_schedule.heavy) or SHARDED —
+// more than one row in ingest_run_state for it. The two are ORed here exactly as
+// ingestsched.Settings.IsHeavy ORs them in Go: every sharded family (workday, eightfold,
+// oracle, paylocity, join, dayforce, workstream, adp, adpmyjobs) is heavy through the shard
+// arm alone, and the flag exists for a curator to place a future single-shard-but-costly
+// provider in this pool without sharding it.
 //
-// A row is claimable when it is due and unclaimed, or when its claim has outlived that
-// provider's own timeout plus the grace window — a scheduler killed between claiming and
-// launching, and a run systemd killed at its timeout, both recover through that second arm
-// with no operator.
-//
-// next_due_at advances to now() + cadence, not to next_due_at + cadence. Advancing at
-// claim stops a 40-minute crawl from halving its own frequency; advancing from now() caps
-// catch-up at ONE run, so a six-hour outage does not owe six.
-func (q *Queries) ClaimDueRuns(ctx context.Context, arg ClaimDueRunsParams) ([]ClaimDueRunsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueRuns,
+// Otherwise identical to ClaimDueLightRuns and to the single query both replace: the CTE
+// resolves cadence/timeout through the same LEFT JOIN and defaults the listing uses, so a
+// claim can never disagree with the report; FOR UPDATE ... SKIP LOCKED is what makes two
+// overlapping scheduler ticks safe, `OF rs` naming only the run-state table since FOR
+// UPDATE may not apply to the nullable side of an outer join; a row is claimable when due
+// and unclaimed, or when its claim has outlived the provider's timeout plus grace — a
+// scheduler killed between claiming and launching, and a run systemd killed at its
+// timeout, both recover through that arm with no operator; and next_due_at advances to
+// now() + cadence, not to next_due_at + cadence, so a 40-minute crawl cannot halve its own
+// frequency and a six-hour outage owes exactly one run rather than a stampede of six.
+func (q *Queries) ClaimDueHeavyRuns(ctx context.Context, arg ClaimDueHeavyRunsParams) ([]ClaimDueHeavyRunsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueHeavyRuns,
 		arg.DefaultCadenceSec,
 		arg.DefaultTimeoutSec,
 		arg.GraceSec,
@@ -93,9 +104,89 @@ func (q *Queries) ClaimDueRuns(ctx context.Context, arg ClaimDueRunsParams) ([]C
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ClaimDueRunsRow{}
+	items := []ClaimDueHeavyRunsRow{}
 	for rows.Next() {
-		var i ClaimDueRunsRow
+		var i ClaimDueHeavyRunsRow
+		if err := rows.Scan(
+			&i.Provider,
+			&i.Shard,
+			&i.Shards,
+			&i.TimeoutSec,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimDueLightRuns = `-- name: ClaimDueLightRuns :many
+WITH candidate AS (
+    SELECT rs.provider,
+           rs.shard,
+           (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
+           COALESCE(s.cadence_sec, $1::int) AS cadence_sec,
+           COALESCE(s.timeout_sec, $2::int) AS timeout_sec
+    FROM ingest_run_state rs
+    LEFT JOIN ingest_schedule s ON s.provider = rs.provider
+    WHERE ((rs.claimed_at IS NULL AND rs.next_due_at <= now())
+        OR (rs.claimed_at IS NOT NULL
+            AND rs.claimed_at < now() - make_interval(
+                    secs => COALESCE(s.timeout_sec, $2::int)
+                            + $3::int)))
+    AND COALESCE(s.managed, false)
+    -- The light-pool gate: the negation of ClaimDueHeavyRuns's heavy gate, so every due,
+    -- managed row is claimed by exactly one of the two queries and never by both.
+    AND NOT (COALESCE(s.heavy, false)
+             OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
+    ORDER BY rs.next_due_at
+    LIMIT $4
+    FOR UPDATE OF rs SKIP LOCKED
+)
+UPDATE ingest_run_state rs
+SET claimed_at      = now(),
+    last_started_at = now(),
+    next_due_at     = now() + make_interval(secs => c.cadence_sec)
+FROM candidate c
+WHERE rs.provider = c.provider AND rs.shard = c.shard
+RETURNING rs.provider, rs.shard, c.shards, c.timeout_sec
+`
+
+type ClaimDueLightRunsParams struct {
+	DefaultCadenceSec int32 `json:"default_cadence_sec"`
+	DefaultTimeoutSec int32 `json:"default_timeout_sec"`
+	GraceSec          int32 `json:"grace_sec"`
+	MaxRuns           int32 `json:"max_runs"`
+}
+
+type ClaimDueLightRunsRow struct {
+	Provider   string `json:"provider"`
+	Shard      int32  `json:"shard"`
+	Shards     int32  `json:"shards"`
+	TimeoutSec int32  `json:"timeout_sec"`
+}
+
+// The LIGHT pool's half of ClaimDueHeavyRuns: identical query, opposite gate. See that
+// query's header for the reasoning shared by both — the predicate, the reclaim arm, the
+// heavy/light split's purpose — and for why sqlc leaves the two written out in full rather
+// than shared.
+func (q *Queries) ClaimDueLightRuns(ctx context.Context, arg ClaimDueLightRunsParams) ([]ClaimDueLightRunsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueLightRuns,
+		arg.DefaultCadenceSec,
+		arg.DefaultTimeoutSec,
+		arg.GraceSec,
+		arg.MaxRuns,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimDueLightRunsRow{}
+	for rows.Next() {
+		var i ClaimDueLightRunsRow
 		if err := rows.Scan(
 			&i.Provider,
 			&i.Shard,
@@ -178,7 +269,7 @@ func (q *Queries) EnsureRunStateShards(ctx context.Context, arg EnsureRunStateSh
 	return err
 }
 
-const listInFlightRuns = `-- name: ListInFlightRuns :many
+const listInFlightHeavyRuns = `-- name: ListInFlightHeavyRuns :many
 SELECT rs.provider,
        rs.shard,
        (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
@@ -186,35 +277,88 @@ SELECT rs.provider,
 FROM ingest_run_state rs
 LEFT JOIN ingest_schedule s ON s.provider = rs.provider
 WHERE rs.claimed_at IS NOT NULL
+  AND (COALESCE(s.heavy, false)
+       OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
 ORDER BY rs.claimed_at
 `
 
-type ListInFlightRunsRow struct {
+type ListInFlightHeavyRunsRow struct {
 	Provider   string `json:"provider"`
 	Shard      int32  `json:"shard"`
 	Shards     int32  `json:"shards"`
 	TimeoutSec int32  `json:"timeout_sec"`
 }
 
-// Every claimed run, with what the scheduler needs to ask the service manager about it.
+// Every claimed HEAVY-pool run, with what the scheduler needs to ask the service manager
+// about it. See ListInFlightLightRuns for the other pool, and ClaimDueHeavyRuns for what
+// "heavy" means and why the two pools are counted apart: the budget each pool claims
+// against next tick is that pool's own cap minus how many of ITS runs are still going, so a
+// heavy provider running long must never shrink the light tail's own budget, and vice versa.
 //
 // Rows, not a count. A transient unit finishes and tells nobody, so claimed_at is set at
 // claim and cleared by nothing until the scheduler reaps: a plain count would include every
 // run that ever succeeded, and the fleet's concurrency cap would fill permanently after
 // Cap launches with every check still green.
 //
-// This is what replaces ingest-slot.sh's flock semaphore. 279 independent timers could not
-// see each other, so the ceiling had to live in a wrapper script; one scheduler can count —
-// but only if it also notices when a run has ended.
-func (q *Queries) ListInFlightRuns(ctx context.Context, defaultTimeoutSec int32) ([]ListInFlightRunsRow, error) {
-	rows, err := q.db.Query(ctx, listInFlightRuns, defaultTimeoutSec)
+// This is what replaces ingest-slot.sh's flock semaphore, HEAVY_SLOTS split included. 279
+// independent timers could not see each other, so the ceiling had to live in a wrapper
+// script; one scheduler can count — but only if it also notices when a run has ended.
+func (q *Queries) ListInFlightHeavyRuns(ctx context.Context, defaultTimeoutSec int32) ([]ListInFlightHeavyRunsRow, error) {
+	rows, err := q.db.Query(ctx, listInFlightHeavyRuns, defaultTimeoutSec)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListInFlightRunsRow{}
+	items := []ListInFlightHeavyRunsRow{}
 	for rows.Next() {
-		var i ListInFlightRunsRow
+		var i ListInFlightHeavyRunsRow
+		if err := rows.Scan(
+			&i.Provider,
+			&i.Shard,
+			&i.Shards,
+			&i.TimeoutSec,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInFlightLightRuns = `-- name: ListInFlightLightRuns :many
+SELECT rs.provider,
+       rs.shard,
+       (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
+       COALESCE(s.timeout_sec, $1::int) AS timeout_sec
+FROM ingest_run_state rs
+LEFT JOIN ingest_schedule s ON s.provider = rs.provider
+WHERE rs.claimed_at IS NOT NULL
+  AND NOT (COALESCE(s.heavy, false)
+           OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
+ORDER BY rs.claimed_at
+`
+
+type ListInFlightLightRunsRow struct {
+	Provider   string `json:"provider"`
+	Shard      int32  `json:"shard"`
+	Shards     int32  `json:"shards"`
+	TimeoutSec int32  `json:"timeout_sec"`
+}
+
+// The LIGHT pool's half of ListInFlightHeavyRuns: identical query, opposite gate. See that
+// query's header for why the fleet's claimed runs are counted apart by pool.
+func (q *Queries) ListInFlightLightRuns(ctx context.Context, defaultTimeoutSec int32) ([]ListInFlightLightRunsRow, error) {
+	rows, err := q.db.Query(ctx, listInFlightLightRuns, defaultTimeoutSec)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInFlightLightRunsRow{}
+	for rows.Next() {
+		var i ListInFlightLightRunsRow
 		if err := rows.Scan(
 			&i.Provider,
 			&i.Shard,
@@ -239,7 +383,8 @@ SELECT b.provider,
        s.enabled,
        s.disabled_reason,
        s.notes,
-       s.managed
+       s.managed,
+       s.heavy
 FROM (SELECT DISTINCT provider FROM boards WHERE status IN ('pending', 'active')) b
 LEFT JOIN ingest_schedule s ON s.provider = b.provider
 ORDER BY b.provider
@@ -254,6 +399,7 @@ type ListSchedulableProvidersRow struct {
 	DisabledReason pgtype.Text `json:"disabled_reason"`
 	Notes          pgtype.Text `json:"notes"`
 	Managed        pgtype.Bool `json:"managed"`
+	Heavy          pgtype.Bool `json:"heavy"`
 }
 
 // Every provider the scheduler may run, with its override if it has one.
@@ -281,6 +427,7 @@ func (q *Queries) ListSchedulableProviders(ctx context.Context) ([]ListSchedulab
 			&i.DisabledReason,
 			&i.Notes,
 			&i.Managed,
+			&i.Heavy,
 		); err != nil {
 			return nil, err
 		}
@@ -292,7 +439,7 @@ func (q *Queries) ListSchedulableProviders(ctx context.Context) ([]ListSchedulab
 	return items, nil
 }
 
-const previewDueRuns = `-- name: PreviewDueRuns :many
+const previewDueHeavyRuns = `-- name: PreviewDueHeavyRuns :many
 SELECT rs.provider,
        rs.shard,
        (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
@@ -311,40 +458,102 @@ WHERE ((rs.claimed_at IS NULL AND rs.next_due_at <= now())
     -- owns it. COALESCE to false: while the column exists, a provider nobody has handed
     -- over is still the static timer's.
     AND COALESCE(s.managed, false)
+    AND (COALESCE(s.heavy, false)
+         OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
 ORDER BY rs.next_due_at
 LIMIT $3
 `
 
-type PreviewDueRunsParams struct {
+type PreviewDueHeavyRunsParams struct {
 	DefaultTimeoutSec int32 `json:"default_timeout_sec"`
 	GraceSec          int32 `json:"grace_sec"`
 	MaxRuns           int32 `json:"max_runs"`
 }
 
-type PreviewDueRunsRow struct {
+type PreviewDueHeavyRunsRow struct {
 	Provider   string `json:"provider"`
 	Shard      int32  `json:"shard"`
 	Shards     int32  `json:"shards"`
 	TimeoutSec int32  `json:"timeout_sec"`
 }
 
-// What ClaimDueRuns WOULD take, without taking it. Shadow mode's read: the first
-// deployment lands underneath a fleet still driven by the static timers, so a tick that
-// advanced a due time would desynchronise state the real timers know nothing about.
+// What ClaimDueHeavyRuns WOULD take from the heavy pool, without taking it. Shadow mode's
+// read: the first deployment lands underneath a fleet still driven by the static timers, so
+// a tick that advanced a due time would desynchronise state the real timers know nothing
+// about. See PreviewDueLightRuns for the other pool.
 //
-// The predicate is copied from ClaimDueRuns rather than shared, because sqlc has no way to
-// share one. A divergence between the two would make the shadow run a measurement of
+// The predicate is copied from ClaimDueHeavyRuns rather than shared, because sqlc has no
+// way to share one. A divergence between the two would make the shadow run a measurement of
 // something other than what apply mode does, so they are asserted equivalent by an
 // integration test rather than by inspection.
-func (q *Queries) PreviewDueRuns(ctx context.Context, arg PreviewDueRunsParams) ([]PreviewDueRunsRow, error) {
-	rows, err := q.db.Query(ctx, previewDueRuns, arg.DefaultTimeoutSec, arg.GraceSec, arg.MaxRuns)
+func (q *Queries) PreviewDueHeavyRuns(ctx context.Context, arg PreviewDueHeavyRunsParams) ([]PreviewDueHeavyRunsRow, error) {
+	rows, err := q.db.Query(ctx, previewDueHeavyRuns, arg.DefaultTimeoutSec, arg.GraceSec, arg.MaxRuns)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []PreviewDueRunsRow{}
+	items := []PreviewDueHeavyRunsRow{}
 	for rows.Next() {
-		var i PreviewDueRunsRow
+		var i PreviewDueHeavyRunsRow
+		if err := rows.Scan(
+			&i.Provider,
+			&i.Shard,
+			&i.Shards,
+			&i.TimeoutSec,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const previewDueLightRuns = `-- name: PreviewDueLightRuns :many
+SELECT rs.provider,
+       rs.shard,
+       (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider)::int AS shards,
+       COALESCE(s.timeout_sec, $1::int) AS timeout_sec
+FROM ingest_run_state rs
+LEFT JOIN ingest_schedule s ON s.provider = rs.provider
+WHERE ((rs.claimed_at IS NULL AND rs.next_due_at <= now())
+    OR (rs.claimed_at IS NOT NULL
+        AND rs.claimed_at < now() - make_interval(
+                secs => COALESCE(s.timeout_sec, $1::int)
+                        + $2::int)))
+    AND COALESCE(s.managed, false)
+    AND NOT (COALESCE(s.heavy, false)
+             OR (SELECT count(*) FROM ingest_run_state peer WHERE peer.provider = rs.provider) > 1)
+ORDER BY rs.next_due_at
+LIMIT $3
+`
+
+type PreviewDueLightRunsParams struct {
+	DefaultTimeoutSec int32 `json:"default_timeout_sec"`
+	GraceSec          int32 `json:"grace_sec"`
+	MaxRuns           int32 `json:"max_runs"`
+}
+
+type PreviewDueLightRunsRow struct {
+	Provider   string `json:"provider"`
+	Shard      int32  `json:"shard"`
+	Shards     int32  `json:"shards"`
+	TimeoutSec int32  `json:"timeout_sec"`
+}
+
+// The LIGHT pool's half of PreviewDueHeavyRuns: identical query, opposite gate, mirroring
+// ClaimDueLightRuns the same way PreviewDueHeavyRuns mirrors ClaimDueHeavyRuns.
+func (q *Queries) PreviewDueLightRuns(ctx context.Context, arg PreviewDueLightRunsParams) ([]PreviewDueLightRunsRow, error) {
+	rows, err := q.db.Query(ctx, previewDueLightRuns, arg.DefaultTimeoutSec, arg.GraceSec, arg.MaxRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PreviewDueLightRunsRow{}
+	for rows.Next() {
+		var i PreviewDueLightRunsRow
 		if err := rows.Scan(
 			&i.Provider,
 			&i.Shard,
@@ -399,6 +608,7 @@ SELECT b.provider,
        s.disabled_reason,
        s.notes,
        s.managed,
+       s.heavy,
        COALESCE(rs.shards_in_state, 0)::int AS shards_in_state,
        COALESCE(rs.in_flight, 0)::int       AS in_flight,
        rs.next_due_at,
@@ -426,6 +636,7 @@ type ReportIngestScheduleRow struct {
 	DisabledReason pgtype.Text        `json:"disabled_reason"`
 	Notes          pgtype.Text        `json:"notes"`
 	Managed        pgtype.Bool        `json:"managed"`
+	Heavy          pgtype.Bool        `json:"heavy"`
 	ShardsInState  int32              `json:"shards_in_state"`
 	InFlight       int32              `json:"in_flight"`
 	NextDueAt      pgtype.Timestamptz `json:"next_due_at"`
@@ -438,8 +649,9 @@ type ReportIngestScheduleRow struct {
 // paylocity rows would bury the answer.
 //
 // shards_in_state is counted from run state rather than read from the override, for the
-// same reason ClaimDueRuns counts it: the rows ARE the shard count, and a report that read
-// the intended number instead would show a healthy 24 while 12 rows existed.
+// same reason ClaimDueHeavyRuns/ClaimDueLightRuns count it: the rows ARE the shard count,
+// and a report that read the intended number instead would show a healthy 24 while 12 rows
+// existed.
 func (q *Queries) ReportIngestSchedule(ctx context.Context) ([]ReportIngestScheduleRow, error) {
 	rows, err := q.db.Query(ctx, reportIngestSchedule)
 	if err != nil {
@@ -458,6 +670,7 @@ func (q *Queries) ReportIngestSchedule(ctx context.Context) ([]ReportIngestSched
 			&i.DisabledReason,
 			&i.Notes,
 			&i.Managed,
+			&i.Heavy,
 			&i.ShardsInState,
 			&i.InFlight,
 			&i.NextDueAt,
@@ -475,7 +688,7 @@ func (q *Queries) ReportIngestSchedule(ctx context.Context) ([]ReportIngestSched
 
 const upsertIngestSchedule = `-- name: UpsertIngestSchedule :exec
 INSERT INTO ingest_schedule (provider, shards, cadence_sec, timeout_sec,
-                             enabled, disabled_reason, notes, managed)
+                             enabled, disabled_reason, notes, managed, heavy)
 VALUES ($1,
         COALESCE($2::int, $3::int),
         COALESCE($4::int, $5::int),
@@ -483,7 +696,10 @@ VALUES ($1,
         COALESCE($8::boolean, true),
         $9::text,
         $10::text,
-        COALESCE($11::boolean, false))
+        COALESCE($11::boolean, false),
+        -- No DefaultHeavy argument: unlike shards/cadence/timeout, false IS the documented
+        -- default (ingestsched.Settings{} zero value), not a fact duplicated from Go.
+        COALESCE($12::boolean, false))
 ON CONFLICT (provider) DO UPDATE SET
     shards          = COALESCE($2::int, ingest_schedule.shards),
     cadence_sec     = COALESCE($4::int, ingest_schedule.cadence_sec),
@@ -492,6 +708,7 @@ ON CONFLICT (provider) DO UPDATE SET
     disabled_reason = COALESCE($9::text, ingest_schedule.disabled_reason),
     notes           = COALESCE($10::text, ingest_schedule.notes),
     managed         = COALESCE($11::boolean, ingest_schedule.managed),
+    heavy           = COALESCE($12::boolean, ingest_schedule.heavy),
     updated_at      = now()
 `
 
@@ -507,6 +724,7 @@ type UpsertIngestScheduleParams struct {
 	DisabledReason    pgtype.Text `json:"disabled_reason"`
 	Notes             pgtype.Text `json:"notes"`
 	Managed           pgtype.Bool `json:"managed"`
+	Heavy             pgtype.Bool `json:"heavy"`
 }
 
 // Write one provider's override. Every argument is optional: a NULL means "leave this
@@ -538,6 +756,7 @@ func (q *Queries) UpsertIngestSchedule(ctx context.Context, arg UpsertIngestSche
 		arg.DisabledReason,
 		arg.Notes,
 		arg.Managed,
+		arg.Heavy,
 	)
 	return err
 }

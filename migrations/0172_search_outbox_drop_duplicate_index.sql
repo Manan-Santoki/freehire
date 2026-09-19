@@ -1,0 +1,39 @@
+-- migrate: no-transaction
+--
+-- Drops search_outbox_claimable_idx (id) WHERE (failed_at IS NULL) — 0076's original
+-- partial index over the claimable set. 0097/0101 added search_outbox_claim_idx on the
+-- SAME predicate (job_posted_at DESC NULLS LAST, job_id DESC) WHERE (failed_at IS
+-- NULL), pre-sorted in ClaimSearchOutboxBatch's exact claim order — see 0101's own
+-- comment, and 0097's before it, which already called itself a replacement ("mirrors
+-- search_outbox_claimable_idx's WHERE clause"). Nothing since has needed the narrower
+-- index; every real query against search_outbox was checked (internal/platform/db/queries/search_outbox.sql
+-- and the search_outbox INSERTs elsewhere):
+--
+--   * ClaimSearchOutboxBatch orders by job_posted_at DESC NULLS LAST, job_id DESC —
+--     served by search_outbox_claim_idx, not this one;
+--   * DeleteSearchOutboxEntries and RecordSearchOutboxFailure look up by id (the
+--     primary key) directly;
+--   * DeleteSearchOutboxCreatedBefore and DeleteIneligibleSearchOutbox both join to
+--     jobs on job_id, and the planner satisfies that with search_outbox_job_id_key
+--     (the UNIQUE (job_id) constraint's own index), not either partial index —
+--     verified with EXPLAIN (ANALYZE, BUFFERS) against a synthetic 500k-job/30k-outbox
+--     dataset shaped like DeleteIneligibleSearchOutbox's own comment (mostly-claimable
+--     rows, a small ineligible fraction): the merge join on job_id was chosen with
+--     search_outbox_claimable_idx present, and dropping it left the plan and its cost
+--     byte-for-byte unchanged.
+--
+-- So it has carried write cost on every INSERT/claim/update against this table — under
+-- continuous prod traffic — with no read ever choosing it since search_outbox_claim_idx
+-- landed.
+--
+-- CONCURRENTLY, so the drop takes no lasting lock on a table under continuous prod
+-- write traffic (cmd/ingest's enqueue, cmd/search-drain's claim/update/failure paths —
+-- same reasoning as 0097/0100/0101); IF EXISTS, so a re-run after an interrupted
+-- attempt is a no-op (the applied-record insert runs outside a transaction for
+-- no-transaction files, so a file can execute without being recorded). On an existing
+-- prod volume, run it detached from the SSH session — a CONCURRENTLY statement dies
+-- with its session and, for a drop, leaves the index present but marked invalid.
+-- Schema-qualified, like every other statement in migrations/: an unqualified name
+-- resolves through search_path, so a same-named index in an earlier schema would be
+-- the one dropped.
+DROP INDEX CONCURRENTLY IF EXISTS public.search_outbox_claimable_idx;

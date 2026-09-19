@@ -156,8 +156,8 @@ func pageupParseListing(fragment, board string) ([]Job, error) {
 			return true
 		}
 		switch {
-		case n.Data == "a" && hasClass(n, "job-link"):
-			href := attr(n, "href")
+		case n.Data == "a" && HasClass(n, "job-link"):
+			href := Attr(n, "href")
 			m := pageupJobRe.FindStringSubmatch(href)
 			if m == nil {
 				return true // a nav/back link, not a posting
@@ -170,13 +170,13 @@ func pageupParseListing(fragment, board string) ([]Job, error) {
 			}
 		case cur == nil:
 			// nothing to attach yet
-		case hasClass(n, "location") && cur.Location == "":
+		case HasClass(n, "location") && cur.Location == "":
 			cur.Location = textContent(n)
-		case (hasClass(n, "jobs-summary") || hasClass(n, "summary")) && cur.Description == "":
+		case (HasClass(n, "jobs-summary") || HasClass(n, "summary")) && cur.Description == "":
 			cur.Description = textContent(n)
 		// Some tenants render the summary as a bare <p> with no class at all (e.g. board
 		// 709); catch it too, so long as nothing has claimed the description yet.
-		case n.Data == "p" && attr(n, "class") == "" && cur.Description == "":
+		case n.Data == "p" && Attr(n, "class") == "" && cur.Description == "":
 			cur.Description = textContent(n)
 		}
 		return true
