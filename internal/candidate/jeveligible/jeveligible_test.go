@@ -1,6 +1,7 @@
 package jeveligible
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,5 +61,34 @@ func TestExcludedCompany(t *testing.T) {
 	p.ExcludedCompanies = []string{"acme"}
 	if Eligible(techJob(), Candidate{Profile: p}) {
 		t.Error("excluded company -> ineligible")
+	}
+}
+
+// TestIneligibleHardBlocker exercises the CategoryWorkAuth branch: per
+// hardconstraint.appendWorkAuth, an unmet work-authorization blocker fires only when the
+// job explicitly does not sponsor a visa (VisaSponsorship == false, not nil), is bound to
+// specific countries, and the candidate's known country is outside that set. Category,
+// seniority and exclusions are otherwise-eligible so the blocker is the only reason for
+// rejection.
+func TestIneligibleHardBlocker(t *testing.T) {
+	j := techJob()
+	j.Countries = []string{"de"}
+	j.Enrichment = json.RawMessage(`{"visa_sponsorship": false}`)
+	c := Candidate{
+		Profile: prof(),
+		Loc: userprofile.LocationPreferences{
+			Base: userprofile.BaseLocation{Country: "us"},
+		},
+	}
+	if Eligible(j, c) {
+		t.Error("unmet work-authorization blocker (no sponsorship, country mismatch) -> ineligible")
+	}
+}
+
+func TestIneligibleExcludedSource(t *testing.T) {
+	p := prof()
+	p.ExcludedSources = []string{"greenhouse"}
+	if Eligible(techJob(), Candidate{Profile: p}) {
+		t.Error("excluded source -> ineligible")
 	}
 }
