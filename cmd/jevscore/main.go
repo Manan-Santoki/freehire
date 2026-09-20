@@ -2,9 +2,10 @@
 // pairs, then drains the outbox queue: for each claimed pair it calls Jev and writes
 // user_job_scores. Run it on a schedule (e.g. cron); it processes a bounded batch and
 // exits. It exits non-zero when the run finished with any failures or dead-letters, so
-// cron can alert. A missing/misconfigured JEV_* leaves the Scorer disabled, in which
-// case Runner.Run is a no-op — the enqueue pass above still runs (harmless: nothing ever
-// drains it) so turning Jev on later needs no separate backfill step.
+// cron can alert. A missing/misconfigured JEV_* fails config.LoadJevScore's Require()
+// check below, and this binary exits 1 before building the Scorer or Runner at all — the
+// disabled-Scorer/no-op-Runner.Run degradation exists for other callers (and tests) that
+// construct a Scorer directly without going through this hard-fail config path.
 package main
 
 import (
