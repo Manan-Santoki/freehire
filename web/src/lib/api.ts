@@ -18,6 +18,7 @@ import type {
   Answers,
   CatalogueMember,
   Display,
+  ForYouJob,
   JobMatch,
   Responses as SurveyAnswers,
   RevisionView,
@@ -653,6 +654,25 @@ export function createApi(
     params.set('limit', String(limit));
     params.set('offset', String(offset));
     return toSlice(await request<Page<Job>>(`/api/v1/jobs/search?${params}`, { signal }), offset);
+  }
+
+  /** The caller's personalized feed: Postgres-ranked scored jobs (best Jev match first),
+   *  optionally narrowed to one verdict (APPLY/MAYBE/SKIP) and/or a minimum match_pct.
+   *  Cookie-auth; an unscored caller gets an empty page rather than an error — see
+   *  `handler.ForYou`. Mirrors `searchJobs`'s Page->Slice wrapping so the same
+   *  `Paginator` drives both feeds. */
+  async function forYouFeed(
+    params: { verdict?: string; min?: number },
+    limit: number,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<Slice<ForYouJob>> {
+    const qs = new URLSearchParams();
+    if (params.verdict) qs.set('verdict', params.verdict);
+    if (params.min != null) qs.set('min', String(params.min));
+    qs.set('limit', String(limit));
+    qs.set('offset', String(offset));
+    return toSlice(await request<Page<ForYouJob>>(`/api/v1/jobs/for-you?${qs}`, { signal }), offset);
   }
 
   /** Complete a partly-typed query against the catalogue's own vocabulary: the
@@ -2912,6 +2932,7 @@ export function createApi(
     matchAnalysisStreamUrl,
     recentJobsFeedUrl,
     searchJobs,
+    forYouFeed,
     suggest,
     interpretSearch,
     swipeDeck,

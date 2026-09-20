@@ -39,6 +39,10 @@ export type { Blocker, BlockerCategory, BlockerSeverity } from './generated/cont
 export type JobMatchResult = JobMatch & { blockers: Blocker[]; jev?: JevScore; jev_stale?: boolean };
 /** @public */
 export type { JevScore } from './generated/contracts';
+// One row of the caller's personalized "For You" feed: a job's public listing fields
+// alongside the cached Jev verdict that ranked it (see api.forYouFeed).
+/** @public */
+export type { ForYouJob } from './generated/contracts';
 // atscheck's Report is aliased ATSReport (a local Report — job reports — already exists);
 // its category/line-item shapes come along for the report view.
 /** @public */

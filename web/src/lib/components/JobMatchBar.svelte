@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ClientMatch } from '$lib/jobMatch';
+  import { verdictTone } from '$lib/jobMatch';
 
   // A card-level profile-match strip: a thin coverage bar + "N% · matched/total skills".
   // Purely presentational — the owning JobRow computes the client-side match (exact
@@ -14,13 +15,39 @@
   // this viewer's match. Offering the text alternative is the caller's job — only it
   // knows which invitation applies, and where it can sit without joining the accessible
   // name of a card-wide link.
+  //
+  // `verdict`/`matchPct` are the richer, server-owned Jev decision (see jobview.ForYouJob),
+  // carried only by rows of the personalized "For You" feed — an ordinary search/list Job
+  // has neither. When present it REPLACES this strip rather than joining it, the same way
+  // JobMatch.svelte's sidebar block prefers a computed Jev score over the plain coverage
+  // percent: the two disagree about which skills are missing (Jev also weighs level fit and
+  // blockers), so showing both would read as the card contradicting itself.
   let {
     match,
     blurred = false,
-  }: { match: ClientMatch | null; blurred?: boolean } = $props();
+    verdict,
+    matchPct,
+  }: {
+    match: ClientMatch | null;
+    blurred?: boolean;
+    verdict?: string;
+    matchPct?: number;
+  } = $props();
 </script>
 
-{#if match}
+{#if verdict}
+  <div
+    class="mt-3 flex items-center justify-between gap-2 border-t border-dashed border-border pt-2.5"
+    aria-label={matchPct != null ? `Jev match: ${matchPct}%, ${verdict}` : `Jev match: ${verdict}`}
+  >
+    {#if matchPct != null}
+      <span class="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
+        {matchPct}% match
+      </span>
+    {/if}
+    <span class={verdictTone(verdict)}>{verdict}</span>
+  </div>
+{:else if match}
   <div
     class={[
       'mt-3 flex items-center gap-2 border-t border-dashed border-border pt-2.5',

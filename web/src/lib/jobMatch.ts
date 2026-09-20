@@ -201,8 +201,9 @@ export function verdictTone(verdict: string): string {
 }
 
 /** One labeled percentage in the Jev flag row: a 0..1 probability turned into the
- *  rounded whole-number percent a caption reads. */
-export interface JevFlag {
+ *  rounded whole-number percent a caption reads. Not exported: only `jevFlags`
+ *  below returns it, and no caller names the shape itself. */
+interface JevFlag {
   label: string;
   percent: number;
 }

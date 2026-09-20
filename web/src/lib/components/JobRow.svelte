@@ -68,6 +68,8 @@
     compact = false,
     footer,
     onHide,
+    verdict,
+    matchPct,
   }: {
     // Either the catalogue's full posting or the tracking listing's card. The row draws the
     // same thing from both: the card carries a server-cut blurb where the posting carries the
@@ -79,6 +81,16 @@
     compact?: boolean;
     footer?: Snippet;
     onHide?: (slug: string) => void;
+    // The caller's cached Jev decision for this job (APPLY/MAYBE/SKIP) and the match
+    // percent it goes with — carried only by rows of the personalized "For You" feed
+    // (see routes/jobs/for-you), never by `job` itself: `ForYouJob`'s wire shape doesn't
+    // match `Job`/`JobCard` (it keys on `slug`, not `public_slug`, and carries none of
+    // their other facets), so the route adapts it into a `JobCard` and passes the Jev
+    // decision alongside as these two plain props instead of widening the union above.
+    // Both undefined on every other surface, where JobMatchBar renders its ordinary
+    // client-computed strip (or teaser) exactly as before.
+    verdict?: string;
+    matchPct?: number;
   } = $props();
 
   const isViewed = $derived(dimViewed && hasViewed(job.public_slug));
@@ -164,8 +176,13 @@
   // job's deterministic teaser instead of an empty card corner: the same chips and strip,
   // blurred, as an invitation to sign in. Seeded from the slug, so the figures survive
   // hydration and agree with the sidebar block on the job's own page.
+  //
+  // Suppressed whenever a Jev `verdict` rides on the row (the For You feed): that block
+  // already tells the whole story, computed server-side from a real profile, and a
+  // "sign in to see your match"/"upload your CV" invitation beside it would contradict
+  // the verdict it's asking the viewer to go get.
   const teaser = $derived(
-    matchState === 'guest' || matchState === 'no-profile'
+    !verdict && (matchState === 'guest' || matchState === 'no-profile')
       ? matchTeaser(job.public_slug, skills)
       : null,
   );
@@ -445,7 +462,7 @@
        gated on there being no real match too, so the two props cannot contradict each
        other and render a genuine score under a blur. No `gutterRight`: the hide control
        it used to keep clear of now lives in the action row below, not over this corner. -->
-  <JobMatchBar match={match ?? teaser} blurred={!match && !!teaser} />
+  <JobMatchBar match={match ?? teaser} blurred={!match && !!teaser} {verdict} {matchPct} />
   {#if teaser}
     <!-- The sighted invitation, under the blurred strip rather than over it — the same
          icon + line the job page's own match block uses below its teaser. `aria-hidden`
