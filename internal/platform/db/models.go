@@ -833,6 +833,19 @@ type JobReport struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+type JobScoreOutbox struct {
+	ID            int64              `json:"id"`
+	UserID        int64              `json:"user_id"`
+	JobID         int64              `json:"job_id"`
+	TargetVersion int32              `json:"target_version"`
+	JobPostedAt   pgtype.Timestamptz `json:"job_posted_at"`
+	Attempts      int32              `json:"attempts"`
+	ClaimedAt     pgtype.Timestamptz `json:"claimed_at"`
+	FailedAt      pgtype.Timestamptz `json:"failed_at"`
+	LastError     string             `json:"last_error"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type JobSearchPing struct {
 	JobID    int64              `json:"job_id"`
 	Engine   string             `json:"engine"`
@@ -1426,6 +1439,26 @@ type UserJobAnalysis struct {
 	JobContentHash pgtype.Text        `json:"job_content_hash"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	Language       string             `json:"language"`
+}
+
+type UserJobScore struct {
+	UserID             int64              `json:"user_id"`
+	JobID              int64              `json:"job_id"`
+	MatchPct           int16              `json:"match_pct"`
+	MatchRaw           float32            `json:"match_raw"`
+	MatchConfidence    float32            `json:"match_confidence"`
+	RoleCategory       string             `json:"role_category"`
+	RoleConfidence     float32            `json:"role_confidence"`
+	HasRequiredStack   float32            `json:"has_required_stack"`
+	FitsLevel          float32            `json:"fits_level"`
+	HardBlocker        float32            `json:"hard_blocker"`
+	Verdict            string             `json:"verdict"`
+	Model              string             `json:"model"`
+	ScoreVersion       int32              `json:"score_version"`
+	ProfileFingerprint string             `json:"profile_fingerprint"`
+	CvUploadedAt       pgtype.Timestamptz `json:"cv_uploaded_at"`
+	JobContentHash     pgtype.Text        `json:"job_content_hash"`
+	ScoredAt           pgtype.Timestamptz `json:"scored_at"`
 }
 
 type UserNotification struct {

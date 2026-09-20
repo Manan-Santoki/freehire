@@ -510,6 +510,8 @@ type Querier interface {
 	// lease predicate reclaims entries whose worker died (stale claimed_at), so no
 	// separate reaper process is needed.
 	ClaimEnrichmentBatch(ctx context.Context, arg ClaimEnrichmentBatchParams) ([]ClaimEnrichmentBatchRow, error)
+	// Claim a wave of live, unleased entries for open canonical jobs, freshest first.
+	ClaimJevScoreBatch(ctx context.Context, arg ClaimJevScoreBatchParams) ([]ClaimJevScoreBatchRow, error)
 	// Claim-and-delete a bounded batch, oldest first, joined to jobs for the fields the
 	// feed displays. company_slug rides along beside company: recentfeed.Group buckets a
 	// same-company burst by the slug (the canonical company key — see AGENTS.md, "Company
@@ -1149,6 +1151,7 @@ type Querier interface {
 	// What the retention sweep would remove. cmd/prune reports before it deletes, and a dry run that
 	// cannot say a number is not a report.
 	CountExpiredTracerClicks(ctx context.Context, maxAge pgtype.Interval) (int64, error)
+	CountForYou(ctx context.Context, arg CountForYouParams) (int64, error)
 	// How many claims this account has filed since a cutoff, for the daily cap. Counts
 	// retracted rows too: filing and withdrawing in a loop is exactly the pattern the cap
 	// exists to bound, so forgiving it would leave the cap trivially bypassable.
@@ -1553,6 +1556,9 @@ type Querier interface {
 	// yet enriched anyway. DeleteIneligibleSearchOutbox carries the identical race for the identical
 	// reason.
 	DeleteIneligibleEnrichmentOutbox(ctx context.Context, maxRows int32) (int64, error)
+	// Reap live entries the claim can never take: job gone/closed/duplicate. Leaves
+	// dead-lettered rows (failed_at set) alone. Bounded by max_rows.
+	DeleteIneligibleJevScoreOutbox(ctx context.Context, maxRows int32) (int64, error)
 	// Reap live entries ClaimSearchOutboxBatch can never take: their job has closed, become
 	// a non-canonical repost, or gone. That query's EXISTS requires open AND canonical, so
 	// these rows are correctly skipped — there is nothing left to index — but until this
@@ -1571,6 +1577,7 @@ type Querier interface {
 	// Bounded by max_rows so one drain run cannot turn into an unbounded delete on the first
 	// pass over a long-accumulated backlog; the next run takes the next slice.
 	DeleteIneligibleSearchOutbox(ctx context.Context, maxRows int32) (int64, error)
+	DeleteJevScoreEntries(ctx context.Context, ids []int64) error
 	// Delete a list, scoped to its owner. Membership rows cascade; the referenced jobs
 	// and the user's separate save flags are untouched. Returns the affected row count:
 	// 0 means it does not exist or is not the caller's (the handler maps that to 404).
@@ -1714,6 +1721,8 @@ type Querier interface {
 	// Remove the caller's profile. Returns the affected row count (0 when none existed); the
 	// handler treats delete as idempotent (204 either way).
 	DeleteUserProfile(ctx context.Context, userID int64) (int64, error)
+	// Drop a user's pending queue entries so re-enqueue stamps them with fresh values.
+	DeleteUserScoreOutbox(ctx context.Context, userID int64) error
 	DeleteWebhookConfig(ctx context.Context, userID int64) (int64, error)
 	// The publish-once check. Keyed on the channel and not on the day alone: a run that
 	// posted to Discord and then failed on LinkedIn must, next time, skip Discord and
@@ -1839,6 +1848,10 @@ type Querier interface {
 	// ClaimEnrichmentBatch would refuse anyway. ON CONFLICT leaves a row already pending
 	// (not yet claimed) alone, so running this twice in a row costs nothing.
 	EnqueueEnrichmentForCompanySlugs(ctx context.Context, arg EnqueueEnrichmentForCompanySlugsParams) (int64, error)
+	// Coarse enqueue for one profile: open/tech/enriched jobs whose category and seniority
+	// match, not excluded, and lacking a FRESH score. The fine hard-blocker gate runs in the
+	// worker before Jev is called. ON CONFLICT keeps one live entry per (user, job).
+	EnqueueJevScoresForProfile(ctx context.Context, arg EnqueueJevScoresForProfileParams) (int64, error)
 	// Transactional-outbox enqueue for the ingest write path: queue this one job for
 	// enrichment, gated on the same conditions the backfill uses (unenriched or below the
 	// target schema version, and confirmed technical), so an already-enriched job is not
@@ -2125,6 +2138,9 @@ type Querier interface {
 	// collapsed), so a canonical row wins over a duplicate, then the most recently confirmed,
 	// with id as the deterministic tiebreak.
 	FindOpenJobByURL(ctx context.Context, url string) (string, error)
+	// The caller's personalized feed: eligible scored jobs, best first. Optional verdict
+	// filter ('' = all) and minimum match_pct. Paginated.
+	ForYouFeed(ctx context.Context, arg ForYouFeedParams) ([]ForYouFeedRow, error)
 	// The (id, title) of one company's open canonical postings — deliberately WITHOUT the
 	// description. The caller groups these into buckets with the same normalized-title function the
 	// rest of the codebase uses (jobhash.RoleKey), then loads descriptions for the buckets that
@@ -2744,6 +2760,10 @@ type Querier interface {
 	// for the same reason: always exactly one row, so a miss reads as "not applied" rather than
 	// needing its own pgx.ErrNoRows branch.
 	GetUserJobApplied(ctx context.Context, arg GetUserJobAppliedParams) (bool, error)
+	// The caller's cached Jev score for one job, with the five staleness stamps. No row =
+	// never scored (handler falls back to deterministic coverage). The handler compares the
+	// stamps to live values to decide the stale flag.
+	GetUserJobScore(ctx context.Context, arg GetUserJobScoreParams) (GetUserJobScoreRow, error)
 	// The caller's current stage for one application (empty string when unset), so the
 	// worker can decide a monotonic-forward advancement.
 	GetUserJobStage(ctx context.Context, arg GetUserJobStageParams) (string, error)
@@ -3053,6 +3073,8 @@ type Querier interface {
 	// row is inserted (pgx.ErrNoRows) when parent_reply_id is set but names a reply outside
 	// this thread.
 	InsertThreadReply(ctx context.Context, arg InsertThreadReplyParams) (ThreadReply, error)
+	// Drop a user's scores after a profile edit or CV upload so they re-score fresh.
+	InvalidateUserScores(ctx context.Context, userID int64) error
 	// What the account's own invite page says: how many people came through the link, how many
 	// of them earned a reward, and what that adds up to.
 	//
@@ -5340,6 +5362,9 @@ type Querier interface {
 	// for the reason above: a list that only grows cannot express a scope the candidate took
 	// away. An empty list means the exchange did not say, and keeps what we held.
 	RecordGrantScopes(ctx context.Context, arg RecordGrantScopesParams) error
+	// Count a failed attempt; dead-letter at max_attempts (posting-fault) or past the
+	// upstream grace window (outage). Lease left in place as the crash reaper.
+	RecordJevScoreFailure(ctx context.Context, arg RecordJevScoreFailureParams) (RecordJevScoreFailureRow, error)
 	// Record that this posting was announced to this engine, for this event. ON CONFLICT DO
 	// NOTHING keeps a re-run after a partial failure from double-spending a budget that is
 	// counted in hundreds per day: the row is what makes the send idempotent, so it is
@@ -7000,6 +7025,8 @@ type Querier interface {
 	// must not re-age its row into it.
 	// analysis is the sanitized matchanalysis.Analysis JSON.
 	UpsertUserJobAnalysis(ctx context.Context, arg UpsertUserJobAnalysisParams) error
+	// Create-or-replace the score for a (user, job). Composite PK makes it idempotent.
+	UpsertUserJobScore(ctx context.Context, arg UpsertUserJobScoreParams) error
 	// Create-or-replace the user's one profile. The PRIMARY KEY (user_id) makes this an
 	// idempotent upsert: first save inserts, later saves overwrite specializations/skills/
 	// seniorities/excluded_skills/excluded_sources/excluded_companies/location_preferences and
