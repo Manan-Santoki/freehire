@@ -185,7 +185,10 @@ func (c *Client) transport() http.RoundTripper {
 	//
 	// Outside the attribution stamp so the body is rewritten once: a credential retry
 	// re-sends the rewritten body rather than rewriting a second time.
-	return &reasoningInjector{next: next}
+	//
+	// The stream pin sits outermost for the same reason, and unconditionally because the
+	// gap it closes is in every non-streaming request this client makes (see streamPin).
+	return &streamPin{next: &reasoningInjector{next: next}}
 }
 
 // attribution stamps the feature tags onto an outgoing call and rescues one whose
