@@ -29,7 +29,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/hire ./cmd/server
       ./cmd/classify-mail ./cmd/mail-ingest ./cmd/remind ./cmd/nudge ./cmd/onboarding \
       ./cmd/mentorship-remind ./cmd/auto-apply ./cmd/auto-apply-orchestrate \
       ./cmd/queue-metrics ./cmd/search-settings-drift ./cmd/similar-backfill \
-      ./cmd/hydrate-adzuna-description ./cmd/seed-adzuna-description-queue
+      ./cmd/hydrate-adzuna-description ./cmd/seed-adzuna-description-queue \
+      ./cmd/jevscore
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/aptible/supercronic@v0.2.49
 
 FROM docker:28-cli AS dockercli
