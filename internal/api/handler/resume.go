@@ -248,6 +248,10 @@ func (h *resumeHandlers) ExtractResumeProfile(c *fiber.Ctx) error {
 			// Best-effort: log (never the résumé bytes) and still return the profile.
 			log.Printf("resume: store on extract failed for user %d: %v", userID, err)
 		} else {
+			// A fresh CV invalidates whatever Jev scored against the old one — this is the
+			// résumé-upload path the SPA actually uses (PutResume is the legacy sibling),
+			// so it must invalidate too. Best-effort: never blocks the response.
+			invalidateUserScores(c.Context(), h.scores, userID)
 			// This is the résumé-upload path the app actually uses, so it is where the CV
 			// gets structured for the profile.
 			h.deriveResumeArtifacts(userID, up.Text, meta.UploadedAt)

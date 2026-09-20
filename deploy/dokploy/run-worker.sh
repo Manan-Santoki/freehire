@@ -18,6 +18,13 @@ case "$worker" in
     fi
     budget=15m
     ;;
+  jevscore)
+    if [ -z "${JEV_BASE_URL:-}" ] || [ -z "${JEV_API_KEY:-}" ] || [ -z "${JEV_MODEL:-}" ]; then
+      echo "jevscore: skipped because Jev configuration is incomplete"
+      exit 0
+    fi
+    budget=15m
+    ;;
   notify|remind|nudge)
     # Saved-search alerts, application reminders and nudges need a delivery channel.
     if [ -z "${NOTIFY_EMAIL_FROM:-}" ] && [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then

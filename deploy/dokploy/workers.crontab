@@ -7,6 +7,7 @@
 37 1-23/2 * * * /app/deploy/dokploy/run-worker.sh reindex-companies
 45 4 * * * /app/deploy/dokploy/run-worker.sh build-suggestions
 */15 * * * * /app/deploy/dokploy/run-worker.sh enrich
+5,20,35,50 * * * * /app/deploy/dokploy/run-worker.sh jevscore
 3,33 * * * * /app/deploy/dokploy/run-worker.sh capture-apply-form
 43 * * * * /app/deploy/dokploy/run-worker.sh similar-backfill -limit 200 -batch 100 -workers 1
 23 3 * * * /app/deploy/dokploy/run-worker.sh auth-cleanup

@@ -204,7 +204,7 @@ WHERE s.user_id = $1
   AND j.closed_at IS NULL AND j.duplicate_of IS NULL
   AND ($2::text = '' OR s.verdict = $2::text)
   AND s.match_pct >= $3::int
-ORDER BY s.match_pct DESC, j.id DESC
+ORDER BY (s.verdict = 'SKIP'), s.match_pct DESC, j.id DESC
 LIMIT $5::int OFFSET $4::int
 `
 

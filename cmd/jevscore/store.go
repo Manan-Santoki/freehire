@@ -43,9 +43,11 @@ type dbStore struct {
 	pool    *pgxpool.Pool
 	q       *db.Queries
 	version int32
-	// model is the configured Jev model (config.Jev.Model), used only for
-	// EnqueuePending's freshness check — the write's own staleness stamp instead uses
-	// each score's resolved response model (see jevscore.Scorer.ScoreWithModel).
+	// model is the configured Jev model (config.Jev.Model), used both for
+	// EnqueuePending's freshness check and as the staleness stamp Complete writes to
+	// user_job_scores.model — the two must agree or every pair re-scores every run. A
+	// model upgrade behind the same alias is invalidated by bumping JEVSCORE_VERSION,
+	// not by the resolved response model (see jevscore.Scorer.ScoreWithModel).
 	model             string
 	maxAttempts       int32
 	upstreamGraceDays int32
@@ -184,10 +186,15 @@ func (s *dbStore) loadCandidate(ctx context.Context, userID int64) (candidateEnt
 	}, true
 }
 
-// Complete writes the score and removes the queue entry in one transaction. model=="" is
-// the ineligible-drop path (paired with a zero jevscore.Score by the runner): only the
-// outbox row is deleted, no user_job_scores write.
-func (s *dbStore) Complete(ctx context.Context, c jevscore.Claimed, score jevscore.Score, model string) error {
+// Complete writes the score and removes the queue entry in one transaction. resolvedModel
+// (the response model ScoreWithModel returned) is used only to detect the ineligible-drop
+// path — resolvedModel=="" is paired with a zero jevscore.Score by the runner, so only the
+// outbox row is deleted, no user_job_scores write. The write itself always stamps the
+// CONFIGURED model (s.model), not resolvedModel: EnqueueJevScoresForProfile's freshness
+// check compares against s.model too, so the two must agree or every pair re-scores every
+// run (see the model field comment above). A model upgrade behind the same alias is
+// invalidated by bumping JEVSCORE_VERSION instead.
+func (s *dbStore) Complete(ctx context.Context, c jevscore.Claimed, score jevscore.Score, resolvedModel string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -195,7 +202,7 @@ func (s *dbStore) Complete(ctx context.Context, c jevscore.Claimed, score jevsco
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := s.q.WithTx(tx)
-	if model != "" {
+	if resolvedModel != "" {
 		if err := qtx.UpsertUserJobScore(ctx, db.UpsertUserJobScoreParams{
 			UserID:             c.UserID,
 			JobID:              c.JobID,
@@ -208,7 +215,7 @@ func (s *dbStore) Complete(ctx context.Context, c jevscore.Claimed, score jevsco
 			FitsLevel:          float32(score.FitsLevel),
 			HardBlocker:        float32(score.HardBlocker),
 			Verdict:            score.Verdict,
-			Model:              model,
+			Model:              s.model,
 			ScoreVersion:       c.Version,
 			ProfileFingerprint: c.Fingerprint,
 			CvUploadedAt:       c.CVUploadedAt,

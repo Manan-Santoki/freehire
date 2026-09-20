@@ -30,12 +30,15 @@ surfaces that read the stored score are the profile-match badge
   the Go gate rejects is dropped with `Complete(ctx, c, Score{}, "")` — model `""` paired
   with a zero `Score` is the ineligible-drop path, no `user_job_scores` write, entry just
   deleted.
-- **The stored `model` stamp is the RESOLVED Jev response model, not the configured
-  one.** `Scorer.ScoreWithModel` returns `resp.Model` and the worker stamps
-  `user_job_scores.model` with it. `EnqueueJevScoresForProfile`'s freshness check compares
-  against the configured `JEV_MODEL` instead (the only value known before the call), so a
-  Jev-side model upgrade behind the same alias naturally produces a stamp mismatch on the
-  next enqueue pass and re-scores every affected pair with no manual invalidation step.
+- **The stored `model` stamp is the CONFIGURED `JEV_MODEL`, not the resolved Jev
+  response model.** `Scorer.ScoreWithModel` returns `resp.Model` too, but `dbStore.Complete`
+  stamps `user_job_scores.model` with `s.model` (`config.Jev.Model`) — the same value
+  `EnqueueJevScoresForProfile`'s freshness check compares against. They must agree, or
+  every pair looks stale and gets re-scored on every enqueue pass. A Jev-side model
+  upgrade behind the same alias is NOT auto-detected by this stamp; invalidate it
+  deliberately by bumping `JEVSCORE_VERSION` (already a staleness stamp `Complete` writes
+  and the enqueue freshness check compares — see below), which forces a full recompute of
+  every pair.
 - **Best-effort degradation throughout — Jev is never a hard dependency.**
   `Runner.Run` is a deliberate no-op when `Scorer.Enabled()` is false (no live Jev
   client), before it opens the pool or touches the database. On the read side, the
@@ -48,8 +51,8 @@ surfaces that read the stored score are the profile-match badge
   error — the feed is additive to Meili search, never a replacement for it.
 - **Postgres owns the personalized feed; Meili stays for keyword search and anonymous
   browsing.** `ForYouFeed`/`CountForYou` read straight off `user_job_scores` joined to
-  `jobs`, ordered by `match_pct DESC` — there is no Meili involvement in `/jobs/for-you`
-  at all. Meili continues to serve the keyword-searchable, non-personalized catalogue
+  `jobs`, ordered by `(verdict = 'SKIP')` first (so SKIP rows sink below APPLY/MAYBE)
+  then `match_pct DESC` — there is no Meili involvement in `/jobs/for-you` at all. Meili continues to serve the keyword-searchable, non-personalized catalogue
   (including for signed-out visitors), which is why a Jev outage or an unscored account
   never blocks search, only the personalized ranking.
 - **Every stored score carries a quintuple staleness stamp**: `model`, `score_version`,

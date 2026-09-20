@@ -44,7 +44,7 @@ WHERE s.user_id = $1
   AND j.closed_at IS NULL AND j.duplicate_of IS NULL
   AND (sqlc.arg(verdict)::text = '' OR s.verdict = sqlc.arg(verdict)::text)
   AND s.match_pct >= sqlc.arg(min_pct)::int
-ORDER BY s.match_pct DESC, j.id DESC
+ORDER BY (s.verdict = 'SKIP'), s.match_pct DESC, j.id DESC
 LIMIT sqlc.arg(lim)::int OFFSET sqlc.arg(off)::int;
 
 -- name: CountForYou :one

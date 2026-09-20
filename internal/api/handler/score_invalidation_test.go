@@ -142,6 +142,45 @@ func TestPutResume_InvalidatesScoresOnSuccess(t *testing.T) {
 	}
 }
 
+// TestExtractResumeProfile_InvalidatesScoresOnSuccess is the regression test for the
+// score-invalidation wiring in ExtractResumeProfile — the résumé-upload path the SPA
+// actually uses (POST /me/resume/extract), as opposed to the legacy PutResume (PUT
+// /me/resume) sibling covered above. A successful store of the extracted CV must
+// invalidate the caller's cached Jev scores and drain their pending score-outbox entries,
+// exactly like PutResume.
+func TestExtractResumeProfile_InvalidatesScoresOnSuccess(t *testing.T) {
+	iss := auth.NewIssuer("test-secret", time.Hour)
+	token, err := iss.Issue(1, testTokenVersion)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	store := resume.New(newFakeResumeBlobs(), &fakeResumeRepo{})
+	scores := &fakeScoreInvalidator{}
+	h := &resumeHandlers{resume: store, scores: scores}
+	app := fiber.New(fiber.Config{ErrorHandler: RenderError})
+	app.Post("/me/resume/extract", auth.RequireAuth(iss, testVersions), h.ExtractResumeProfile)
+
+	req := httptest.NewRequestWithContext(context.Background(), fiber.MethodPost, "/me/resume/extract", strings.NewReader(`{"text":"Go and PostgreSQL"}`))
+	req.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	invalidate, deleteOutbox := scores.calls()
+	if len(invalidate) != 1 || invalidate[0] != 1 {
+		t.Errorf("InvalidateUserScores calls = %v, want [1]", invalidate)
+	}
+	if len(deleteOutbox) != 1 || deleteOutbox[0] != 1 {
+		t.Errorf("DeleteUserScoreOutbox calls = %v, want [1]", deleteOutbox)
+	}
+}
+
 // TestPutResume_DisabledStorageDoesNotInvalidateScores guards the other half: when object
 // storage is unconfigured, PutResume 501s before Put ever runs, so scores must stay
 // untouched.
