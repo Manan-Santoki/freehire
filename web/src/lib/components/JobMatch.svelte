@@ -16,6 +16,9 @@
     haveChipClass,
     adjacentChipClass,
     missingChipClass,
+    verdictTone,
+    jevFlags,
+    jevConfidencePercent,
   } from '$lib/jobMatch';
   import { profileStore } from '$lib/profile.svelte';
   import { syncProfileAlert } from '$lib/profileAlertSync';
@@ -356,18 +359,39 @@
       <MatchSummary slug={job.public_slug} />
     {/if}
   {:else if blockState === 'ready' && view}
-    <!-- Real match: percent + two-colour bar + three skill groups. -->
-    <div class="flex items-baseline justify-between gap-2">
-      <span class="text-2xl font-bold tabular-nums leading-none">{view.coverage_percent}%</span>
-      <span class="text-xs text-muted-foreground">
-        {view.exact_count} of {view.total} skills{#if view.adjacent_count}
-          · {view.adjacent_count} close{/if}
-      </span>
-    </div>
-    <div class="flex h-2 overflow-hidden rounded bg-secondary">
-      <div class="h-full bg-brand transition-all" style="width: {segments.exact}%"></div>
-      <div class="h-full bg-warning transition-all" style="width: {segments.adjacent}%"></div>
-    </div>
+    {#if view.jev}
+      <!-- Jev headline: the server-owned score + verdict chip, replacing the plain
+           coverage percent/bar with the richer decision once one has been computed for
+           this (user, job). The skill/requirement detail below is unchanged either way —
+           it stays useful (and interactive) on top of a Jev verdict, not only without one. -->
+      <div class="flex items-baseline justify-between gap-2">
+        <span class="text-2xl font-bold tabular-nums leading-none">{view.jev.match_pct}%</span>
+        <span class={verdictTone(view.jev.verdict)}>{view.jev.verdict}</span>
+      </div>
+      <div class="flex flex-col gap-1">
+        {#each jevFlags(view.jev) as flag (flag.label)}
+          <div class="flex items-center justify-between gap-2 text-xs">
+            <span class="text-muted-foreground">{flag.label}</span>
+            <span class="font-medium tabular-nums">{flag.percent}%</span>
+          </div>
+        {/each}
+      </div>
+      <p class="text-xs text-muted-foreground">{jevConfidencePercent(view.jev)}% confidence</p>
+    {:else}
+      <!-- Deterministic fallback: percent + two-colour bar, shown until (or unless) a
+           Jev score exists for this job. -->
+      <div class="flex items-baseline justify-between gap-2">
+        <span class="text-2xl font-bold tabular-nums leading-none">{view.coverage_percent}%</span>
+        <span class="text-xs text-muted-foreground">
+          {view.exact_count} of {view.total} skills{#if view.adjacent_count}
+            · {view.adjacent_count} close{/if}
+        </span>
+      </div>
+      <div class="flex h-2 overflow-hidden rounded bg-secondary">
+        <div class="h-full bg-brand transition-all" style="width: {segments.exact}%"></div>
+        <div class="h-full bg-warning transition-all" style="width: {segments.adjacent}%"></div>
+      </div>
+    {/if}
 
     {#if view.matched.length}
       <div class="flex flex-col gap-1.5">

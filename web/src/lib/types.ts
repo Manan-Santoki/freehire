@@ -6,6 +6,7 @@ import type {
   Card as JobCard,
   JobMatch,
   Blocker,
+  JevScore,
   Professional,
   Stage,
   Report as ATSReportContract,
@@ -31,8 +32,13 @@ export type { JobMatch, AdjacentSkill } from './generated/contracts';
 // beside skill coverage. BlockerCategory/BlockerSeverity are the enum aliases.
 /** @public */
 export type { Blocker, BlockerCategory, BlockerSeverity } from './generated/contracts';
-// The profile-match endpoint returns skill coverage plus the advisory blockers.
-export type JobMatchResult = JobMatch & { blockers: Blocker[] };
+// The profile-match endpoint returns skill coverage plus the advisory blockers. `jev`
+// rides alongside as the richer server-owned verdict when the caller has a cached Jev
+// score for this job (absent for an unscored job, e.g. no structured résumé yet); `jev_stale`
+// marks one whose job text has since changed (mirrors internal/api/handler.jobMatchResponse).
+export type JobMatchResult = JobMatch & { blockers: Blocker[]; jev?: JevScore; jev_stale?: boolean };
+/** @public */
+export type { JevScore } from './generated/contracts';
 // atscheck's Report is aliased ATSReport (a local Report — job reports — already exists);
 // its category/line-item shapes come along for the report view.
 /** @public */

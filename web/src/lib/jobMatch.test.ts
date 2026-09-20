@@ -8,8 +8,14 @@ import {
   partitionBlockers,
   claimSkill,
   toneText,
+  verdictTone,
+  jevFlags,
+  jevConfidencePercent,
+  haveChipClass,
+  adjacentChipClass,
 } from './jobMatch';
 import { must } from './utils';
+import type { JevScore } from './types';
 
 describe('resolveMatchState', () => {
   const base = { jobSkills: ['go'], authenticated: true, profileLoaded: true, profileSkills: ['go'] };
@@ -311,5 +317,94 @@ describe('toneText', () => {
 
   it('reads soft severity as the muted tone', () => {
     expect(toneText('soft')).toBe('text-muted-foreground');
+  });
+});
+
+describe('verdictTone', () => {
+  it('reads APPLY as the same positive tone the held-skill chips use', () => {
+    expect(verdictTone('APPLY')).toBe(haveChipClass);
+  });
+
+  it('reads MAYBE as the same cautionary tone the adjacent-skill chips use', () => {
+    expect(verdictTone('MAYBE')).toBe(adjacentChipClass);
+  });
+
+  it('reads SKIP as a muted tone, not the destructive missing-chip red', () => {
+    const tone = verdictTone('SKIP');
+    expect(tone).toContain('text-muted-foreground');
+    expect(tone).not.toBe(haveChipClass);
+    expect(tone).not.toBe(adjacentChipClass);
+    expect(tone).not.toContain('destructive');
+  });
+
+  it('falls back to the muted SKIP tone for an unrecognised verdict', () => {
+    expect(verdictTone('WHATEVER')).toBe(verdictTone('SKIP'));
+  });
+});
+
+describe('jevFlags', () => {
+  const score = (over: Partial<JevScore> = {}): JevScore => ({
+    match_pct: 80,
+    match_raw: 4,
+    match_confidence: 0.9,
+    role_category: 'backend',
+    role_confidence: 0.8,
+    has_required_stack: 0.75,
+    fits_level: 1,
+    hard_blocker: 0.05,
+    verdict: 'APPLY',
+    ...over,
+  });
+
+  it('labels and rounds the three probability flags in stack/level/blocker order', () => {
+    expect(jevFlags(score())).toEqual([
+      { label: 'Stack fit', percent: 75 },
+      { label: 'Level fit', percent: 100 },
+      { label: 'Blocker risk', percent: 5 },
+    ]);
+  });
+
+  it('rounds to the nearest whole percent rather than truncating', () => {
+    // 0.845 -> 85 (not 84), catching a floor()/toFixed(0)-style off-by-one.
+    expect(must(jevFlags(score({ has_required_stack: 0.845 }))[0]).percent).toBe(85);
+  });
+
+  it('reads a zero probability as 0%, not a falsy gap in the row', () => {
+    expect(jevFlags(score({ hard_blocker: 0 }))[2]).toEqual({ label: 'Blocker risk', percent: 0 });
+  });
+
+  it('is independent per flag — one field does not bleed into another', () => {
+    const flags = jevFlags(score({ has_required_stack: 0.2, fits_level: 0.9, hard_blocker: 0.6 }));
+    expect(flags).toEqual([
+      { label: 'Stack fit', percent: 20 },
+      { label: 'Level fit', percent: 90 },
+      { label: 'Blocker risk', percent: 60 },
+    ]);
+  });
+});
+
+describe('jevConfidencePercent', () => {
+  const score = (match_confidence: number): JevScore => ({
+    match_pct: 80,
+    match_raw: 4,
+    match_confidence,
+    role_category: 'backend',
+    role_confidence: 0.8,
+    has_required_stack: 0.75,
+    fits_level: 1,
+    hard_blocker: 0.05,
+    verdict: 'APPLY',
+  });
+
+  it('rounds the fractional confidence to a whole-number percent', () => {
+    expect(jevConfidencePercent(score(0.873))).toBe(87);
+  });
+
+  it('reads full confidence as 100%, not 99% from a stray floor', () => {
+    expect(jevConfidencePercent(score(1))).toBe(100);
+  });
+
+  it('reads no confidence as 0%', () => {
+    expect(jevConfidencePercent(score(0))).toBe(0);
   });
 });

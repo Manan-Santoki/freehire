@@ -2,7 +2,7 @@
 // component so it is unit-testable (vitest) without a DOM: which of the four block
 // states to render, and how to size the two-colour progress bar.
 
-import type { Blocker, BlockerSeverity, JobMatch } from './types';
+import type { Blocker, BlockerSeverity, JevScore, JobMatch } from './types';
 
 /** Split the hard-constraint blockers for display: the unmet ones (shown as warnings,
  *  hardest first — a lower score_cap is a harder blocker) and the met ones (shown as
@@ -183,6 +183,47 @@ export function claimSkill<M extends JobMatch>(match: M, skill: string): M {
     adjacent,
     missing: match.missing.filter((s) => s !== skill),
   };
+}
+
+/** Verdict chip classes for the Jev verdict (APPLY/MAYBE/SKIP) — a pill in the same
+ *  three-tone family the skill chips above already use, so the badge doesn't introduce
+ *  a fourth palette just to say the same "held/close/missing" kind of thing about a
+ *  whole job instead of one skill. APPLY reads positive (the "have" tone), MAYBE reads
+ *  cautionary (the "adjacent" tone). SKIP is deliberately the muted tone rather than the
+ *  destructive missing-chip red: a job Jev would skip is a mismatch to move past, not a
+ *  warning the way an unmet hard blocker is. An unrecognised verdict (a wire value this
+ *  client doesn't know yet) falls back to that same muted tone rather than showing no
+ *  chip at all. */
+export function verdictTone(verdict: string): string {
+  if (verdict === 'APPLY') return haveChipClass;
+  if (verdict === 'MAYBE') return adjacentChipClass;
+  return `${CHIP_BASE} border-border bg-secondary text-muted-foreground`;
+}
+
+/** One labeled percentage in the Jev flag row: a 0..1 probability turned into the
+ *  rounded whole-number percent a caption reads. */
+export interface JevFlag {
+  label: string;
+  percent: number;
+}
+
+/** The three Jev probability flags as labeled percentages, in the fixed order the badge
+ *  always shows them: how much of the stack the candidate covers, whether the level
+ *  fits, then the risk of a hard blocker. Math.round (not floor/ceil) so 0.5 reads as
+ *  the same 50% a person reporting the fraction out loud would say. */
+export function jevFlags(score: JevScore): JevFlag[] {
+  return [
+    { label: 'Stack fit', percent: Math.round(score.has_required_stack * 100) },
+    { label: 'Level fit', percent: Math.round(score.fits_level * 100) },
+    { label: 'Blocker risk', percent: Math.round(score.hard_blocker * 100) },
+  ];
+}
+
+/** The Jev score's own confidence, as the rounded whole-number percent the badge's
+ *  caption line shows beside the flags — how much the model itself trusts `match_pct`,
+ *  not one of the three flags above. */
+export function jevConfidencePercent(score: JevScore): number {
+  return Math.round(score.match_confidence * 100);
 }
 
 /** The two progress-bar segment widths (in percent of the track): a full-weight
