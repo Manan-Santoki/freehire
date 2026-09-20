@@ -897,6 +897,11 @@ func Register(app *fiber.App, cfg Config) {
 	// not a slug.
 	ojcpH.register(api, mw)
 	mcpappH.register(api, mw)
+	// /jobs/for-you (personalized feed) is a static path that jobsH's /jobs/:slug param
+	// route would shadow if registered after it (Fiber matches in registration order — a
+	// request to /jobs/for-you was hitting GetJob with slug="for-you" and 404ing). Mount it
+	// before jobsH, same rule as searchH/ojcpH above. The handler lives on matchH.
+	matchH.RegisterForYou(api, mw)
 	jobsH.register(api, mw)
 	companiesH.register(api, mw)
 	geoH.register(api, mw)

@@ -112,8 +112,16 @@ func (h *matchHandlers) register(api fiber.Router, mw middleware) {
 	api.Get("/jobs/:slug/fit/stream", mw.key, runLimit, h.StreamMatchAnalysis)
 	// analyses lists the jobs the caller has run the AI fit analysis on.
 	api.Get("/me/tracking/analyses", mw.key, h.ListMyAnalyses)
-	// The personalized feed: Postgres-ranked scored jobs, verdict/min filterable,
-	// paginated. Cookie-auth (browser feed) rather than mw.key.
+	// NOTE: the personalized feed GET /jobs/for-you is NOT registered here. matchH
+	// registers after jobsH, and jobsH's /jobs/:slug param route would shadow the static
+	// /jobs/for-you (Fiber matches in registration order). It is registered directly in
+	// handler.go before jobsH.register — see RegisterForYou / the wiring there.
+}
+
+// RegisterForYou mounts the personalized feed (GET /jobs/for-you, cookie-auth). It is
+// called from handler.go BEFORE jobsH.register so the static path is not shadowed by
+// jobsH's /jobs/:slug param route (same ordering rule as searchH/ojcpH).
+func (h *matchHandlers) RegisterForYou(api fiber.Router, mw middleware) {
 	api.Get("/jobs/for-you", mw.cookie, h.ForYou)
 }
 
