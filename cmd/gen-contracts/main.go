@@ -81,6 +81,7 @@ func genStructs() (string, error) {
 	atscheckTS := filepath.Join(tmp, "atscheck.ts")
 	cvmatchTS := filepath.Join(tmp, "cvmatch.ts")
 	jobmatchTS := filepath.Join(tmp, "jobmatch.ts")
+	jevscoreTS := filepath.Join(tmp, "jevscore.ts")
 	hardconstraintTS := filepath.Join(tmp, "hardconstraint.ts")
 	matchanalysisTS := filepath.Join(tmp, "matchanalysis.ts")
 	coverletterTS := filepath.Join(tmp, "coverletter.ts")
@@ -150,6 +151,14 @@ func genStructs() (string, error) {
 				Path:         "github.com/strelov1/freehire/internal/candidate/jobmatch",
 				OutputPath:   jobmatchTS,
 				IncludeFiles: []string{"jobmatch.go"},
+			},
+			{
+				// The cached Jev decision wire shape (Score) the job-match badge serves
+				// alongside the deterministic coverage. Only score.go — the client and the
+				// composing service are server-only.
+				Path:         "github.com/strelov1/freehire/internal/candidate/jevscore",
+				OutputPath:   jevscoreTS,
+				IncludeFiles: []string{"score.go"},
 			},
 			{
 				// The hard-constraint blocker wire shape (Blocker + Category/Severity enums).
@@ -290,6 +299,16 @@ func genStructs() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	jevscoreBody, err := readBody(jevscoreTS)
+	if err != nil {
+		return "", err
+	}
+	// jevscore.Score collides on the wire with cvmatch.Score, the tailoring job-match result
+	// already generated above and already imported as Score by the tailor panel — tygo has
+	// no per-type rename, and TypeScript rejects two exports of the same name in one module.
+	// Renamed here rather than in Go: cvmatch's Score is the established public name, so the
+	// newer, narrower Jev decision takes the distinguishing one.
+	jevscoreBody = renameExportedType(jevscoreBody, "Score", "JevScore")
 	hardconstraintBody, err := readBody(hardconstraintTS)
 	if err != nil {
 		return "", err
@@ -330,7 +349,7 @@ func genStructs() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return enrichBody + "\n" + jobviewBody + "\n" + bundleBody + "\n" + verdictBody + "\n" + atscheckBody + "\n" + cvmatchBody + "\n" + jobmatchBody + "\n" + hardconstraintBody + "\n" + matchanalysisBody + "\n" + coverletterBody + "\n" + resumeextractBody + "\n" + cvBody + "\n" + cveditBody + "\n" + applyformBody + "\n" + screeninganswersBody + "\n" + surveyBody + "\n" + talentnetworkBody, nil
+	return enrichBody + "\n" + jobviewBody + "\n" + bundleBody + "\n" + verdictBody + "\n" + atscheckBody + "\n" + cvmatchBody + "\n" + jobmatchBody + "\n" + jevscoreBody + "\n" + hardconstraintBody + "\n" + matchanalysisBody + "\n" + coverletterBody + "\n" + resumeextractBody + "\n" + cvBody + "\n" + cveditBody + "\n" + applyformBody + "\n" + screeninganswersBody + "\n" + surveyBody + "\n" + talentnetworkBody, nil
 }
 
 // readBody returns a tygo output file's body with its leading preamble removed, so
@@ -347,6 +366,17 @@ func readBody(path string) (string, error) {
 	lines := strings.Split(string(raw), "\n")
 	i := skipPreamble(lines)
 	return strings.TrimRight(strings.Join(lines[i:], "\n"), "\n") + "\n", nil
+}
+
+// renameExportedType renames a tygo-generated top-level `export interface <old> {` (and its
+// preceding `<old> is …` doc-comment sentence) to newName. tygo names an export after its Go
+// type with no rename hook, so two packages that both call their wire type the same thing
+// (as jevscore.Score and cvmatch.Score do) collide the moment their bodies are concatenated
+// into one module — this is the targeted fix, applied only to the body of the package that
+// loses the name.
+func renameExportedType(body, oldName, newName string) string {
+	body = strings.ReplaceAll(body, "export interface "+oldName+" {", "export interface "+newName+" {")
+	return strings.ReplaceAll(body, oldName+" is ", newName+" is ")
 }
 
 // skipPreamble returns the index of the first line of real TypeScript, skipping the

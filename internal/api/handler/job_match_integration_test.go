@@ -51,6 +51,7 @@ func TestJobMatchEndpoint(t *testing.T) {
 	}
 	h := &matchHandlers{
 		queries:     queries,
+		store:       queries,
 		userProfile: userprofile.New(userprofile.NewQueriesRepository(queries)),
 	}
 	app := fiber.New(fiber.Config{ErrorHandler: RenderError})

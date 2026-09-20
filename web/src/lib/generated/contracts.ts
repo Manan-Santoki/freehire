@@ -667,6 +667,26 @@ export interface JobMatch {
 }
 
 /**
+ * JevScore is the sanitized, server-owned decision for one (candidate, job).
+ */
+export interface JevScore {
+  match_pct: number /* int */;
+  match_raw: number /* float64 */;
+  match_confidence: number /* float64 */;
+  role_category: string;
+  role_confidence: number /* float64 */;
+  has_required_stack: number /* float64 */;
+  fits_level: number /* float64 */;
+  hard_blocker: number /* float64 */;
+  verdict: string;
+}
+export interface Thresholds {
+  ApplyMin: number /* int */;
+  MaybeMin: number /* int */;
+  HardBlockMax: number /* float64 */;
+}
+
+/**
  * BlockerCategory names the requirement axis a blocker covers.
  */
 export type BlockerCategory = string;

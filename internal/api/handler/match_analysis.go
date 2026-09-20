@@ -32,6 +32,10 @@ import (
 // framing, and rendering the 402 that fitanalysis refuses with.
 type matchHandlers struct {
 	queries *db.Queries
+	// store is the narrow read surface JobMatch needs (the job row and the caller's cached
+	// Jev score). It is set to queries in production; tests inject a fake so the Jev/coverage
+	// fallback is exercised without Postgres. See jobMatchStore.
+	store jobMatchStore
 	// userProfile loads the caller's profile (skills for the match bar, location
 	// preferences for the hard-constraint blockers).
 	userProfile *userprofile.Service
@@ -62,6 +66,7 @@ type matchHandlers struct {
 func newMatchHandlers(queries *db.Queries, userProfile *userprofile.Service, resumeStore *resume.Store, analyzer *matchanalysis.Analyzer, plans *plan.Store) *matchHandlers {
 	return &matchHandlers{
 		queries:       queries,
+		store:         queries,
 		userProfile:   userProfile,
 		resume:        resumeStore,
 		matchAnalysis: analyzer,
