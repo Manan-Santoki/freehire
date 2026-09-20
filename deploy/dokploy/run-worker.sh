@@ -19,8 +19,11 @@ case "$worker" in
     budget=15m
     ;;
   jevscore)
-    if [ -z "${JEV_BASE_URL:-}" ] || [ -z "${JEV_API_KEY:-}" ] || [ -z "${JEV_MODEL:-}" ]; then
-      echo "jevscore: skipped because Jev configuration is incomplete"
+    # Only JEV_API_KEY is required: config.LoadJev defaults JEV_BASE_URL and JEV_MODEL
+    # (unlike LLM_*, which have no defaults), so gating on all three would skip the
+    # worker forever whenever the operator sets just the key and relies on those defaults.
+    if [ -z "${JEV_API_KEY:-}" ]; then
+      echo "jevscore: skipped because JEV_API_KEY is not set"
       exit 0
     fi
     budget=15m
