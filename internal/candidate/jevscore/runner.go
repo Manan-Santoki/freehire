@@ -17,13 +17,13 @@ import (
 // forward (see ProfileFingerprint); Version is the outbox row's target_version, carried
 // to UpsertUserJobScore's score_version.
 type Claimed struct {
-	ID          int64
-	UserID      int64
-	JobID       int64
-	Version     int32
-	Job         db.Job
-	Candidate   jeveligible.Candidate
-	Fingerprint string
+	ID           int64
+	UserID       int64
+	JobID        int64
+	Version      int32
+	Job          db.Job
+	Candidate    jeveligible.Candidate
+	Fingerprint  string
 	CVUploadedAt pgtype.Timestamptz
 }
 
