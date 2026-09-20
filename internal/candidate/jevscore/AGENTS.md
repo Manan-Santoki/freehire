@@ -21,8 +21,12 @@ surfaces that read the stored score are the profile-match badge
   (SQL) is the coarse pass: category/seniority/exclusions plus a freshness check, cheap
   enough to run per-profile over the whole job table. `jeveligible.Eligible` (Go) is the
   fine pass the `Runner` re-applies per claimed row before ever calling Jev, because it
-  reaches the hard-constraint blockers (visa, degree, certifications, remote-only)
-  that the SQL filter has no reasonable way to express. A pair the SQL let through but
+  reaches the hard-constraint blockers it rejects on — work authorization (visa) and
+  location/work-mode (remote-only) — that the SQL filter has no reasonable way to
+  express. (`hardconstraint.Evaluate` also computes degree/certification/experience
+  blockers, but the gate deliberately does NOT reject on those — it filters to the
+  `work_authorization` and `location_work_mode` categories only, leaving the softer
+  mismatches for Jev's own `hard_blocker` judgement.) A pair the SQL let through but
   the Go gate rejects is dropped with `Complete(ctx, c, Score{}, "")` — model `""` paired
   with a zero `Score` is the ineligible-drop path, no `user_job_scores` write, entry just
   deleted.
