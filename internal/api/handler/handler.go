@@ -528,7 +528,7 @@ func Register(app *fiber.App, cfg Config) {
 	photoStore := headshot.New(cfg.Blob, headshot.NewQueriesRepository(queries))
 	// The profile read serves the structured résumé beside the profile, so it needs the
 	// résumé store — hence constructed after it.
-	profileH := newProfileHandlers(profileSvc, resumeStore, newCandidateProfiler(queries))
+	profileH := newProfileHandlers(profileSvc, resumeStore, newCandidateProfiler(queries), queries)
 	// Personal skill-demand trend: the caller's own profile skills joined against the
 	// weekly insights_skill_history snapshots cmd/rollup-stats writes (see
 	// me_market_pulse.go). Reuses profileSvc rather than a second userprofile.Service.

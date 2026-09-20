@@ -52,6 +52,56 @@ func (q *Queries) GetUserProfile(ctx context.Context, userID int64) (UserProfile
 	return i, err
 }
 
+const listAllUserProfiles = `-- name: ListAllUserProfiles :many
+SELECT user_id, specializations, skills, seniorities, excluded_sources, excluded_companies, location_preferences
+FROM user_profiles
+`
+
+type ListAllUserProfilesRow struct {
+	UserID              int64           `json:"user_id"`
+	Specializations     []string        `json:"specializations"`
+	Skills              []string        `json:"skills"`
+	Seniorities         []string        `json:"seniorities"`
+	ExcludedSources     []string        `json:"excluded_sources"`
+	ExcludedCompanies   []string        `json:"excluded_companies"`
+	LocationPreferences json.RawMessage `json:"location_preferences"`
+}
+
+// Every saved profile, for cmd/jevscore's per-run enqueue pass: it walks every profile
+// and issues one coarse EnqueueJevScoresForProfile per user. Selects only the columns
+// that pass drives (specializations/seniorities feed the coarse filter, skills feed the
+// profile fingerprint, excluded_sources/excluded_companies feed the coarse exclude
+// filter, location_preferences feeds the fingerprint). user_profiles is a one-row-per-user
+// table with no expected high cardinality, so a full unpaged scan is the deliberately
+// simple choice here; revisit with a keyset cursor if that stops being true.
+func (q *Queries) ListAllUserProfiles(ctx context.Context) ([]ListAllUserProfilesRow, error) {
+	rows, err := q.db.Query(ctx, listAllUserProfiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllUserProfilesRow{}
+	for rows.Next() {
+		var i ListAllUserProfilesRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Specializations,
+			&i.Skills,
+			&i.Seniorities,
+			&i.ExcludedSources,
+			&i.ExcludedCompanies,
+			&i.LocationPreferences,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserProfilesExcludedSkills = `-- name: ListUserProfilesExcludedSkills :many
 SELECT user_id, excluded_skills FROM user_profiles
 WHERE user_id = ANY($1::bigint[])

@@ -55,3 +55,14 @@ WHERE user_id = $1;
 -- exclude set.
 SELECT user_id, excluded_skills FROM user_profiles
 WHERE user_id = ANY(sqlc.arg(user_ids)::bigint[]);
+
+-- name: ListAllUserProfiles :many
+-- Every saved profile, for cmd/jevscore's per-run enqueue pass: it walks every profile
+-- and issues one coarse EnqueueJevScoresForProfile per user. Selects only the columns
+-- that pass drives (specializations/seniorities feed the coarse filter, skills feed the
+-- profile fingerprint, excluded_sources/excluded_companies feed the coarse exclude
+-- filter, location_preferences feeds the fingerprint). user_profiles is a one-row-per-user
+-- table with no expected high cardinality, so a full unpaged scan is the deliberately
+-- simple choice here; revisit with a keyset cursor if that stops being true.
+SELECT user_id, specializations, skills, seniorities, excluded_sources, excluded_companies, location_preferences
+FROM user_profiles;

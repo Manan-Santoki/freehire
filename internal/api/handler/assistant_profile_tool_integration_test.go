@@ -74,6 +74,7 @@ func newProfileAssistantApp(pool *pgxpool.Pool, iss *auth.Issuer, model assistan
 		userprofile.New(userprofile.NewQueriesRepository(queries)),
 		resume.New(nil, resume.NewQueriesRepository(queries)),
 		bank,
+		queries,
 	)
 	h := &assistantHandlers{
 		store: assistant.NewStore(queries), queries: queries, profile: profileH, experience: bank,
@@ -156,6 +157,7 @@ func TestGetProfileToolSendsAProfilelessUserToTheProfilePage(t *testing.T) {
 			userprofile.New(userprofile.NewQueriesRepository(queries)),
 			resume.New(nil, resume.NewQueriesRepository(queries)),
 			bank,
+			queries,
 		),
 		experience: bank,
 	}

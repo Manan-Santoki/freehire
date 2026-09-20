@@ -48,6 +48,9 @@ type resumeHandlers struct {
 	// on the status read. Nil when the queries are unavailable; both then no-op, exactly
 	// like the other best-effort derivations.
 	bank experienceBank
+	// scores invalidates cached Jev scores after a fresh CV upload. Nil disables it,
+	// matching the rest of this handler's best-effort degradations.
+	scores scoreInvalidator
 }
 
 func newResumeHandlers(resumeStore *resume.Store, structuredExtractor *resumeextract.Extractor, facets facetCounter, userProfile *userprofile.Service, atsAnalyzer *atscheck.Analyzer, queries *db.Queries) *resumeHandlers {
@@ -59,6 +62,7 @@ func newResumeHandlers(resumeStore *resume.Store, structuredExtractor *resumeext
 		atsAnalyzer:         atsAnalyzer,
 		atsCache:            queries,
 		bank:                newExperienceBank(queries, userProfile),
+		scores:              queries,
 	}
 }
 
@@ -309,6 +313,10 @@ func (h *resumeHandlers) PutResume(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	// A fresh CV invalidates whatever Jev scored against the old one — drop the cache and
+	// pending queue entries so the next jevscore run re-scores against this upload.
+	// Best-effort: never blocks the response the caller is waiting on.
+	invalidateUserScores(c.Context(), h.scores, userID)
 	// Derive the structured résumé in the background: it must not block the upload
 	// response (best-effort, off the response path). The structure is stamped with
 	// this upload's time so it is served only while it describes the current CV.

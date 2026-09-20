@@ -3249,6 +3249,14 @@ type Querier interface {
 	// Requires jobs_source_id_open_idx (migration 0056); without it this is the same scan
 	// restricted to one source.
 	ListAggregatorJobsForCrosscheckBySource(ctx context.Context, arg ListAggregatorJobsForCrosscheckBySourceParams) ([]ListAggregatorJobsForCrosscheckBySourceRow, error)
+	// Every saved profile, for cmd/jevscore's per-run enqueue pass: it walks every profile
+	// and issues one coarse EnqueueJevScoresForProfile per user. Selects only the columns
+	// that pass drives (specializations/seniorities feed the coarse filter, skills feed the
+	// profile fingerprint, excluded_sources/excluded_companies feed the coarse exclude
+	// filter, location_preferences feeds the fingerprint). user_profiles is a one-row-per-user
+	// table with no expected high cardinality, so a full unpaged scan is the deliberately
+	// simple choice here; revisit with a keyset cursor if that stops being true.
+	ListAllUserProfiles(ctx context.Context) ([]ListAllUserProfilesRow, error)
 	// One application's live events, newest first — what the application panel renders as its
 	// history, where ListApplicationEventsInRange paints a month for the calendar.
 	//

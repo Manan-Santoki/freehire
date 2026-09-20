@@ -30,6 +30,32 @@ type structuredResumeReader interface {
 	StructureForSeed(ctx context.Context, userID int64) (resumeextract.Structured, bool, error)
 }
 
+// scoreInvalidator drops a user's cached Jev scores and pending job_score_outbox entries
+// after a profile edit or CV upload, so the next cmd/jevscore run re-scores fresh instead
+// of serving (or completing) a verdict computed against the candidate's old profile/CV.
+// Narrow so it is satisfiable by a test fake; *db.Queries implements it in production.
+// Best-effort by design: a failure here never blocks the save/upload it rides on.
+type scoreInvalidator interface {
+	InvalidateUserScores(ctx context.Context, userID int64) error
+	DeleteUserScoreOutbox(ctx context.Context, userID int64) error
+}
+
+// invalidateUserScores drops the user's cached scores and pending queue entries,
+// logging and swallowing any error — this is a courtesy cleanup, never a reason to fail
+// the save/upload that triggered it. A nil invalidator (e.g. a minimal test app) is a
+// silent no-op.
+func invalidateUserScores(ctx context.Context, inv scoreInvalidator, userID int64) {
+	if inv == nil {
+		return
+	}
+	if err := inv.InvalidateUserScores(ctx, userID); err != nil {
+		log.Printf("invalidate user scores: user %d: %v", userID, err)
+	}
+	if err := inv.DeleteUserScoreOutbox(ctx, userID); err != nil {
+		log.Printf("delete user score outbox: user %d: %v", userID, err)
+	}
+}
+
 // profileHandlers serves the single-per-user profile (a specialization + skills set).
 // The use cases live in userprofile.Service; the handlers translate wire ↔ domain and
 // delegate to it. resume supplies the structured résumé the read carries alongside the
@@ -39,10 +65,13 @@ type profileHandlers struct {
 	resume      structuredResumeReader
 	// bank supplies the work history the cv block reports. Nil reads as an empty bank.
 	bank candidateProfiler
+	// scores invalidates cached Jev scores after a save. Nil disables it (e.g. a minimal
+	// test app), matching the rest of this handler's best-effort degradations.
+	scores scoreInvalidator
 }
 
-func newProfileHandlers(userProfile *userprofile.Service, resume structuredResumeReader, bank candidateProfiler) *profileHandlers {
-	return &profileHandlers{userProfile: userProfile, resume: resume, bank: bank}
+func newProfileHandlers(userProfile *userprofile.Service, resume structuredResumeReader, bank candidateProfiler, scores scoreInvalidator) *profileHandlers {
+	return &profileHandlers{userProfile: userProfile, resume: resume, bank: bank, scores: scores}
 }
 
 func (h *profileHandlers) register(api fiber.Router, mw middleware) {
@@ -255,6 +284,11 @@ func (h *profileHandlers) PutProfile(c *fiber.Ctx) error {
 	if err != nil {
 		return profileError(err)
 	}
+	// A saved profile can change eligibility (specializations, seniorities, exclusions)
+	// or the fingerprint stamp (skills, location) that keeps a cached score fresh — drop
+	// both so the next jevscore run re-scores against the new profile. Best-effort: never
+	// blocks the response the caller is waiting on.
+	invalidateUserScores(c.Context(), h.scores, userID)
 	// The same representation the read serves — one resource, one shape, so a client that
 	// saves and a client that fetches see the same profile.
 	return c.JSON(fiber.Map{"data": toProfileResponse(profile, h.structuredCV(c.Context(), userID), h.derivedLocation(c.Context(), userID))})
