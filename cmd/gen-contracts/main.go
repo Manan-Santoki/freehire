@@ -92,6 +92,7 @@ func genStructs() (string, error) {
 	screeninganswersTS := filepath.Join(tmp, "screeninganswers.ts")
 	surveyTS := filepath.Join(tmp, "survey.ts")
 	talentnetworkTS := filepath.Join(tmp, "talentnetwork.ts")
+	forYouTS := filepath.Join(tmp, "foryou.ts")
 
 	cfg := &tygo.Config{
 		Packages: []*tygo.PackageConfig{
@@ -265,6 +266,16 @@ func genStructs() (string, error) {
 				OutputPath:   surveyTS,
 				IncludeFiles: []string{"survey.go"},
 			},
+			{
+				// The personalized-feed row wire shape (ForYouJob). Only for_you.go — the
+				// rest of the handler package is transport, none of which crosses the wire.
+				// Named ForYouJob rather than FeedRow/Job/Score to avoid colliding with
+				// jobmatch.JobMatch / jevscore.Score, already generated above into the same
+				// module (see the jevscore rename below for what that collision looks like).
+				Path:         "github.com/strelov1/freehire/internal/api/handler",
+				OutputPath:   forYouTS,
+				IncludeFiles: []string{"for_you.go"},
+			},
 		},
 	}
 	if err := tygo.New(cfg).Generate(); err != nil {
@@ -349,7 +360,11 @@ func genStructs() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return enrichBody + "\n" + jobviewBody + "\n" + bundleBody + "\n" + verdictBody + "\n" + atscheckBody + "\n" + cvmatchBody + "\n" + jobmatchBody + "\n" + jevscoreBody + "\n" + hardconstraintBody + "\n" + matchanalysisBody + "\n" + coverletterBody + "\n" + resumeextractBody + "\n" + cvBody + "\n" + cveditBody + "\n" + applyformBody + "\n" + screeninganswersBody + "\n" + surveyBody + "\n" + talentnetworkBody, nil
+	forYouBody, err := readBody(forYouTS)
+	if err != nil {
+		return "", err
+	}
+	return enrichBody + "\n" + jobviewBody + "\n" + bundleBody + "\n" + verdictBody + "\n" + atscheckBody + "\n" + cvmatchBody + "\n" + jobmatchBody + "\n" + jevscoreBody + "\n" + hardconstraintBody + "\n" + matchanalysisBody + "\n" + coverletterBody + "\n" + resumeextractBody + "\n" + cvBody + "\n" + cveditBody + "\n" + applyformBody + "\n" + screeninganswersBody + "\n" + surveyBody + "\n" + talentnetworkBody + "\n" + forYouBody, nil
 }
 
 // readBody returns a tygo output file's body with its leading preamble removed, so

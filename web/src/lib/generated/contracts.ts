@@ -1515,6 +1515,30 @@ export interface CatalogueMember {
   has_photo: boolean;
 }
 
+/**
+ * ForYouJob is one row of the caller's personalized feed: the job's public listing fields
+ * alongside the cached Jev verdict that ranked it. Named ForYouJob (not FeedRow/Job/Score)
+ * so it does not collide on the wire with jobmatch.JobMatch or jevscore.Score, the two
+ * other match-surface types already generated into contracts.ts.
+ */
+export interface ForYouJob {
+  slug: string;
+  title: string;
+  company: string;
+  company_slug: string;
+  location: string;
+  work_mode: string;
+  posted_at?: string;
+  closed_at?: string;
+  skills: string[];
+  match_pct: number /* int */;
+  verdict: string;
+  has_required_stack: number /* float64 */;
+  fits_level: number /* float64 */;
+  hard_blocker: number /* float64 */;
+  role_category: string;
+}
+
 export const SOURCE_VALUES = ['telegram', 'workatastartup', 'remoteok', 'arc', '4dayweek', 'adp', 'adpmyjobs', 'adzuna', 'aijobs', 'applicantpro', 'applitrack', 'arbeitnow', 'arbeitsagentur', 'ashby', 'ashbygraphql', 'avature', 'bamboohr', 'bayt', 'betterteam', 'breezy', 'briefhq', 'bullhorn', 'careerplug', 'careerspage', 'catsone', 'cleverstaff', 'clinch', 'comeet', 'compleo', 'cornerstone', 'crelate', 'cryptocurrencyjobs', 'dayforce', 'deel', 'djinni', 'dover', 'earcu', 'echojobs', 'edjoin', 'eightfold', 'enlizt', 'epam', 'erecruiter', 'eures', 'factorial', 'freshteam', 'functionalworks', 'geekhunter', 'geekjob', 'gem', 'getmanfred', 'getmatch', 'getonbrd', 'getro', 'githublists', 'gr8people', 'greenhouse', 'gulftalent', 'gupy', 'gusto', 'habr_career', 'hackernews', 'herp', 'hh', 'hibob', 'himalayas', 'hireology', 'hiringcafe', 'hiringthing', 'hrmdirect', 'hrmos', 'humanbit', 'huntflow', 'hurma', 'icims', 'infojobs', 'inhire', 'instaffo', 'ismartrecruit', 'isolvedhire', 'itechart', 'japandev', 'jazzhr', 'jibe', 'jobappnetwork', 'jobdanmark', 'jobicy', 'jobleads', 'jobnet', 'jobscore', 'jobspresso', 'jobstash', 'jobstreet', 'jobtech', 'jobvite', 'jobylon', 'join', 'joppy', 'keka', 'landingjobs', 'lever', 'likeit', 'loxo', 'luxoft', 'manatal', 'mindsight', 'mycareersfuture', 'neogov', 'nodesk', 'nofluffjobs', 'northstone', 'odoo', 'opencats', 'oracle', 'pageup', 'paycom', 'paycor', 'paylocity', 'peopleforce', 'personio', 'phenom', 'pinpoint', 'powertofly', 'profession', 'pyjamahr', 'quickin', 'radancy', 'rapyd', 'recruitee', 'recruiterflow', 'recruitingsolutions', 'recrutei', 'reed', 'remotedotcom', 'remotive', 'remotli', 'rippling', 'scalis', 'schoolspring', 'seek', 'selfrecruit', 'senior', 'smartrecruiters', 'softgarden', 'solides', 'solidjobs', 'spark', 'speedrun', 'startupandvc', 'successfactors', 'talentadore', 'talenthr', 'talentlyft', 'taleo', 'teamex', 'teamtailor', 'techtree', 'tecla', 'thehub', 'themuse', 'topco', 'traffit', 'trakstar', 'trudvsem', 'tyomarkkinatori', 'ukg', 'ukgready', 'usajobs', 'vagas', 'vention', 'vouch', 'wantapply', 'wellfound', 'werecruit', 'weworkremotely', 'whatjobs', 'whatjobs-ae', 'whatjobs-ar', 'whatjobs-at', 'whatjobs-au', 'whatjobs-be', 'whatjobs-bh', 'whatjobs-br', 'whatjobs-ca', 'whatjobs-ch', 'whatjobs-cl', 'whatjobs-co', 'whatjobs-de', 'whatjobs-dk', 'whatjobs-eg', 'whatjobs-es', 'whatjobs-fi', 'whatjobs-fr', 'whatjobs-gr', 'whatjobs-hk', 'whatjobs-hu', 'whatjobs-id', 'whatjobs-ie', 'whatjobs-in', 'whatjobs-it', 'whatjobs-ke', 'whatjobs-kw', 'whatjobs-lu', 'whatjobs-mx', 'whatjobs-my', 'whatjobs-nl', 'whatjobs-no', 'whatjobs-nz', 'whatjobs-om', 'whatjobs-pe', 'whatjobs-ph', 'whatjobs-pk', 'whatjobs-pl', 'whatjobs-pt', 'whatjobs-py', 'whatjobs-qa', 'whatjobs-sa', 'whatjobs-se', 'whatjobs-sg', 'whatjobs-sv', 'whatjobs-th', 'whatjobs-tr', 'whatjobs-uk', 'whatjobs-ve', 'whatjobs-vn', 'whatjobs-za', 'workable', 'workablemarketplace', 'workday', 'workingnomads', 'workstream', 'wpyoast', 'zohorecruit'] as const;
 export type Source = (typeof SOURCE_VALUES)[number];
 export const STAGE_VALUES = ['preparing', 'applied', 'screening', 'responded', 'interview', 'offer', 'accepted', 'rejected', 'withdrawn', 'expired'] as const;

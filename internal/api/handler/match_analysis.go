@@ -36,6 +36,10 @@ type matchHandlers struct {
 	// Jev score). It is set to queries in production; tests inject a fake so the Jev/coverage
 	// fallback is exercised without Postgres. See jobMatchStore.
 	store jobMatchStore
+	// forYou is the narrow read surface ForYou needs (the ranked feed page and its total).
+	// It is set to queries in production; tests inject a fake so ordering/filtering/pagination
+	// are exercised without Postgres. See forYouStore.
+	forYou forYouStore
 	// userProfile loads the caller's profile (skills for the match bar, location
 	// preferences for the hard-constraint blockers).
 	userProfile *userprofile.Service
@@ -67,6 +71,7 @@ func newMatchHandlers(queries *db.Queries, userProfile *userprofile.Service, res
 	return &matchHandlers{
 		queries:       queries,
 		store:         queries,
+		forYou:        queries,
 		userProfile:   userProfile,
 		resume:        resumeStore,
 		matchAnalysis: analyzer,
@@ -107,6 +112,9 @@ func (h *matchHandlers) register(api fiber.Router, mw middleware) {
 	api.Get("/jobs/:slug/fit/stream", mw.key, runLimit, h.StreamMatchAnalysis)
 	// analyses lists the jobs the caller has run the AI fit analysis on.
 	api.Get("/me/tracking/analyses", mw.key, h.ListMyAnalyses)
+	// The personalized feed: Postgres-ranked scored jobs, verdict/min filterable,
+	// paginated. Cookie-auth (browser feed) rather than mw.key.
+	api.Get("/jobs/for-you", mw.cookie, h.ForYou)
 }
 
 // callerLanguage reads the caller's preferred interface language for the fit-analysis
