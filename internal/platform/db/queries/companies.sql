@@ -285,7 +285,20 @@ WHERE slug = sqlc.arg(slug) AND industries IS DISTINCT FROM sqlc.arg(industries)
 --
 -- Three columns are NOT YC-owned, because this is no longer their only writer, and
 -- replacing them would erase another source's work on the importer's next run:
--- tagline fills only a blank, company_info merges key-wise, and industries union.
+-- tagline fills only a blank, company_info merges key-wise, and industries union —
+-- guarded the same way the four below are, once an active employer account exists: an
+-- employer who deliberately REMOVES a tag via their profile edit must not see this
+-- importer silently re-add it from the YC entry on its next scheduled run.
+--
+-- subindustry/year_founded/employee_count/hq_country are a FOURTH kind of not-owned:
+-- unlike the three above, this importer WAS their only writer, right up until a verified
+-- employer (internal/ingest/employer, migration 0174) became a second, more authoritative
+-- one — the company speaking about itself outranks an imported directory entry. Since
+-- there was never a second writer before, these four were never protected at all, so the
+-- guard is a plain "leave them alone when an active company_accounts row exists for this
+-- slug" rather than a merge: an employer's own edit is meant to win outright (see
+-- add-employer-company-accounts' company-info spec delta), and this importer's job is
+-- simply to not be the one that undoes it on its next scheduled run.
 INSERT INTO companies (
     slug, name, industries, subindustry, year_founded, employee_count, hq_country,
     tagline, company_info, yc_batch, yc_status, yc_stage, yc_flags,
@@ -298,18 +311,35 @@ INSERT INTO companies (
 )
 ON CONFLICT (slug) DO UPDATE SET
     -- Union, sorted and de-duplicated, so two sources accumulate instead of
-    -- overwriting. Sorted because the stored order is compared for equality by the
+    -- overwriting — UNLESS an active employer account exists, in which case the stored
+    -- value (the employer's own, curated list) wins outright, same as the four columns
+    -- below. Sorted because the stored order is compared for equality by the
     -- normalization worker's no-op guard.
-    industries      = ARRAY(
+    industries      = CASE WHEN EXISTS (
+                          SELECT 1 FROM company_accounts ca
+                          WHERE ca.company_slug = companies.slug AND ca.status = 'active'
+                      ) THEN companies.industries ELSE ARRAY(
         SELECT DISTINCT x
         FROM unnest(companies.industries || EXCLUDED.industries) AS x
         WHERE x <> ''
         ORDER BY x
-    ),
-    subindustry     = EXCLUDED.subindustry,
-    year_founded    = EXCLUDED.year_founded,
-    employee_count  = EXCLUDED.employee_count,
-    hq_country      = EXCLUDED.hq_country,
+    ) END,
+    subindustry     = CASE WHEN EXISTS (
+                          SELECT 1 FROM company_accounts ca
+                          WHERE ca.company_slug = companies.slug AND ca.status = 'active'
+                      ) THEN companies.subindustry ELSE EXCLUDED.subindustry END,
+    year_founded    = CASE WHEN EXISTS (
+                          SELECT 1 FROM company_accounts ca
+                          WHERE ca.company_slug = companies.slug AND ca.status = 'active'
+                      ) THEN companies.year_founded ELSE EXCLUDED.year_founded END,
+    employee_count  = CASE WHEN EXISTS (
+                          SELECT 1 FROM company_accounts ca
+                          WHERE ca.company_slug = companies.slug AND ca.status = 'active'
+                      ) THEN companies.employee_count ELSE EXCLUDED.employee_count END,
+    hq_country      = CASE WHEN EXISTS (
+                          SELECT 1 FROM company_accounts ca
+                          WHERE ca.company_slug = companies.slug AND ca.status = 'active'
+                      ) THEN companies.hq_country ELSE EXCLUDED.hq_country END,
     -- NULLIF folds '' into NULL so an empty string counts as absent, not as a value
     -- worth protecting.
     tagline         = COALESCE(NULLIF(companies.tagline, ''), EXCLUDED.tagline),
@@ -597,3 +627,54 @@ WHERE c.slug = c2.slug
 -- absent). cmd/import-yc uses it to guard against homonym collisions: it skips
 -- enriching an existing company whose job_count dwarfs a matched YC entry's team.
 SELECT job_count FROM companies WHERE slug = $1;
+
+-- name: SetCompanyAccountProfile :exec
+-- A verified employer's authoritative edit to their own company's curated profile
+-- (internal/ingest/employer, PATCH /employer/company) — see company-info's "verified
+-- employer... authoritative" spec delta. Unlike every other writer of these columns
+-- (cmd/import-yc, the Wikipedia backfill, ingest's adapter-supplied description), this one
+-- REPLACES rather than merges or fills a gap: the employer is the company speaking about
+-- itself, strictly more authoritative than an imported or inferred source.
+--
+-- A NULL scalar argument means "the request did not touch this field" (COALESCE keeps the
+-- stored value) — the caller passes only what was actually supplied, nil-means-unchanged
+-- like every other patch in this codebase. company_info_patch is a plain JSONB merge with
+-- the new value winning on key collision (the opposite direction from cmd/import-yc's
+-- fill-gap merge): pass '{}' when the request touches neither description nor website, so
+-- the merge is a no-op and every other key already stored (funding, parent_company, …) is
+-- left alone.
+--
+-- industries is deliberately NOT here — it goes through the existing SetCompanyIndustries,
+-- which replaces the whole array (not a per-employer union), and is called separately by
+-- the service only when the request actually supplies industries.
+UPDATE companies
+SET tagline         = COALESCE(sqlc.narg(tagline), tagline),
+    company_info    = company_info || sqlc.arg(company_info_patch)::jsonb,
+    year_founded    = COALESCE(sqlc.narg(year_founded), year_founded),
+    employee_count  = COALESCE(sqlc.narg(employee_count), employee_count),
+    hq_country      = COALESCE(sqlc.narg(hq_country), hq_country),
+    subindustry     = COALESCE(sqlc.narg(subindustry), subindustry),
+    company_info_at = now(),
+    updated_at      = now()
+WHERE slug = sqlc.arg(slug);
+
+-- name: SeedCompanyAccountWebsite :exec
+-- internal/ingest/employer's fill-only-if-blank website seed: a moderator approving a
+-- pending employer-account claim whose domain the automatic check could not itself verify
+-- (see employer-account's spec). A new slug is inserted as an is_reference row (mirroring
+-- cmd/import-yc's own pattern for a company with no jobs yet, migration 0174's comment);
+-- an existing row's company_info gets the "website" key ONLY when absent or blank — the
+-- WHERE clause on the UPDATE branch is the guard, not merely a defensive no-op, since this
+-- must never overwrite a value another source (or the employer's own later curated edit)
+-- already asserted.
+INSERT INTO companies (slug, name, company_info, is_reference, company_info_at)
+VALUES (
+    sqlc.arg(slug), sqlc.arg(name),
+    jsonb_build_object('website', sqlc.arg(website)::text),
+    true, now()
+)
+ON CONFLICT (slug) DO UPDATE SET
+    company_info    = companies.company_info || jsonb_build_object('website', sqlc.arg(website)::text),
+    company_info_at = now(),
+    updated_at      = now()
+WHERE NOT (companies.company_info ? 'website') OR companies.company_info ->> 'website' = '';
