@@ -90,7 +90,18 @@ reads a precomputed pgvector lookup instead (`internal/search/similarjobs`,
   by `maxTotalHits` and `maxPageWindow` (both bound `/search`, not this route), and
   measured flat in the offset: 0 and 1.2M both answer under 0.25s on prod. That replaced a
   Postgres `row_number()` walk which had grown to 64s over 3.4M rows and was timing out
-  `/sitemap.xml` outright. Two consequences worth holding: an index outage is now a
+  `/sitemap.xml` outright. **`ListFreshSitemapPage` is the exception and goes through
+  `/search`** (`/api/v1/jobs/sitemap/fresh`), because `/documents` accepts no `sort` and
+  `web-ssr-seo` requires a newest-first job sub-sitemap — which the paged reader silently
+  never provided. So that one IS subject to `maxTotalHits` (harmless at 10,000,000) and is
+  NOT flat in the offset: measured warm at `limit=10000` on prod 2026-09-22, 716ms at
+  offset 0 rising to 1,776ms at 30,000 in the engine, and 1.3s rising to 2.6-4.9s end
+  to end through the sub-sitemap — with one cold 8.5s reading on the deepest chunk at
+  the first request after a release. The engine figure is the one to reason about when
+  changing the window; the end-to-end figure is the one the 10s SSR fetch timeout
+  actually applies to, and the two differ by more than 2x. Its window is bounded at `freshSitemapMaxOffset`
+  in the handler for exactly that reason, and the bound covers offset PLUS limit, since on
+  a sorted read the caller controls the depth through both. Two consequences worth holding: an index outage is now a
   sitemap outage too, and `CompanyDocument.UpdatedAt` exists **only** to carry a
   `<lastmod>` — it is not searchable, filterable, or sortable, and a company indexed
   before it was added simply ships without one until the next `reindex-companies`.
