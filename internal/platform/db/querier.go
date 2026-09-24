@@ -4080,6 +4080,30 @@ type Querier interface {
 	// to decide whether a posting is re-crawlable. Only (provider, board, region), not the
 	// whole row: the guard asks a set-membership question and nothing else.
 	ListLiveBoards(ctx context.Context) ([]ListLiveBoardsRow, error)
+	// Id-only projection of ListLiveJobsByIDAfter, for the same corruption-degrade path
+	// ListJobIDsAfter serves. The predicate must match its wide sibling exactly: a
+	// degraded re-read that scanned a different window would skip rows silently.
+	ListLiveJobIDsAfter(ctx context.Context, arg ListLiveJobIDsAfterParams) ([]int64, error)
+	// ListJobsByIDAfter narrowed to the rows that can still reach the catalogue, for a
+	// re-derive after a dictionary change (cmd/backfill-derive with
+	// BACKFILL_DERIVE_CLOSED_WITHIN_DAYS).
+	//
+	// Measured 2026-09-23: the table holds ~12.7M rows and 1.9M open ones, so the derive
+	// pass spends ~85% of its time on postings nothing can surface. A pass over the whole
+	// table takes ~30h at the unit's deliberately low CPUWeight.
+	//
+	// NOT simply `closed_at IS NULL`, and this is the load-bearing part. A closed posting
+	// REOPENS: ingest's Toucher refreshes liveness "(last_seen_at, reopen if closed) ...
+	// WITHOUT rewriting its content" (internal/ingest/pipeline/pipeline.go), and a posting
+	// that merely drifts out of a feed for 48h is closed and reopened as it drifts back
+	// (see the notes in sources/seek.go and sources/whatjobs.go). Skipping it on
+	// `closed_at IS NULL` would return it to the catalogue carrying the facets the old
+	// dictionary gave it, with nothing downstream reporting the staleness.
+	//
+	// So the window is "open, or closed recently enough to plausibly come back". The caller
+	// picks the cutoff; the pass degrades to the full table when it passes the zero time,
+	// which keeps the unfiltered behaviour one env var away.
+	ListLiveJobsByIDAfter(ctx context.Context, arg ListLiveJobsByIDAfterParams) ([]Job, error)
 	// Candidates for cmd/backfill-username-from-mailbox: every hosted mailbox whose
 	// owner has not yet been backfilled onto users.username. Small by construction —
 	// mailboxes is an opt-in feature, nowhere near the row counts the repo's chunked
@@ -4225,6 +4249,23 @@ type Querier interface {
 	// unrelated to it, so the adapter maps it once (fromRow) rather than re-assembling it here
 	// (see mentorship.sql's ListBookingsByMentor for the same shape).
 	ListPendingSubmissions(ctx context.Context) ([]ListPendingSubmissionsRow, error)
+	// Re-filter backfill read path (cmd/backfill-telegram-prefilter): page the posts the
+	// CRAWL's prefilter declined, so a later widening of the markers can re-offer them.
+	//
+	// The predicate is what identifies such a post, and it rests on how InsertTelegramPost
+	// writes one: extracted_at is stamped at INSERT time, before the post was ever claimed.
+	// A post the extractor processed carries a claimed_at; one the prefilter declined never
+	// does. That discriminator is incidental rather than declared, so it lives here, in one
+	// place, with this comment — not spread across the callers.
+	//
+	// attempts = 0 is a second, independent guard on the same distinction: the extractor
+	// bumps it on every failure, so a post that has ever been worked on is excluded even if
+	// some future change clears claimed_at. failed_at IS NULL keeps dead-lettered posts out —
+	// those were refused by the extractor, not by the prefilter.
+	//
+	// Keyset over the primary key (channel, msg_id) rather than an offset, so a long walk
+	// does not re-scan what it has already read.
+	ListPrefilterRejectedTelegramPosts(ctx context.Context, arg ListPrefilterRejectedTelegramPostsParams) ([]ListPrefilterRejectedTelegramPostsRow, error)
 	// The public directory. Every filter is optional and applied as "NULL means unfiltered",
 	// which keeps one query instead of a builder; the endpoint reports any parameter it did
 	// NOT read in meta.ignored_params, so a filter that vanishes from this list must vanish
@@ -4429,6 +4470,30 @@ type Querier interface {
 	// exactly the "no opinion" case dictgap.ClassifyDriftCandidates already treats as
 	// empty.
 	ListTitlesForClassifyDrift(ctx context.Context, arg ListTitlesForClassifyDriftParams) ([]ListTitlesForClassifyDriftRow, error)
+	// One chunk of the unclassified-title report: every distinct title among PUBLISHABLE
+	// postings in an id range, with how many postings in THIS CHUNK carried it.
+	//
+	// The scope is the deliberate difference from ListTitlesForClassifyDrift beside it.
+	// That query takes enriched postings whatever their state, because a title's
+	// dictionary answer is a fact about the text. This one asks a different question —
+	// what is the catalogue failing to PUBLISH — so a title carried only by closed,
+	// duplicate or private postings is not a gap: recognising it would publish nothing.
+	//
+	// No is_tech predicate, and that is not an omission. The stored column is the OLD
+	// dictionary's answer until cmd/backfill-derive reaches the row (~171 rows/s over
+	// 12.7M rows), so filtering on it would rank gaps already closed and hide gaps the
+	// newest terms opened. dictgap.UnclassifiedTitles recomputes instead; this statement
+	// hands it every publishable title and lets the dictionary decide, the same
+	// over-fetch-and-let-the-dictionary-decide shape cmd/backfill-clearance uses.
+	//
+	// Reads no description column, so it never de-TOASTs.
+	//
+	// Deliberately NO row LIMIT, for the reason ListTitlesForClassifyDrift states: GROUP
+	// BY already caps the output at the number of DISTINCT titles in the id range, while a
+	// LIMIT on an unordered aggregate would silently drop titles with no id to resume
+	// from. Grouping happens per chunk, so a title spanning more than one range comes back
+	// once per chunk and the caller sums.
+	ListTitlesForUnclassifiedReport(ctx context.Context, arg ListTitlesForUnclassifiedReportParams) ([]ListTitlesForUnclassifiedReportRow, error)
 	// The owner's per-CV panel: every traced link of one CV with what is known about it. Owner-scoped.
 	//
 	// Clicks flagged as automated are counted separately rather than filtered out, so the UI's "include
@@ -5794,6 +5859,15 @@ type Querier interface {
 	// and a report that read the intended number instead would show a healthy 24 while 12 rows
 	// existed.
 	ReportIngestSchedule(ctx context.Context) ([]ReportIngestScheduleRow, error)
+	// Re-filter backfill write path: hand a prefilter-declined post back to the extraction
+	// queue by clearing the extracted_at that InsertTelegramPost stamped on it.
+	//
+	// The WHERE repeats the read's predicate rather than trusting the id it was handed, which
+	// is what makes the pass idempotent and safe to interrupt: a post already requeued by an
+	// earlier run, or claimed by the extractor since this run read it, no longer matches and
+	// the statement reports zero rows. Nothing here resets attempts or last_error — the post
+	// has neither, by the predicate above.
+	RequeueTelegramPost(ctx context.Context, arg RequeueTelegramPostParams) (int64, error)
 	// The id span cmd/backfill-requirements walks. MIN/MAX over the primary key are two
 	// index probes, so this stays cheap on an 11M-row table — deliberately unfiltered,
 	// because counting the open rows would be a scan and the chunk query filters anyway.
@@ -6709,6 +6783,9 @@ type Querier interface {
 	// current work, not an archive, and each row carries two operation documents on the table
 	// behind every CV page.
 	TrimCVRevisions(ctx context.Context, arg TrimCVRevisionsParams) (int64, error)
+	// The id span cmd/report-unclassified-titles walks. Same shape as
+	// ClassifyDriftReportBounds.
+	UnclassifiedTitleReportBounds(ctx context.Context) (UnclassifiedTitleReportBoundsRow, error)
 	// The worker's delivery pass: earned, but not yet placed on the referrer's balance.
 	//
 	// Unlike the grant pass this does NOT require the referrer to hold a customer. A referrer

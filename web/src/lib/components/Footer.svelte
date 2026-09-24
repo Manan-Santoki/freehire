@@ -2,6 +2,7 @@
   import { resolve } from '$app/paths';
   import { popularCollectionLinks } from '$lib/collections';
   import { reopen } from '$lib/consent.svelte';
+  import { EXTENSION_STORE_URL } from '$lib/extensionLinks';
   import { SOCIAL_LINKS } from '$lib/socialLinks';
   import { ProviderIcon } from '$lib/ui';
 
@@ -99,6 +100,43 @@
     dark: 'https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1196233&theme=dark&t=1785605357228',
   };
 
+  // Where the product can be installed, beside the Product Hunt badge rather than in
+  // a link column: these are downloads, not navigation, and a store button among a
+  // list of page links reads as neither.
+  //
+  // Drawn from the design system's own marks and tokens instead of each store's
+  // official badge artwork — the two vendors' badges disagree about height, corner
+  // radius and dark-mode treatment, so side by side they look like two pasted
+  // screenshots. One shape in the site's own colours matches the footer around it
+  // and follows the theme without a second asset per mode; ProviderIcon already
+  // ships both marks, so this needs no image at all.
+  //
+  // The App Store URL carries NO country segment on purpose. The listing's share link
+  // is `/br/app/...`, which pins every visitor to the Brazilian storefront; without one
+  // Apple redirects each visitor to their own (measured: the bare form answers 301 to
+  // `/us/app/...`, the `/br/` form answers 200).
+  //
+  // The extension's URL is not spelled here at all — see $lib/extensionLinks, which the
+  // extension landing and its JSON-LD read too. The App Store one IS spelled here, and
+  // the asymmetry is deliberate only while this is its single consumer: a mobile landing
+  // page or a MobileApplication JSON-LD is the second, and that is when it earns an
+  // appLinks.ts beside extensionLinks.ts. Note for whoever does it — Footer.test.ts pins
+  // the literal to THIS file, so the move is two edits, not one.
+  const stores = [
+    {
+      provider: 'apple',
+      kicker: 'Download on the',
+      name: 'App Store',
+      href: 'https://apps.apple.com/app/freehire-open-job-search/id6801885119',
+    },
+    {
+      provider: 'chrome',
+      kicker: 'Available in the',
+      name: 'Chrome Web Store',
+      href: EXTENSION_STORE_URL,
+    },
+  ];
+
   // Compact: the account shell (/my/*) is an app-like surface with its own sidebar
   // nav, so the four link columns, the popular-collections strip and the Product
   // Hunt badge below are marketing chrome that doesn't belong there — only the
@@ -153,7 +191,13 @@
         </ul>
       </nav>
 
-      <div class="mt-8">
+      <!-- The badge and the two store buttons share one row, centred rather than
+           stretched: the badge is a fixed 54px image, the buttons sit on the spacing
+           scale at h-14 (56px), and 1px above and below is invisible. Do NOT "fix" that
+           to h-[54px] — check:tokens refuses an arbitrary value here, which is the whole
+           reason these are 56px. Wrapping, so a narrow viewport stacks them rather than
+           shrinking any. -->
+      <div class="mt-8 flex flex-wrap items-center gap-3">
         <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- external Product Hunt page opened in a new tab; not an internal route -->
         <a href={productHunt.href} target="_blank" rel="noopener noreferrer" class="inline-block">
           <img
@@ -173,6 +217,23 @@
             class="hidden dark:block"
           />
         </a>
+
+        {#each stores as store (store.href)}
+          <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- external store listing opened in a new tab; not an internal route -->
+          <a href={store.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex h-14 items-center gap-3 rounded-lg border border-border px-4 text-foreground transition-colors hover:bg-muted"
+          >
+            <ProviderIcon provider={store.provider} class="size-7 shrink-0" />
+            <span class="flex flex-col leading-tight">
+              <span class="text-xs uppercase tracking-wider text-muted-foreground">
+                {store.kicker}
+              </span>
+              <span class="text-sm font-semibold">{store.name}</span>
+            </span>
+          </a>
+        {/each}
       </div>
     </div>
   {/if}

@@ -3459,6 +3459,166 @@ func (q *Queries) ListJobsUpdatedAfter(ctx context.Context, arg ListJobsUpdatedA
 	return items, nil
 }
 
+const listLiveJobIDsAfter = `-- name: ListLiveJobIDsAfter :many
+SELECT id
+FROM jobs
+WHERE id > $1
+  AND (closed_at IS NULL OR closed_at >= $2)
+ORDER BY id
+LIMIT $3
+`
+
+type ListLiveJobIDsAfterParams struct {
+	AfterID     int64              `json:"after_id"`
+	ClosedSince pgtype.Timestamptz `json:"closed_since"`
+	BatchSize   int32              `json:"batch_size"`
+}
+
+// Id-only projection of ListLiveJobsByIDAfter, for the same corruption-degrade path
+// ListJobIDsAfter serves. The predicate must match its wide sibling exactly: a
+// degraded re-read that scanned a different window would skip rows silently.
+func (q *Queries) ListLiveJobIDsAfter(ctx context.Context, arg ListLiveJobIDsAfterParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listLiveJobIDsAfter, arg.AfterID, arg.ClosedSince, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveJobsByIDAfter = `-- name: ListLiveJobsByIDAfter :many
+SELECT id, source, external_id, url, title, company, location, remote, description, posted_at, created_at, updated_at, company_slug, enrichment, enriched_at, enrichment_version, public_slug, last_seen_at, closed_at, countries, regions, work_mode, liveness_strikes, skills, seniority, category, created_by, updated_by, posting_language, employment_type, education_level, experience_years_min, collections, content_hash, english_level, cities, view_count, applied_count, role_fingerprint, semantic_embedded_model, semantic_embedded_hash, duplicate_of, is_tech, semantic_embedding, salary_min_manual, salary_max_manual, salary_currency_manual, salary_period_manual, upvote_count, downvote_count, ats_absent_at, closed_reason, is_private, similar_job_ids, similar_computed_at, salary_min_source, salary_max_source, salary_currency_source, salary_period_source, company_slug_folded, duplicate_of_aggregator, duplicate_of_role, duplicate_of_fuzzy, requires_clearance, requirements_derived, hydrated_at, ai_interview_reports
+FROM jobs
+WHERE id > $1
+  AND (closed_at IS NULL OR closed_at >= $2)
+ORDER BY id
+LIMIT $3
+`
+
+type ListLiveJobsByIDAfterParams struct {
+	AfterID     int64              `json:"after_id"`
+	ClosedSince pgtype.Timestamptz `json:"closed_since"`
+	BatchSize   int32              `json:"batch_size"`
+}
+
+// ListJobsByIDAfter narrowed to the rows that can still reach the catalogue, for a
+// re-derive after a dictionary change (cmd/backfill-derive with
+// BACKFILL_DERIVE_CLOSED_WITHIN_DAYS).
+//
+// Measured 2026-09-23: the table holds ~12.7M rows and 1.9M open ones, so the derive
+// pass spends ~85% of its time on postings nothing can surface. A pass over the whole
+// table takes ~30h at the unit's deliberately low CPUWeight.
+//
+// NOT simply `closed_at IS NULL`, and this is the load-bearing part. A closed posting
+// REOPENS: ingest's Toucher refreshes liveness "(last_seen_at, reopen if closed) ...
+// WITHOUT rewriting its content" (internal/ingest/pipeline/pipeline.go), and a posting
+// that merely drifts out of a feed for 48h is closed and reopened as it drifts back
+// (see the notes in sources/seek.go and sources/whatjobs.go). Skipping it on
+// `closed_at IS NULL` would return it to the catalogue carrying the facets the old
+// dictionary gave it, with nothing downstream reporting the staleness.
+//
+// So the window is "open, or closed recently enough to plausibly come back". The caller
+// picks the cutoff; the pass degrades to the full table when it passes the zero time,
+// which keeps the unfiltered behaviour one env var away.
+func (q *Queries) ListLiveJobsByIDAfter(ctx context.Context, arg ListLiveJobsByIDAfterParams) ([]Job, error) {
+	rows, err := q.db.Query(ctx, listLiveJobsByIDAfter, arg.AfterID, arg.ClosedSince, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Job{}
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.Source,
+			&i.ExternalID,
+			&i.URL,
+			&i.Title,
+			&i.Company,
+			&i.Location,
+			&i.Remote,
+			&i.Description,
+			&i.PostedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompanySlug,
+			&i.Enrichment,
+			&i.EnrichedAt,
+			&i.EnrichmentVersion,
+			&i.PublicSlug,
+			&i.LastSeenAt,
+			&i.ClosedAt,
+			&i.Countries,
+			&i.Regions,
+			&i.WorkMode,
+			&i.LivenessStrikes,
+			&i.Skills,
+			&i.Seniority,
+			&i.Category,
+			&i.CreatedBy,
+			&i.UpdatedBy,
+			&i.PostingLanguage,
+			&i.EmploymentType,
+			&i.EducationLevel,
+			&i.ExperienceYearsMin,
+			&i.Collections,
+			&i.ContentHash,
+			&i.EnglishLevel,
+			&i.Cities,
+			&i.ViewCount,
+			&i.AppliedCount,
+			&i.RoleFingerprint,
+			&i.SemanticEmbeddedModel,
+			&i.SemanticEmbeddedHash,
+			&i.DuplicateOf,
+			&i.IsTech,
+			&i.SemanticEmbedding,
+			&i.SalaryMinManual,
+			&i.SalaryMaxManual,
+			&i.SalaryCurrencyManual,
+			&i.SalaryPeriodManual,
+			&i.UpvoteCount,
+			&i.DownvoteCount,
+			&i.AtsAbsentAt,
+			&i.ClosedReason,
+			&i.IsPrivate,
+			&i.SimilarJobIds,
+			&i.SimilarComputedAt,
+			&i.SalaryMinSource,
+			&i.SalaryMaxSource,
+			&i.SalaryCurrencySource,
+			&i.SalaryPeriodSource,
+			&i.CompanySlugFolded,
+			&i.DuplicateOfAggregator,
+			&i.DuplicateOfRole,
+			&i.DuplicateOfFuzzy,
+			&i.RequiresClearance,
+			&i.RequirementsDerived,
+			&i.HydratedAt,
+			&i.AiInterviewReports,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTitlesForClassifyDrift = `-- name: ListTitlesForClassifyDrift :many
 SELECT title,
        count(*)::bigint AS job_count,
@@ -3526,6 +3686,70 @@ func (q *Queries) ListTitlesForClassifyDrift(ctx context.Context, arg ListTitles
 			&i.EnrichmentSeniority,
 			&i.EnrichmentCategory,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTitlesForUnclassifiedReport = `-- name: ListTitlesForUnclassifiedReport :many
+SELECT title,
+       count(*)::bigint AS job_count
+FROM jobs
+WHERE id >= $1 AND id < $2
+  AND closed_at IS NULL
+  AND duplicate_of IS NULL
+  AND NOT is_private
+GROUP BY title
+`
+
+type ListTitlesForUnclassifiedReportParams struct {
+	FromID int64 `json:"from_id"`
+	ToID   int64 `json:"to_id"`
+}
+
+type ListTitlesForUnclassifiedReportRow struct {
+	Title    string `json:"title"`
+	JobCount int64  `json:"job_count"`
+}
+
+// One chunk of the unclassified-title report: every distinct title among PUBLISHABLE
+// postings in an id range, with how many postings in THIS CHUNK carried it.
+//
+// The scope is the deliberate difference from ListTitlesForClassifyDrift beside it.
+// That query takes enriched postings whatever their state, because a title's
+// dictionary answer is a fact about the text. This one asks a different question —
+// what is the catalogue failing to PUBLISH — so a title carried only by closed,
+// duplicate or private postings is not a gap: recognising it would publish nothing.
+//
+// No is_tech predicate, and that is not an omission. The stored column is the OLD
+// dictionary's answer until cmd/backfill-derive reaches the row (~171 rows/s over
+// 12.7M rows), so filtering on it would rank gaps already closed and hide gaps the
+// newest terms opened. dictgap.UnclassifiedTitles recomputes instead; this statement
+// hands it every publishable title and lets the dictionary decide, the same
+// over-fetch-and-let-the-dictionary-decide shape cmd/backfill-clearance uses.
+//
+// Reads no description column, so it never de-TOASTs.
+//
+// Deliberately NO row LIMIT, for the reason ListTitlesForClassifyDrift states: GROUP
+// BY already caps the output at the number of DISTINCT titles in the id range, while a
+// LIMIT on an unordered aggregate would silently drop titles with no id to resume
+// from. Grouping happens per chunk, so a title spanning more than one range comes back
+// once per chunk and the caller sums.
+func (q *Queries) ListTitlesForUnclassifiedReport(ctx context.Context, arg ListTitlesForUnclassifiedReportParams) ([]ListTitlesForUnclassifiedReportRow, error) {
+	rows, err := q.db.Query(ctx, listTitlesForUnclassifiedReport, arg.FromID, arg.ToID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTitlesForUnclassifiedReportRow{}
+	for rows.Next() {
+		var i ListTitlesForUnclassifiedReportRow
+		if err := rows.Scan(&i.Title, &i.JobCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -4743,6 +4967,26 @@ func (q *Queries) TouchJob(ctx context.Context, arg TouchJobParams) (string, err
 	var company_slug string
 	err := row.Scan(&company_slug)
 	return company_slug, err
+}
+
+const unclassifiedTitleReportBounds = `-- name: UnclassifiedTitleReportBounds :one
+SELECT COALESCE(MIN(id), 0)::bigint AS min_id,
+       COALESCE(MAX(id), 0)::bigint AS max_id
+FROM jobs
+`
+
+type UnclassifiedTitleReportBoundsRow struct {
+	MinID int64 `json:"min_id"`
+	MaxID int64 `json:"max_id"`
+}
+
+// The id span cmd/report-unclassified-titles walks. Same shape as
+// ClassifyDriftReportBounds.
+func (q *Queries) UnclassifiedTitleReportBounds(ctx context.Context) (UnclassifiedTitleReportBoundsRow, error) {
+	row := q.db.QueryRow(ctx, unclassifiedTitleReportBounds)
+	var i UnclassifiedTitleReportBoundsRow
+	err := row.Scan(&i.MinID, &i.MaxID)
+	return i, err
 }
 
 const unseenJobIDs = `-- name: UnseenJobIDs :many

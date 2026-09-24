@@ -74,6 +74,44 @@ WHERE id > sqlc.arg(after_id)
 ORDER BY id
 LIMIT sqlc.arg(batch_size);
 
+-- name: ListLiveJobsByIDAfter :many
+-- ListJobsByIDAfter narrowed to the rows that can still reach the catalogue, for a
+-- re-derive after a dictionary change (cmd/backfill-derive with
+-- BACKFILL_DERIVE_CLOSED_WITHIN_DAYS).
+--
+-- Measured 2026-09-23: the table holds ~12.7M rows and 1.9M open ones, so the derive
+-- pass spends ~85% of its time on postings nothing can surface. A pass over the whole
+-- table takes ~30h at the unit's deliberately low CPUWeight.
+--
+-- NOT simply `closed_at IS NULL`, and this is the load-bearing part. A closed posting
+-- REOPENS: ingest's Toucher refreshes liveness "(last_seen_at, reopen if closed) ...
+-- WITHOUT rewriting its content" (internal/ingest/pipeline/pipeline.go), and a posting
+-- that merely drifts out of a feed for 48h is closed and reopened as it drifts back
+-- (see the notes in sources/seek.go and sources/whatjobs.go). Skipping it on
+-- `closed_at IS NULL` would return it to the catalogue carrying the facets the old
+-- dictionary gave it, with nothing downstream reporting the staleness.
+--
+-- So the window is "open, or closed recently enough to plausibly come back". The caller
+-- picks the cutoff; the pass degrades to the full table when it passes the zero time,
+-- which keeps the unfiltered behaviour one env var away.
+SELECT *
+FROM jobs
+WHERE id > sqlc.arg(after_id)
+  AND (closed_at IS NULL OR closed_at >= sqlc.arg(closed_since))
+ORDER BY id
+LIMIT sqlc.arg(batch_size);
+
+-- name: ListLiveJobIDsAfter :many
+-- Id-only projection of ListLiveJobsByIDAfter, for the same corruption-degrade path
+-- ListJobIDsAfter serves. The predicate must match its wide sibling exactly: a
+-- degraded re-read that scanned a different window would skip rows silently.
+SELECT id
+FROM jobs
+WHERE id > sqlc.arg(after_id)
+  AND (closed_at IS NULL OR closed_at >= sqlc.arg(closed_since))
+ORDER BY id
+LIMIT sqlc.arg(batch_size);
+
 -- name: ListJobIDsUpdatedAfter :many
 -- Id-only projection of ListJobsUpdatedAfter — the corruption-degrade path for the
 -- incremental (`reindex --since`) scan, mirroring ListJobIDsAfter.
@@ -2728,6 +2766,46 @@ SELECT title,
 FROM jobs
 WHERE id >= sqlc.arg(from_id) AND id < sqlc.arg(to_id)
   AND enriched_at IS NOT NULL
+GROUP BY title;
+
+-- name: UnclassifiedTitleReportBounds :one
+-- The id span cmd/report-unclassified-titles walks. Same shape as
+-- ClassifyDriftReportBounds.
+SELECT COALESCE(MIN(id), 0)::bigint AS min_id,
+       COALESCE(MAX(id), 0)::bigint AS max_id
+FROM jobs;
+
+-- name: ListTitlesForUnclassifiedReport :many
+-- One chunk of the unclassified-title report: every distinct title among PUBLISHABLE
+-- postings in an id range, with how many postings in THIS CHUNK carried it.
+--
+-- The scope is the deliberate difference from ListTitlesForClassifyDrift beside it.
+-- That query takes enriched postings whatever their state, because a title's
+-- dictionary answer is a fact about the text. This one asks a different question —
+-- what is the catalogue failing to PUBLISH — so a title carried only by closed,
+-- duplicate or private postings is not a gap: recognising it would publish nothing.
+--
+-- No is_tech predicate, and that is not an omission. The stored column is the OLD
+-- dictionary's answer until cmd/backfill-derive reaches the row (~171 rows/s over
+-- 12.7M rows), so filtering on it would rank gaps already closed and hide gaps the
+-- newest terms opened. dictgap.UnclassifiedTitles recomputes instead; this statement
+-- hands it every publishable title and lets the dictionary decide, the same
+-- over-fetch-and-let-the-dictionary-decide shape cmd/backfill-clearance uses.
+--
+-- Reads no description column, so it never de-TOASTs.
+--
+-- Deliberately NO row LIMIT, for the reason ListTitlesForClassifyDrift states: GROUP
+-- BY already caps the output at the number of DISTINCT titles in the id range, while a
+-- LIMIT on an unordered aggregate would silently drop titles with no id to resume
+-- from. Grouping happens per chunk, so a title spanning more than one range comes back
+-- once per chunk and the caller sums.
+SELECT title,
+       count(*)::bigint AS job_count
+FROM jobs
+WHERE id >= sqlc.arg(from_id) AND id < sqlc.arg(to_id)
+  AND closed_at IS NULL
+  AND duplicate_of IS NULL
+  AND NOT is_private
 GROUP BY title;
 
 -- name: CloseMisattributedSourceJobs :one

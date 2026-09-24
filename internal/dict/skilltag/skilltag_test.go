@@ -1261,6 +1261,58 @@ func TestParse_SalesAndSupportDoNotCorroborate(t *testing.T) {
 	})
 }
 
+// TestParse_SupportSchedulingLegalPracticeTooling covers the nontech-derive-coverage
+// wave: the tooling administrative, customer-support and immigration-practice
+// postings actually name. See
+// docs/superpowers/specs/2026-09-19-nontech-derive-coverage-design.md.
+func TestParse_SupportSchedulingLegalPracticeTooling(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"freshdesk", "Support tickets are handled in Freshdesk.", "freshdesk"},
+		{"calendly", "Interviews are booked via Calendly links.", "calendly"},
+		// "clio" is gated (ambiguousWords: it collides with a common first name,
+		// the Clio Awards, and the Renault Clio), so this case corroborates it
+		// with another named tool — see TestParse_ClioNeedsCorroboration for the
+		// gate itself.
+		{"clio", "Manage client files and billing in Clio, synced with QuickBooks.", "clio"},
+		{"uscis", "Coordinate with USCIS on pending petitions.", "uscis"},
+		{"form i-129", "Prepare and file Form I-129 petitions.", "i-129"},
+		{"form i-130", "Prepare and file Form I-130 petitions.", "i-130"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Parse(tc.in)
+			if !slices.Contains(got, tc.want) {
+				t.Errorf("Parse(%q) = %v, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParse_ClioNeedsCorroboration guards the ambiguousWords gate on "clio": the
+// word is at least as common a first name as "maya"/"lottie", and also names the
+// Clio Awards and the Renault Clio, so a bare mention must not tag the legal
+// canonical — the same treatment "houdini" and "maya" already carry.
+func TestParse_ClioNeedsCorroboration(t *testing.T) {
+	t.Run("clio the name does not tag alone", func(t *testing.T) {
+		got := Parse("This role reports directly to Clio, our VP of Marketing.")
+		if slices.Contains(got, "clio") {
+			t.Errorf("Parse(...) = %v, must not contain %q", got, "clio")
+		}
+	})
+	t.Run("clio the awards does not tag alone", func(t *testing.T) {
+		got := Parse("Our campaigns have been recognized with a Clio Award.")
+		if slices.Contains(got, "clio") {
+			t.Errorf("Parse(...) = %v, must not contain %q", got, "clio")
+		}
+	})
+	t.Run("clio corroborated by another named tool tags", func(t *testing.T) {
+		got := Parse("Billing and intake run through Clio, integrated with QuickBooks.")
+		if !slices.Contains(got, "clio") {
+			t.Errorf("Parse(...) = %v, want %q", got, "clio")
+		}
+	})
+}
+
 // TestParse_MarketingSeparatorInsensitive checks that the separator rule the
 // matcher already guarantees holds for the new multi-word canonicals too — the
 // dictionary lists only the space form, so the hyphen and underscore spellings

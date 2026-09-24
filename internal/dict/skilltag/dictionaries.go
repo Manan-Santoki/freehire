@@ -507,6 +507,11 @@ var wordAliases = map[string]string{
 	"mssql": "sql-server",
 	"tsql":  "sql-server",
 	"ga4":   "google-analytics",
+	// support / scheduling / legal-practice tooling
+	"calendly":  "calendly",
+	"clio":      "clio",
+	"freshdesk": "freshdesk",
+	"uscis":     "uscis",
 
 	// LLM-mined batch 2 (jobs.enrichment->skills, freq 500-1500). Distinctive single
 	// tokens. Ultra-generic concept words (caching, routing, concurrency,
@@ -832,6 +837,10 @@ var ambiguousWords = map[string]bool{
 	"amplitude": true,
 	"soap":      true,
 	"s3":        true,
+	// "clio" is a common first name, the Clio Awards (advertising/marketing), and
+	// the Renault Clio, at least as often as it names the legal practice
+	// management platform.
+	"clio": true,
 	// broad concepts (batch 3) — tag only in a concrete tech context
 	"ai":         true,
 	"automation": true,
@@ -1375,6 +1384,10 @@ var professionalPhraseAliases = []phraseAlias{
 	{"contract lifecycle management", "contract-lifecycle-management"},
 	{"legal research", "legal-research"},
 	{"regulatory compliance", "regulatory-compliance"},
+	// immigration-practice form numbers. Written with a space so the phrase
+	// matcher's separator equivalence also resolves the hyphenated "I-129"/
+	// "I-130" form the forms are actually styled with.
+	{"i 129", "i-129"}, {"i 130", "i-130"},
 	// operations
 	{"process improvement", "process-improvement"},
 	{"vendor management", "vendor-management"},
