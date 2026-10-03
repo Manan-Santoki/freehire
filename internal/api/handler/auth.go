@@ -134,6 +134,10 @@ func (h *authHandlers) register(api fiber.Router, mw middleware) {
 	meGroup.Post("/api-keys", mw.cookie, recent, h.CreateAPIKey)
 	meGroup.Get("/api-keys", mw.cookie, h.ListAPIKeys)
 	meGroup.Delete("/api-keys/:id", mw.cookie, recent, h.RevokeAPIKey)
+	// MCP OAuth "Connected devices": list is a plain read (same gating as
+	// ListAPIKeys); revoke is recent-auth-gated, same reasoning as RevokeAPIKey.
+	meGroup.Get("/oauth-grants", mw.cookie, h.ListOAuthGrants)
+	meGroup.Delete("/oauth-grants/:id", mw.cookie, recent, h.RevokeOAuthGrant)
 
 	// Push-token registration is cookie-only for the same reason key management
 	// is: a leaked API key must not be able to redirect another device's push
@@ -208,6 +212,17 @@ func (h *authHandlers) register(api fiber.Router, mw middleware) {
 	// session. Public; the code is the credential.
 	authGroup.Post("/oauth/exchange", h.OAuthExchange)
 
+	// MCP OAuth 2.1 (freehire#3114): dynamic client registration (RFC 7591).
+	// Public — a client self-registers before it has any user context. See
+	// oauth_register.go.
+	authGroup.Post("/oauth/register", h.RegisterOAuthClient)
+	// Metadata discovery (RFC 8414 / RFC 9728). Public. Mounted here, under
+	// /api/v1, and proxied from /.well-known/* by the SvelteKit app — see
+	// oauth_metadata.go for why a direct Go route at the well-known path
+	// would never be reached.
+	authGroup.Get("/oauth/metadata/authorization-server", h.OAuthAuthorizationServerMetadata)
+	authGroup.Get("/oauth/metadata/protected-resource", h.OAuthProtectedResourceMetadata)
+
 	// Browser-extension sign-in ("Sign in with freehire"): the extension opens
 	// this in the freehire origin via launchWebAuthFlow. Cookie-only — a leaked key
 	// must not mint further keys — but on optionalCookie, like the OAuth callbacks,
@@ -219,6 +234,16 @@ func (h *authHandlers) register(api fiber.Router, mw middleware) {
 	// fragment. Both refuse any redirect outside the configured allowlist.
 	authGroup.Get("/extension/connect", mw.optionalCookie, h.ExtensionConnect)
 	authGroup.Post("/extension/connect", mw.optionalCookie, h.ExtensionConnectSubmit)
+
+	// MCP OAuth 2.1 (freehire#3114) authorize step: GET shows consent
+	// (sessionless visitors are sent to sign in first), POST acts on the
+	// decision. optionalCookie on GET for the same reason the extension flow
+	// uses it on its own GET — see oauth_authorize.go.
+	authGroup.Get("/oauth/authorize", mw.optionalCookie, h.OAuthAuthorize)
+	authGroup.Post("/oauth/authorize", mw.optionalCookie, h.OAuthAuthorizeSubmit)
+	// Token exchange (PKCE code for a bearer access token). Public — the code
+	// and verifier are the credential here, not a session.
+	authGroup.Post("/oauth/token", h.OAuthToken)
 }
 
 func (h *authHandlers) requireRecentAuth(c *fiber.Ctx) error {
