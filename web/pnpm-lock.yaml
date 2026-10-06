@@ -49,8 +49,8 @@ importers:
         specifier: ^18.0.12
         version: 18.0.12
       posthog-js:
-        specifier: ^1.430.2
-        version: 1.430.2
+        specifier: ^1.435.7
+        version: 1.435.7
       satori:
         specifier: ^0.33.5
         version: 0.33.5
@@ -1169,14 +1169,14 @@ packages:
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
 
-  '@posthog/browser-common@0.8.3':
-    resolution: {integrity: sha512-4Hlbwyn+Hioc2+pjqSGWMTDrA5XsDshssPnGfv34khPKoJaeBe2YvPvsEPoH78jezOS6Wo3LJvCPhqyolg3S8w==}
+  '@posthog/browser-common@0.9.1':
+    resolution: {integrity: sha512-Dl8uV2OZAxfHfWyC7K0Y3HtT7ld+WGLbXIwgCgAGziOMGDIa/bepCRrCxy7IxsEzqY1HOrq/VDdcoNN7hBTSQQ==}
 
-  '@posthog/core@1.53.2':
-    resolution: {integrity: sha512-Knx8442G2LyPVIzLvhcBX/TIdeHpZhrYrtZou3Uw8FWfbr9gQtQeOZDCog3MWcDxJ+4vAnMAAOzf5cYpc7Gxyw==}
+  '@posthog/core@1.55.3':
+    resolution: {integrity: sha512-XnmG9jo7WlxTeN4oCNWH4ESLQHR6ZPZ+mcq+8JxU62k5i1BAe3BSrybnmXHjqKp7e3rUvLK2bOzGZGSlfHvlNA==}
 
-  '@posthog/types@1.411.1':
-    resolution: {integrity: sha512-Gd7tnSYctcSXup3naVlAgavvenByRao6rsSYdMgWgP35KE9jFn+rMHNRJeI5LNjJuLzMXHEVcgzAN7xcATefdw==}
+  '@posthog/types@1.413.0':
+    resolution: {integrity: sha512-tYAVzNojWckuG/wxBB0fwE70sFruQQq4xbhkci7eH2ARU3mMfUTkvpN1HwBMpm0AtbxidLiH0IFvagmdJ8opPw==}
 
   '@replit/codemirror-css-color-picker@6.3.0':
     resolution: {integrity: sha512-19biDANghUm7Fz7L1SNMIhK48tagaWuCOHj4oPPxc7hxPGkTVY2lU/jVZ8tsbTKQPVG7BO2CBDzs7CBwb20t4A==}
@@ -4068,8 +4068,8 @@ packages:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
     engines: {node: ^10 || ^12 || >=14}
 
-  posthog-js@1.430.2:
-    resolution: {integrity: sha512-JwNTuFyNu2HwTFxcO/4SJJlnr1CkdZdmKxeg2PvuKUO5RMW3xw0sCCBKOMg/76pANUWk4+z1UrMJVLfpJY0KsQ==}
+  posthog-js@1.435.7:
+    resolution: {integrity: sha512-IPNA4jfJOXvK8/I+3FVPhdopscZ/GAqYzXDOphuhUcjMBzdMb1N82WH5NGvYQlRVAjko8a2AQ8LSlrsYPpljcw==}
     peerDependencies:
       '@types/react': '>=16.8.0'
       react: '>=16.8.0'
@@ -4837,6 +4837,9 @@ packages:
 
   web-vitals@6.2.1:
     resolution: {integrity: sha512-rLcLXA2sx6+9dE88NHFubwTtGxpK4yYBLj6qHPdFoCaLr0cXGb4efOqtKLlm4loGA4OEKHIQKMKzZkKyOh5ctw==}
+
+  web-vitals@6.2.2:
+    resolution: {integrity: sha512-oto5x6dLEgrRqfcWed+pZEUb2q6ikbFmqF54CRDhI/QGbn+qxC49b4C4OkbH+kb9C3a8shpFD3SgR9kRcs80ZQ==}
 
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
@@ -6143,16 +6146,16 @@ snapshots:
 
   '@polka/url@1.0.0-next.29': {}
 
-  '@posthog/browser-common@0.8.3':
+  '@posthog/browser-common@0.9.1':
     dependencies:
-      '@posthog/core': 1.53.2
-      '@posthog/types': 1.411.1
+      '@posthog/core': 1.55.3
+      '@posthog/types': 1.413.0
 
-  '@posthog/core@1.53.2':
+  '@posthog/core@1.55.3':
     dependencies:
-      '@posthog/types': 1.411.1
+      '@posthog/types': 1.413.0
 
-  '@posthog/types@1.411.1': {}
+  '@posthog/types@1.413.0': {}
 
   '@replit/codemirror-css-color-picker@6.3.0(@codemirror/language@6.12.4)(@codemirror/state@6.7.5)(@codemirror/view@6.43.12)':
     dependencies:
@@ -9396,17 +9399,17 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  posthog-js@1.430.2:
+  posthog-js@1.435.7:
     dependencies:
-      '@posthog/browser-common': 0.8.3
-      '@posthog/core': 1.53.2
-      '@posthog/types': 1.411.1
+      '@posthog/browser-common': 0.9.1
+      '@posthog/core': 1.55.3
+      '@posthog/types': 1.413.0
       core-js: 3.50.0
       dompurify: 3.4.16
       fflate: 0.7.5
       preact: 10.29.8
       query-selector-shadow-dom: 1.0.1
-      web-vitals: 6.2.1
+      web-vitals: 6.2.2
       web-vitals-soft-navs: web-vitals@6.2.1
     transitivePeerDependencies:
       - preact-render-to-string
@@ -10308,6 +10311,8 @@ snapshots:
   web-namespaces@2.0.1: {}
 
   web-vitals@6.2.1: {}
+
+  web-vitals@6.2.2: {}
 
   webidl-conversions@3.0.1: {}
 
