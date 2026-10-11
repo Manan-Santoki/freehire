@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"strings"
@@ -99,6 +100,7 @@ func (h *resumeHandlers) register(api fiber.Router, mw middleware) {
 	api.Put("/me/resume/contacts", mw.cookie, h.PutResumeContacts)
 	api.Post("/me/resume/contacts/replace-from-cv", mw.cookie, h.ReplaceResumeContactsFromCV)
 	api.Delete("/me/resume", mw.cookie, h.DeleteResume)
+	api.Post("/me/resume/retry-extract", mw.cookie, h.RetryResumeExtract)
 
 	// Stateless market-coverage: score a caller-supplied skill list (request body)
 	// against the facet-filtered market. Cookie or API key — the CLI drives it with
@@ -510,6 +512,38 @@ func (h *resumeHandlers) DeleteResume(c *fiber.Ctx) error {
 		return err
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// RetryResumeExtract re-derives the structured résumé from the candidate's already-stored
+// upload, without requiring them to submit the file again: it re-reads the stored bytes the
+// same way every other reader of them does (resume.Store.TextAndUploadedAt, one pointer read
+// so the text and the stamp it is derived under can never mismatch) and runs the same
+// background derivation an upload triggers.
+//
+// Marks the extract pending BEFORE kicking off that background derivation — without this, a
+// client polling GET /me/resume right after this call returns would see the PREVIOUS
+// attempt's "failed" status (nothing else clears it) and mistake it for the retry's own
+// outcome, when the retry has barely started. Cookie-only.
+func (h *resumeHandlers) RetryResumeExtract(c *fiber.Ctx) error {
+	userID, err := requireUserID(c)
+	if err != nil {
+		return err
+	}
+	if !h.resume.Enabled() {
+		return fiber.NewError(fiber.StatusNotImplemented, "résumé storage is not available")
+	}
+	text, uploadedAt, err := h.resume.TextAndUploadedAt(c.Context(), userID)
+	if errors.Is(err, resume.ErrNotStored) {
+		return fiber.NewError(fiber.StatusConflict, "no résumé stored to retry")
+	}
+	if err != nil {
+		return err
+	}
+	if err := h.resume.MarkExtractPending(c.Context(), userID, uploadedAt); err != nil {
+		return err
+	}
+	h.deriveResumeArtifacts(userID, text, &uploadedAt)
+	return c.SendStatus(fiber.StatusAccepted)
 }
 
 // readResumeUpload reads a résumé from the request into its original bytes, content type,
